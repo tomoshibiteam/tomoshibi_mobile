@@ -1,20 +1,51 @@
-import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import "./src/styles/global.css";
+import React from "react";
+import { ActivityIndicator, View } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { StatusBar } from "expo-status-bar";
+import {
+  PlusJakartaSans_400Regular,
+  PlusJakartaSans_700Bold,
+  PlusJakartaSans_800ExtraBold,
+  useFonts as usePlusJakartaFonts,
+} from "@expo-google-fonts/plus-jakarta-sans";
+import {
+  NotoSansJP_400Regular,
+  NotoSansJP_500Medium,
+  NotoSansJP_700Bold,
+  useFonts as useNotoSansFonts,
+} from "@expo-google-fonts/noto-sans-jp";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { RootNavigator } from "@/navigation/RootNavigator";
 
 export default function App() {
+  const [displayLoaded] = usePlusJakartaFonts({
+    PlusJakartaSans_400Regular,
+    PlusJakartaSans_700Bold,
+    PlusJakartaSans_800ExtraBold,
+  });
+  const [bodyLoaded] = useNotoSansFonts({
+    NotoSansJP_400Regular,
+    NotoSansJP_500Medium,
+    NotoSansJP_700Bold,
+  });
+
+  const fontsReady = displayLoaded && bodyLoaded;
+
+  if (!fontsReady) {
+    return (
+      <View className="flex-1 items-center justify-center bg-[#F8F7F6]">
+        <ActivityIndicator color="#EE8C2B" />
+      </View>
+    );
+  }
+
   return (
-    <View style={styles.container}>
-      <Text>Open up App.tsx to start working on your app!</Text>
-      <StatusBar style="auto" />
-    </View>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <StatusBar style="dark" />
+        <RootNavigator />
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
