@@ -13,18 +13,42 @@
       "backgroundColor": "#F8F7F6"
     },
     "ios": {
-      "supportsTablet": true
+      "bundleIdentifier": "com.tomoshibi.mobile",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "ゲームプレイ中に現在地を利用してスポット到着を判定します。"
+      }
     },
     "android": {
+      "package": "com.tomoshibi.mobile",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#F8F7F6"
       },
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ],
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "ゲームプレイ中に現在地を利用してスポット到着を判定します。"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "d2d9d251-a6ed-4a8b-bb54-27d70c8449bb"
+      }
     }
   }
 }

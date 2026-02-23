@@ -1,0 +1,1623 @@
+{
+  "generated_at": "2026-02-13T03:36:07.747Z",
+  "center": {
+    "lat": 33.749,
+    "lng": 129.688
+  },
+  "bbox": {
+    "minLat": 33.65,
+    "maxLat": 33.9,
+    "minLng": 129.6,
+    "maxLng": 129.85
+  },
+  "counts": {
+    "overpass": 312,
+    "nominatim": 22,
+    "wikipedia": 0,
+    "national": 49,
+    "merged": 372,
+    "stored": 200
+  },
+  "spots": [
+    {
+      "id": "node:1423801658",
+      "name": "壱岐郷土館",
+      "lat": 33.749048,
+      "lng": 129.687226,
+      "kinds": "museum",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423801588",
+      "name": "壱岐市立郷ノ浦図書館",
+      "lat": 33.749167,
+      "lng": 129.689604,
+      "kinds": "library",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:4627216652",
+      "name": "村瀬歯科医院",
+      "lat": 33.7477464,
+      "lng": 129.6898553,
+      "kinds": "dentist",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:5982046787",
+      "name": "乃もと寿司",
+      "lat": 33.7478026,
+      "lng": 129.6905883,
+      "kinds": "restaurant",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:13523386528",
+      "name": "光武内科循環器科病院",
+      "lat": 33.7478144,
+      "lng": 129.6908543,
+      "kinds": "doctors",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423801605",
+      "name": "壱岐警察署",
+      "lat": 33.7489492,
+      "lng": 129.6912148,
+      "kinds": "police",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423819774",
+      "name": "郷ノ浦町立武生水保育所",
+      "lat": 33.74632,
+      "lng": 129.68835,
+      "kinds": "kindergarten",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:13523386529",
+      "name": "光武歯科医院",
+      "lat": 33.747858,
+      "lng": 129.6911152,
+      "kinds": "dentist",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:402350588",
+      "name": "壱岐市役所",
+      "lat": 33.7499636,
+      "lng": 129.6913576,
+      "kinds": "townhall",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:4458868390",
+      "name": "角丸",
+      "lat": 33.747982,
+      "lng": 129.691355,
+      "kinds": "restaurant",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423809275",
+      "name": "玄州会光武内科循環器科病院",
+      "lat": 33.747952,
+      "lng": 129.69139,
+      "kinds": "hospital",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:447409793",
+      "name": "郷ノ浦郵便局",
+      "lat": 33.7462569,
+      "lng": 129.6901962,
+      "kinds": "post_office",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:4458669291",
+      "name": "みうらや",
+      "lat": 33.745796,
+      "lng": 129.690352,
+      "kinds": "restaurant",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:13523386530",
+      "name": "壱岐マリーナホテル",
+      "lat": 33.7453385,
+      "lng": 129.6897418,
+      "kinds": "hotel",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1443037985",
+      "name": "市立盈科小学校",
+      "lat": 33.7496521,
+      "lng": 129.6928941,
+      "kinds": "school",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:4458688092",
+      "name": "商店",
+      "lat": 33.750852,
+      "lng": 129.692559,
+      "kinds": "general",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423821155",
+      "name": "長崎家庭裁判所壱岐支部",
+      "lat": 33.7489569,
+      "lng": 129.6931478,
+      "kinds": "courthouse",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423820954",
+      "name": "長崎地方裁判所壱岐支部",
+      "lat": 33.7490555,
+      "lng": 129.6932797,
+      "kinds": "courthouse",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423820956",
+      "name": "長崎地方裁判所壱岐簡易裁判所",
+      "lat": 33.7489266,
+      "lng": 129.6933295,
+      "kinds": "courthouse",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423809523",
+      "name": "玉水会赤木病院",
+      "lat": 33.7511799,
+      "lng": 129.6929067,
+      "kinds": "hospital",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631223707",
+      "name": "郷ノ浦町基幹型在宅介護支援センター",
+      "lat": 33.751014,
+      "lng": 129.693462,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1443037984",
+      "name": "郷ノ浦幼稚園",
+      "lat": 33.749753,
+      "lng": 129.6941981,
+      "kinds": "kindergarten",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:729569410",
+      "name": "県立壱岐高等学校",
+      "lat": 33.7455016,
+      "lng": 129.692705,
+      "kinds": "school",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423801582",
+      "name": "壱岐保育園",
+      "lat": 33.746736,
+      "lng": 129.693775,
+      "kinds": "kindergarten",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:10813064605",
+      "name": "かもめの朝ごはん",
+      "lat": 33.7450014,
+      "lng": 129.6836412,
+      "kinds": "restaurant",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631212956",
+      "name": "庄触老人憩の家",
+      "lat": 33.753813,
+      "lng": 129.684557,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423801583",
+      "name": "壱岐市ケーブルテレビセンター",
+      "lat": 33.7495429,
+      "lng": 129.6951671,
+      "kinds": "studio",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1443038157",
+      "name": "市立郷ノ浦中学校",
+      "lat": 33.7510234,
+      "lng": 129.6949826,
+      "kinds": "school",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:506654674",
+      "name": "郷ノ浦港フェリーターミナル",
+      "lat": 33.7423282,
+      "lng": 129.685292,
+      "kinds": "ferry_terminal",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:13140906671",
+      "name": "弁天荘",
+      "lat": 33.7415873,
+      "lng": 129.6877756,
+      "kinds": "hotel",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631217469",
+      "name": "片原東北部老人憩の家",
+      "lat": 33.743244,
+      "lng": 129.6949,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:4458688093",
+      "name": "魚よし",
+      "lat": 33.754189,
+      "lng": 129.696574,
+      "kinds": "pub",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:13140906670",
+      "name": "アイランド壱岐",
+      "lat": 33.7402401,
+      "lng": 129.6851577,
+      "kinds": "hotel",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1443488041",
+      "name": "弁天崎公園",
+      "lat": 33.7405194,
+      "lng": 129.6840184,
+      "kinds": "park",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:4405326589",
+      "name": "スーパーイチヤマ",
+      "lat": 33.7533405,
+      "lng": 129.6983476,
+      "kinds": "supermarket",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631214431",
+      "name": "東触老人憩の家",
+      "lat": 33.756599,
+      "lng": 129.695486,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:442881469",
+      "name": "ドコモショップ",
+      "lat": 33.7543186,
+      "lng": 129.6982446,
+      "kinds": "mobile_phone",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631215433",
+      "name": "永田触老人憩の家",
+      "lat": 33.745647,
+      "lng": 129.699695,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:10815470005",
+      "name": "松尾古墳永田１号墳",
+      "lat": 33.7435684,
+      "lng": 129.6988103,
+      "kinds": "attraction",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:10815607405",
+      "name": "松尾古墳  永田古墳1号墳",
+      "lat": 33.7433179,
+      "lng": 129.6987711,
+      "kinds": "attraction",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:4458808896",
+      "name": "釣具",
+      "lat": 33.75783,
+      "lng": 129.680554,
+      "kinds": "fishing",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:8152423217",
+      "name": "民宿　滝の上",
+      "lat": 33.7377768,
+      "lng": 129.6853385,
+      "kinds": "guest_house",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:4478356126",
+      "name": "華光寺",
+      "lat": 33.7541549,
+      "lng": 129.7003796,
+      "kinds": "place_of_worship",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:449786351",
+      "name": "総合グラウンド　駐車場",
+      "lat": 33.7594601,
+      "lng": 129.6943036,
+      "kinds": "parking",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:13140906666",
+      "name": "横山自動車",
+      "lat": 33.7403205,
+      "lng": 129.6975789,
+      "kinds": "yes",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631217463",
+      "name": "片原中南部老人憩の家",
+      "lat": 33.737065,
+      "lng": 129.689418,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:449783501",
+      "name": "大谷公園　ソフトボール専用球場",
+      "lat": 33.760351,
+      "lng": 129.6930609,
+      "kinds": "pitch",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:442880955",
+      "name": "親和銀行",
+      "lat": 33.7556531,
+      "lng": 129.7002223,
+      "kinds": "bank",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:449786350",
+      "name": "専用球場駐車場",
+      "lat": 33.7601983,
+      "lng": 129.6937167,
+      "kinds": "parking",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:449785913",
+      "name": "体育館駐車場",
+      "lat": 33.7595776,
+      "lng": 129.6958204,
+      "kinds": "parking",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:442886882",
+      "name": "大谷体育館",
+      "lat": 33.7597471,
+      "lng": 129.6956815,
+      "kinds": "pitch",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:4405328492",
+      "name": "ダイソー",
+      "lat": 33.7561564,
+      "lng": 129.7003801,
+      "kinds": "variety_store",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:449785879",
+      "name": "体育館駐車場",
+      "lat": 33.7599725,
+      "lng": 129.6958348,
+      "kinds": "parking",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:449785650",
+      "name": "大谷公園　駐車場",
+      "lat": 33.7602111,
+      "lng": 129.6956649,
+      "kinds": "parking",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423796603",
+      "name": "かたばる病院",
+      "lat": 33.736037,
+      "lng": 129.687002,
+      "kinds": "hospital",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:442880370",
+      "name": "マルエー",
+      "lat": 33.7563034,
+      "lng": 129.7009958,
+      "kinds": "supermarket",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423800418",
+      "name": "協生会品川病院",
+      "lat": 33.7547321,
+      "lng": 129.7027846,
+      "kinds": "hospital",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423800560",
+      "name": "古城簡易郵便局",
+      "lat": 33.7594746,
+      "lng": 129.6983977,
+      "kinds": "post_office",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:449786695",
+      "name": "ゲートボール場駐車場",
+      "lat": 33.7613123,
+      "lng": 129.6951113,
+      "kinds": "parking",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:449783934",
+      "name": "大谷公園 全天候型ゲートボール場",
+      "lat": 33.7613242,
+      "lng": 129.6953549,
+      "kinds": "pitch",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:13140906665",
+      "name": "壱岐オリーブ園",
+      "lat": 33.7375521,
+      "lng": 129.6973084,
+      "kinds": "yes",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:445313417",
+      "name": "大谷公園　テニスコート",
+      "lat": 33.7612357,
+      "lng": 129.6963077,
+      "kinds": "pitch",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:449784463",
+      "name": "大谷公園　テニスコート",
+      "lat": 33.761295,
+      "lng": 129.697027,
+      "kinds": "pitch",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:449809004",
+      "name": "福田商店",
+      "lat": 33.7620303,
+      "lng": 129.6956024,
+      "kinds": "dairy",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:449809834",
+      "name": "ゲートボール場",
+      "lat": 33.7616827,
+      "lng": 129.6967021,
+      "kinds": "pitch",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:499872909",
+      "name": "ファミリーマート",
+      "lat": 33.7589257,
+      "lng": 129.7009987,
+      "kinds": "convenience",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:442886902",
+      "name": "創価学会",
+      "lat": 33.7625094,
+      "lng": 129.6955776,
+      "kinds": "place_of_worship",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:4458831089",
+      "name": "太公望",
+      "lat": 33.760077,
+      "lng": 129.674544,
+      "kinds": "hotel",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:445313431",
+      "name": "ドラッグ",
+      "lat": 33.7612133,
+      "lng": 129.7000724,
+      "kinds": "pharmacy",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631225060",
+      "name": "麦谷触老人憩の家",
+      "lat": 33.760645,
+      "lng": 129.674696,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:4160817191",
+      "name": "岳の辻園地西側展望デッキ",
+      "lat": 33.7398138,
+      "lng": 129.7055229,
+      "kinds": "park",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:4160817192",
+      "name": "岳の辻展望台",
+      "lat": 33.7410007,
+      "lng": 129.7069414,
+      "kinds": "park",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:6833880310",
+      "name": "岳の辻展望台",
+      "lat": 33.7413776,
+      "lng": 129.7072592,
+      "kinds": "attraction",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:442879886",
+      "name": "サンワパチンコ",
+      "lat": 33.7636933,
+      "lng": 129.7002812,
+      "kinds": "adult_gaming_centre",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:449800012",
+      "name": "新小屋　駐車場",
+      "lat": 33.7640635,
+      "lng": 129.7000972,
+      "kinds": "parking",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:448906922",
+      "name": "コスモ石油",
+      "lat": 33.7642686,
+      "lng": 129.6997573,
+      "kinds": "fuel",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:449799365",
+      "name": "新古屋",
+      "lat": 33.7640124,
+      "lng": 129.7003422,
+      "kinds": "second_hand",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:442878768",
+      "name": "ダイソー壱岐柳田店",
+      "lat": 33.7642392,
+      "lng": 129.7003893,
+      "kinds": "variety_store",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631210734",
+      "name": "坪触老人憩の家",
+      "lat": 33.730565,
+      "lng": 129.686947,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:442879096",
+      "name": "エフワン壱岐店",
+      "lat": 33.7644108,
+      "lng": 129.7004371,
+      "kinds": "clothes",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:442881028",
+      "name": "au",
+      "lat": 33.7645277,
+      "lng": 129.7005457,
+      "kinds": "mobile_phone",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:449808072",
+      "name": "長米",
+      "lat": 33.7646694,
+      "lng": 129.7005709,
+      "kinds": "dairy",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:448904923",
+      "name": "かみひごや",
+      "lat": 33.7650282,
+      "lng": 129.7000292,
+      "kinds": "variety_store",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:449805750",
+      "name": "かみひごや　駐車場",
+      "lat": 33.7650018,
+      "lng": 129.7001598,
+      "kinds": "parking",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:443172015",
+      "name": "壱岐病院",
+      "lat": 33.7563017,
+      "lng": 129.7090341,
+      "kinds": "hospital",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631217873",
+      "name": "田中触老人憩の家",
+      "lat": 33.762923,
+      "lng": 129.703777,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:442879234",
+      "name": "ｹﾞｵ壱岐店",
+      "lat": 33.7653039,
+      "lng": 129.7001437,
+      "kinds": "hobby",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:442879410",
+      "name": "天手長男神社",
+      "lat": 33.7640447,
+      "lng": 129.7024389,
+      "kinds": "place_of_worship",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:442880296",
+      "name": "平尾石油",
+      "lat": 33.7652461,
+      "lng": 129.7005344,
+      "kinds": "fuel",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:448904893",
+      "name": "GEO駐車場",
+      "lat": 33.765412,
+      "lng": 129.7002285,
+      "kinds": "parking",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:442880283",
+      "name": "ダイレックス",
+      "lat": 33.7653318,
+      "lng": 129.7010919,
+      "kinds": "supermarket",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:443016125",
+      "name": "馬場商会",
+      "lat": 33.7660215,
+      "lng": 129.7000369,
+      "kinds": "car",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:4627218982",
+      "name": "ひさた歯科医院",
+      "lat": 33.7668567,
+      "lng": 129.6981857,
+      "kinds": "dentist",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:4467305667",
+      "name": "JT",
+      "lat": 33.768231,
+      "lng": 129.693793,
+      "kinds": "vending_machine",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:448907548",
+      "name": "谷口商店",
+      "lat": 33.7682801,
+      "lng": 129.6938278,
+      "kinds": "alcohol",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:4405308118",
+      "name": "長岡商店",
+      "lat": 33.7661312,
+      "lng": 129.7002593,
+      "kinds": "seafood",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:442880257",
+      "name": "柳田簡易郵便局",
+      "lat": 33.7661383,
+      "lng": 129.700314,
+      "kinds": "post_office",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:443016129",
+      "name": "梅野商店",
+      "lat": 33.7660511,
+      "lng": 129.7004961,
+      "kinds": "dairy",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:4458793093",
+      "name": "忠魂碑",
+      "lat": 33.7662997,
+      "lng": 129.7000652,
+      "kinds": "memorial",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:445313427",
+      "name": "ヘアーサロン　マキヤマ",
+      "lat": 33.7662509,
+      "lng": 129.700399,
+      "kinds": "hairdresser",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:442887968",
+      "name": "馬場商会",
+      "lat": 33.7662115,
+      "lng": 129.7005358,
+      "kinds": "car",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:499875586",
+      "name": "牛方公民館",
+      "lat": 33.7686537,
+      "lng": 129.693189,
+      "kinds": "community_centre",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423806857",
+      "name": "柳田保育所",
+      "lat": 33.766724,
+      "lng": 129.699472,
+      "kinds": "kindergarten",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:442881722",
+      "name": "一嘉",
+      "lat": 33.7664835,
+      "lng": 129.7001733,
+      "kinds": "pub",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:445313426",
+      "name": "市立柳田小学校",
+      "lat": 33.7665429,
+      "lng": 129.7012552,
+      "kinds": "school",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:448906691",
+      "name": "壱岐のうみ",
+      "lat": 33.7669849,
+      "lng": 129.7004017,
+      "kinds": "seafood",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:449804062",
+      "name": "壱岐のうみ　駐車場",
+      "lat": 33.7669366,
+      "lng": 129.7006656,
+      "kinds": "parking",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:441105470",
+      "name": "柳田小体育館",
+      "lat": 33.7667952,
+      "lng": 129.7015452,
+      "kinds": "sports_hall",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:448907917",
+      "name": "あぶらや",
+      "lat": 33.7671177,
+      "lng": 129.7010467,
+      "kinds": "fuel",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:499873086",
+      "name": "祥雲寺",
+      "lat": 33.7695472,
+      "lng": 129.6941554,
+      "kinds": "place_of_worship",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423801628",
+      "name": "壱岐警察署渡良駐在所",
+      "lat": 33.750349,
+      "lng": 129.662179,
+      "kinds": "police",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:448908684",
+      "name": "柳田集落センター",
+      "lat": 33.7685169,
+      "lng": 129.6992529,
+      "kinds": "community_centre",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:441105466",
+      "name": "ベスト電気",
+      "lat": 33.7678952,
+      "lng": 129.701391,
+      "kinds": "electronics",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1046537008",
+      "name": "市立渡良小学校",
+      "lat": 33.7577477,
+      "lng": 129.6637565,
+      "kinds": "school",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1046537005",
+      "name": "壱岐市立渡良中学校",
+      "lat": 33.7565801,
+      "lng": 129.6625933,
+      "kinds": "school",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631216378",
+      "name": "渡良浦老人憩の家",
+      "lat": 33.748924,
+      "lng": 129.660575,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:443023562",
+      "name": "壱岐消防署郷ノ浦支署",
+      "lat": 33.7511772,
+      "lng": 129.7153997,
+      "kinds": "fire_station",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1435369847",
+      "name": "渡良保育所",
+      "lat": 33.7558601,
+      "lng": 129.6615766,
+      "kinds": "kindergarten",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423807496",
+      "name": "渡良郵便局",
+      "lat": 33.757129,
+      "lng": 129.661566,
+      "kinds": "post_office",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:442879984",
+      "name": "読売新聞",
+      "lat": 33.7696623,
+      "lng": 129.7016802,
+      "kinds": "newsagent",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:454633453",
+      "name": "獄山神社",
+      "lat": 33.7411086,
+      "lng": 129.7165578,
+      "kinds": "place_of_worship",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:442912428",
+      "name": "(有）中央サービス",
+      "lat": 33.7730442,
+      "lng": 129.7000222,
+      "kinds": "car",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631213194",
+      "name": "志原南触老人憩の家",
+      "lat": 33.7407669,
+      "lng": 129.718118,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:9660134708",
+      "name": "円光寺",
+      "lat": 33.7548558,
+      "lng": 129.719105,
+      "kinds": "place_of_worship",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:443023539",
+      "name": "志原保育所",
+      "lat": 33.7533248,
+      "lng": 129.7194802,
+      "kinds": "childcare",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:9660134603",
+      "name": "津神社",
+      "lat": 33.7746544,
+      "lng": 129.6962855,
+      "kinds": "place_of_worship",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:443023536",
+      "name": "弥佐支刀神社",
+      "lat": 33.7532784,
+      "lng": 129.7198968,
+      "kinds": "place_of_worship",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423804622",
+      "name": "志原簡易郵便局",
+      "lat": 33.752453,
+      "lng": 129.720166,
+      "kinds": "post_office",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:443023532",
+      "name": "体育館",
+      "lat": 33.7536391,
+      "lng": 129.7201586,
+      "kinds": "sports_hall",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631223697",
+      "name": "郷ノ浦町へき地保健福祉館",
+      "lat": 33.7528591,
+      "lng": 129.720323,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423804620",
+      "name": "志原保育所",
+      "lat": 33.75287,
+      "lng": 129.72036,
+      "kinds": "kindergarten",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1444708281",
+      "name": "市立志原小学校",
+      "lat": 33.7536958,
+      "lng": 129.7206281,
+      "kinds": "school",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:443023535",
+      "name": "運動場",
+      "lat": 33.7535431,
+      "lng": 129.7208294,
+      "kinds": "pitch",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:449774999",
+      "name": "祭儀会館 鳳雲堂",
+      "lat": 33.7768726,
+      "lng": 129.69197,
+      "kinds": "funeral_directors",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423801625",
+      "name": "壱岐警察署志原駐在所",
+      "lat": 33.753173,
+      "lng": 129.721487,
+      "kinds": "police",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631222560",
+      "name": "若松触老人憩の家",
+      "lat": 33.730816,
+      "lng": 129.714861,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1433369070",
+      "name": "壱岐市葬祭場",
+      "lat": 33.7781427,
+      "lng": 129.6911887,
+      "kinds": "funeral_directors",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631214214",
+      "name": "木田触老人憩の家",
+      "lat": 33.775196,
+      "lng": 129.709311,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:729493373",
+      "name": "壱岐市立初山中学校",
+      "lat": 33.7188619,
+      "lng": 129.702454,
+      "kinds": "school",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1446744158",
+      "name": "壱岐市立初山小学校",
+      "lat": 33.7187647,
+      "lng": 129.7032801,
+      "kinds": "school",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423800215",
+      "name": "初山保育所",
+      "lat": 33.718789,
+      "lng": 129.70456,
+      "kinds": "kindergarten",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423800217",
+      "name": "初山郵便局",
+      "lat": 33.7179348,
+      "lng": 129.70264,
+      "kinds": "post_office",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631210126",
+      "name": "初山東西老人憩の家",
+      "lat": 33.714956,
+      "lng": 129.699113,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423801607",
+      "name": "壱岐警察署初山駐在所",
+      "lat": 33.714789,
+      "lng": 129.699502,
+      "kinds": "police",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631212833",
+      "name": "平人触老人憩の家",
+      "lat": 33.749803,
+      "lng": 129.731157,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631213974",
+      "name": "有安触老人憩の家",
+      "lat": 33.782559,
+      "lng": 129.667696,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:10815479705",
+      "name": "鬼屋窪古墳",
+      "lat": 33.7810681,
+      "lng": 129.6644003,
+      "kinds": "attraction",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:8152714017",
+      "name": "島永祐術壽像",
+      "lat": 33.7248578,
+      "lng": 129.6515119,
+      "kinds": "monument",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1436719160",
+      "name": "市立三島小学校原島分校",
+      "lat": 33.7259266,
+      "lng": 129.6490457,
+      "kinds": "school",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:10813006005",
+      "name": "久保頭古墳  物部氏縁  この辺り",
+      "lat": 33.7705605,
+      "lng": 129.729011,
+      "kinds": "attraction",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1431694438",
+      "name": "壱岐市立沼津中学校",
+      "lat": 33.7872473,
+      "lng": 129.6710636,
+      "kinds": "school",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423797586",
+      "name": "三島保育所",
+      "lat": 33.740424,
+      "lng": 129.639618,
+      "kinds": "kindergarten",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631210361",
+      "name": "原島老人憩の家",
+      "lat": 33.723038,
+      "lng": 129.648729,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:4160817200",
+      "name": "興神社",
+      "lat": 33.7696826,
+      "lng": 129.7318176,
+      "kinds": "place_of_worship",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631222409",
+      "name": "芦辺町住吉へき地保健福祉館",
+      "lat": 33.788116,
+      "lng": 129.706665,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:6833880309",
+      "name": "鬼の足跡",
+      "lat": 33.7716895,
+      "lng": 129.6453127,
+      "kinds": "attraction",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1431233194",
+      "name": "市立沼津小学校",
+      "lat": 33.7890629,
+      "lng": 129.6718248,
+      "kinds": "school",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631210908",
+      "name": "大島へき地保健福祉館",
+      "lat": 33.739202,
+      "lng": 129.63748,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:8152621517",
+      "name": "天満神社",
+      "lat": 33.7211167,
+      "lng": 129.6470718,
+      "kinds": "place_of_worship",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:8152621518",
+      "name": "原島神社",
+      "lat": 33.7209998,
+      "lng": 129.6468499,
+      "kinds": "place_of_worship",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1431233236",
+      "name": "沼津保育所",
+      "lat": 33.7917388,
+      "lng": 129.6736242,
+      "kinds": "kindergarten",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423807295",
+      "name": "沼津郵便局",
+      "lat": 33.79153,
+      "lng": 129.672473,
+      "kinds": "post_office",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1046710914",
+      "name": "市立三島小学校",
+      "lat": 33.7382072,
+      "lng": 129.6348846,
+      "kinds": "school",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1418107069",
+      "name": "那賀幼稚園",
+      "lat": 33.7873255,
+      "lng": 129.7192031,
+      "kinds": "kindergarten",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1418107067",
+      "name": "市立那賀小学校",
+      "lat": 33.7877156,
+      "lng": 129.7199158,
+      "kinds": "school",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1046715295",
+      "name": "市立三島小学校長島分校",
+      "lat": 33.7277439,
+      "lng": 129.6362968,
+      "kinds": "school",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:8153142417",
+      "name": "砲台跡",
+      "lat": 33.73744,
+      "lng": 129.6313717,
+      "kinds": "viewpoint",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:8153272217",
+      "name": "砲台跡",
+      "lat": 33.73763,
+      "lng": 129.631077,
+      "kinds": "viewpoint",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:8153272218",
+      "name": "砲台跡",
+      "lat": 33.7370051,
+      "lng": 129.6310606,
+      "kinds": "viewpoint",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:8153272417",
+      "name": "砲台跡",
+      "lat": 33.7367057,
+      "lng": 129.6306398,
+      "kinds": "viewpoint",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631223890",
+      "name": "長島老人憩の家",
+      "lat": 33.728092,
+      "lng": 129.634092,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:8153232317",
+      "name": "ヘアーサロン　tokyshima",
+      "lat": 33.726561,
+      "lng": 129.634141,
+      "kinds": "hairdresser",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1417750884",
+      "name": "壱岐市立那賀中学校",
+      "lat": 33.7915231,
+      "lng": 129.7213299,
+      "kinds": "school",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631221976",
+      "name": "立石地区老人憩の家",
+      "lat": 33.799919,
+      "lng": 129.683972,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423801586",
+      "name": "壱岐市消防本部",
+      "lat": 33.7929179,
+      "lng": 129.7201614,
+      "kinds": "fire_station",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:10813683507",
+      "name": "双六古墳  前方後円墳",
+      "lat": 33.7988249,
+      "lng": 129.7035838,
+      "kinds": "attraction",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423801591",
+      "name": "壱岐消防署",
+      "lat": 33.7930216,
+      "lng": 129.7201145,
+      "kinds": "fire_station",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423801581",
+      "name": "壱岐・原の辻展示館",
+      "lat": 33.763373,
+      "lng": 129.748618,
+      "kinds": "museum",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:10813939605",
+      "name": "カジバヤ古墳",
+      "lat": 33.7963994,
+      "lng": 129.7149016,
+      "kinds": "attraction",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423801590",
+      "name": "壱岐松永記念館",
+      "lat": 33.74507,
+      "lng": 129.75144,
+      "kinds": "museum",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631222415",
+      "name": "芦辺町深江へき地保健福祉館",
+      "lat": 33.768536,
+      "lng": 129.748469,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631218380",
+      "name": "石田町在宅介護支援センター",
+      "lat": 33.7452,
+      "lng": 129.753189,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1429283897",
+      "name": "壱岐市立鯨伏中学校",
+      "lat": 33.803523,
+      "lng": 129.6903488,
+      "kinds": "school",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:1429283896",
+      "name": "市立鯨伏小学校",
+      "lat": 33.8037459,
+      "lng": 129.6897176,
+      "kinds": "school",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1631212753",
+      "name": "布気地区老人憩の家",
+      "lat": 33.803447,
+      "lng": 129.697998,
+      "kinds": "social_facility",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423801647",
+      "name": "壱岐警察署那賀駐在所",
+      "lat": 33.798115,
+      "lng": 129.718469,
+      "kinds": "police",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423807572",
+      "name": "湯本郵便局",
+      "lat": 33.804363,
+      "lng": 129.688138,
+      "kinds": "post_office",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423801584",
+      "name": "壱岐国分郵便局",
+      "lat": 33.7983185,
+      "lng": 129.7184147,
+      "kinds": "post_office",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:10813683705",
+      "name": "しな川  割烹",
+      "lat": 33.8045969,
+      "lng": 129.688684,
+      "kinds": "restaurant",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:10813683506",
+      "name": "笹塚古墳",
+      "lat": 33.8032027,
+      "lng": 129.7035374,
+      "kinds": "attraction",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:10813693405",
+      "name": "山ノ神古墳",
+      "lat": 33.8018232,
+      "lng": 129.7098356,
+      "kinds": "attraction",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:10813890705",
+      "name": "鬼の窟古墳  石室",
+      "lat": 33.8011691,
+      "lng": 129.7124051,
+      "kinds": "attraction",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:10815536305",
+      "name": "大塚山古墳",
+      "lat": 33.7699656,
+      "lng": 129.7504342,
+      "kinds": "attraction",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423812730",
+      "name": "石田幼稚園",
+      "lat": 33.747621,
+      "lng": 129.755386,
+      "kinds": "kindergarten",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:10813683606",
+      "name": "山ノ神古墳   前方後円墳",
+      "lat": 33.8022265,
+      "lng": 129.7091837,
+      "kinds": "attraction",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:12289502508",
+      "name": "平山旅館",
+      "lat": 33.8051313,
+      "lng": 129.6856939,
+      "kinds": "hotel",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:4404221039",
+      "name": "印通寺港",
+      "lat": 33.7415743,
+      "lng": 129.7549723,
+      "kinds": "marina",
+      "source": "iki_seed"
+    },
+    {
+      "id": "node:1423801587",
+      "name": "壱岐市立石田図書館",
+      "lat": 33.743762,
+      "lng": 129.755406,
+      "kinds": "library",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:468157449",
+      "name": "まつなが歯科医院",
+      "lat": 33.7982558,
+      "lng": 129.7207962,
+      "kinds": "dentist",
+      "source": "iki_seed"
+    },
+    {
+      "id": "way:732096982",
+      "name": "壱岐警察署鯨伏駐在所",
+      "lat": 33.8054524,
+      "lng": 129.6897171,
+      "kinds": "police",
+      "source": "iki_seed"
+    }
+  ]
+}

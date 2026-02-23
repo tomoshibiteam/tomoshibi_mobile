@@ -1,4 +1,5 @@
 import { getSupabaseOrThrow } from "@/lib/supabase";
+import type { GeneratedSeriesDraft } from "@/services/seriesAi";
 
 type CreateQuestDraftPayload = {
   creatorId: string;
@@ -14,6 +15,11 @@ type CreateEpisodePayload = {
   seriesTitle: string;
   episodeTitle: string;
   episodeText: string;
+};
+
+type DeleteSeriesDraftPayload = {
+  userId: string;
+  questId: string;
 };
 
 type EpisodeSaveResult = {
@@ -83,6 +89,28 @@ const isQuestEpisodesUnavailable = (error: unknown) => {
     code === "42703" ||
     normalized.includes("quest_episodes")
   );
+};
+
+const isQuestPostsUnavailable = (error: unknown) => {
+  if (!error || typeof error !== "object") return false;
+  const maybeError = error as { code?: string; message?: string; details?: string };
+  const code = maybeError.code || "";
+  const normalized = `${maybeError.message || ""} ${maybeError.details || ""}`.toLowerCase();
+  return (
+    code === "42P01" ||
+    code === "PGRST204" ||
+    code === "42703" ||
+    normalized.includes("quest_posts")
+  );
+};
+
+const isMissingAnyColumn = (error: unknown, columnNames: string[]) => {
+  if (!error || typeof error !== "object") return false;
+  const maybeError = error as { code?: string; message?: string; details?: string };
+  const code = maybeError.code || "";
+  const normalized = `${maybeError.message || ""} ${maybeError.details || ""}`.toLowerCase();
+  if (code !== "42703" && code !== "PGRST204" && !normalized.includes("column")) return false;
+  return columnNames.some((column) => normalized.includes(column.toLowerCase()));
 };
 
 export const createQuestDraft = async (payload: CreateQuestDraftPayload) => {
@@ -156,6 +184,48 @@ export const fetchMySeriesOptions = async (userId: string, limit = 40) => {
     status: row.status,
     createdAt: row.created_at,
   })) satisfies SeriesOption[];
+};
+
+export const deleteSeriesDraft = async (payload: DeleteSeriesDraftPayload) => {
+  const supabase = getSupabaseOrThrow();
+
+  try {
+    const { error } = await supabase
+      .from("quest_episodes")
+      .delete()
+      .eq("quest_id", payload.questId)
+      .eq("user_id", payload.userId);
+
+    if (error) throw error;
+  } catch (error) {
+    if (!isQuestEpisodesUnavailable(error)) throw error;
+  }
+
+  try {
+    const { error } = await supabase
+      .from("quest_posts")
+      .delete()
+      .eq("quest_id", payload.questId)
+      .eq("user_id", payload.userId);
+
+    if (error) throw error;
+  } catch (error) {
+    if (!isQuestPostsUnavailable(error)) throw error;
+  }
+
+  const { data, error } = await supabase
+    .from("quests")
+    .delete()
+    .eq("id", payload.questId)
+    .eq("creator_id", payload.userId)
+    .eq("status", "draft")
+    .select("id")
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data?.id) {
+    throw asCodedError("Quest draft was not deleted.", "NOT_DELETED");
+  }
 };
 
 export const fetchSeriesDetail = async (questId: string) => {
@@ -430,5 +500,152 @@ export const createEpisodeForSeries = async (payload: CreateEpisodePayload) => {
   } catch (error) {
     if (!isQuestEpisodesUnavailable(error)) throw error;
     return saveToQuestPosts();
+  }
+};
+
+
+type SaveSeriesBlueprintPayload = {
+  questId: string;
+  userId: string;
+  sourcePrompt?: string | null;
+  generated: GeneratedSeriesDraft;
+};
+
+export const saveSeriesBlueprint = async (payload: SaveSeriesBlueprintPayload) => {
+  const supabase = getSupabaseOrThrow();
+  const now = new Date().toISOString();
+
+  const bibleBasePayload = {
+    quest_id: payload.questId,
+    creator_id: payload.userId,
+    title: payload.generated.title,
+    overview: payload.generated.overview || null,
+    genre: payload.generated.genre || null,
+    tone: payload.generated.tone || null,
+    premise: payload.generated.premise || null,
+    season_goal: payload.generated.seasonGoal || null,
+    ai_rules: payload.generated.aiRules || null,
+    world: payload.generated.world || {},
+    continuity: payload.generated.continuity || {},
+    source_prompt: payload.sourcePrompt || null,
+    workflow_version: payload.generated.workflowVersion || null,
+    updated_at: now,
+  };
+
+  let { data: bibleRow, error: bibleError } = await supabase
+    .from("series_bibles")
+    .upsert(
+      {
+        ...bibleBasePayload,
+        cover_image_prompt: payload.generated.coverImagePrompt || null,
+        cover_image_url: payload.generated.coverImageUrl || null,
+      },
+      { onConflict: "quest_id" }
+    )
+    .select("id")
+    .maybeSingle();
+
+  if (bibleError && isMissingAnyColumn(bibleError, ["cover_image_prompt", "cover_image_url"])) {
+    const retry = await supabase
+      .from("series_bibles")
+      .upsert(bibleBasePayload, { onConflict: "quest_id" })
+      .select("id")
+      .maybeSingle();
+
+    bibleRow = retry.data;
+    bibleError = retry.error;
+  }
+
+  if (bibleError) throw bibleError;
+  if (!bibleRow?.id) throw new Error("series_bibles upsert succeeded but id was not returned.");
+
+  const bibleId = bibleRow.id as string;
+
+  const { error: deleteCharactersError } = await supabase
+    .from("series_characters")
+    .delete()
+    .eq("bible_id", bibleId)
+    .eq("creator_id", payload.userId);
+
+  if (deleteCharactersError) throw deleteCharactersError;
+
+  const characterRows = (payload.generated.characters || []).map((character, index) => ({
+    bible_id: bibleId,
+    quest_id: payload.questId,
+    creator_id: payload.userId,
+    character_order: index + 1,
+    name: character.name,
+    role: character.role,
+    goal: character.goal || null,
+    arc_start: character.arcStart || null,
+    arc_end: character.arcEnd || null,
+    personality: character.personality || null,
+    appearance: character.appearance || null,
+    portrait_prompt: character.portraitPrompt || null,
+    portrait_image_url: character.portraitImageUrl || null,
+    secrets: character.secrets || [],
+    relationship_hooks: character.relationshipHooks || [],
+    updated_at: now,
+  }));
+
+  if (characterRows.length > 0) {
+    let { error: insertCharactersError } = await supabase.from("series_characters").insert(characterRows);
+
+    if (
+      insertCharactersError &&
+      isMissingAnyColumn(insertCharactersError, ["appearance", "portrait_prompt", "portrait_image_url"])
+    ) {
+      const legacyRows = characterRows.map((row) => ({
+        bible_id: row.bible_id,
+        quest_id: row.quest_id,
+        creator_id: row.creator_id,
+        character_order: row.character_order,
+        name: row.name,
+        role: row.role,
+        goal: row.goal,
+        arc_start: row.arc_start,
+        arc_end: row.arc_end,
+        personality: row.personality,
+        secrets: row.secrets,
+        relationship_hooks: row.relationship_hooks,
+        updated_at: row.updated_at,
+      }));
+
+      const retry = await supabase.from("series_characters").insert(legacyRows);
+      insertCharactersError = retry.error;
+    }
+
+    if (insertCharactersError) throw insertCharactersError;
+  }
+
+  const { error: deleteEpisodesError } = await supabase
+    .from("series_episode_blueprints")
+    .delete()
+    .eq("bible_id", bibleId)
+    .eq("creator_id", payload.userId);
+
+  if (deleteEpisodesError) throw deleteEpisodesError;
+
+  const episodeRows = (payload.generated.episodeBlueprints || []).map((episode, index) => ({
+    bible_id: bibleId,
+    quest_id: payload.questId,
+    creator_id: payload.userId,
+    episode_no: episode.episodeNo || index + 1,
+    title: episode.title,
+    objective: episode.objective || null,
+    synopsis: episode.synopsis || null,
+    key_location: episode.keyLocation || null,
+    emotional_beat: episode.emotionalBeat || null,
+    required_setups: episode.requiredSetups || [],
+    payoff_targets: episode.payoffTargets || [],
+    cliffhanger: episode.cliffhanger || null,
+    continuity_notes: episode.continuityNotes || null,
+    suggested_mission: episode.suggestedMission || null,
+    updated_at: now,
+  }));
+
+  if (episodeRows.length > 0) {
+    const { error: insertEpisodesError } = await supabase.from("series_episode_blueprints").insert(episodeRows);
+    if (insertEpisodesError) throw insertEpisodesError;
   }
 };

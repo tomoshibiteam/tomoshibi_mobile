@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -25,7 +26,7 @@ import { getSupabaseOrThrow, isSupabaseConfigured } from "@/lib/supabase";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { fetchMySeriesOptions, type SeriesOption } from "@/services/quests";
+import { deleteSeriesDraft, fetchMySeriesOptions, type SeriesOption } from "@/services/quests";
 
 type Props = BottomTabScreenProps<MainTabParamList, "Profile">;
 type ProfileTab = "series" | "timeline" | "likes" | "drafts";
@@ -94,7 +95,7 @@ export const ProfileScreen = ({}: Props) => {
   const { userId, loading: authLoading } = useSessionUserId();
 
   const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState<"publish" | "logout" | null>(null);
+  const [actionLoading, setActionLoading] = useState<"publish" | "delete" | "logout" | null>(null);
   const [profile, setProfile] = useState<ProfileRow | null>(null);
   const [followers, setFollowers] = useState(0);
   const [following, setFollowing] = useState(0);
@@ -353,6 +354,55 @@ export const ProfileScreen = ({}: Props) => {
     }
   };
 
+  const runDeleteDraft = async (questId: string) => {
+    if (!userId || actionLoading) return;
+
+    setActionLoading("delete");
+    try {
+      await deleteSeriesDraft({ questId, userId });
+      if (Platform.OS === "web" && typeof globalThis.alert === "function") {
+        globalThis.alert("下書きを消去しました。");
+      } else {
+        Alert.alert("消去しました", "下書きを消去しました。");
+      }
+      await refresh();
+    } catch (error) {
+      console.error("ProfileScreen: delete draft failed", error);
+      if (Platform.OS === "web" && typeof globalThis.alert === "function") {
+        globalThis.alert("下書きの消去に失敗しました。時間をおいて再度お試しください。");
+      } else {
+        Alert.alert("消去に失敗しました", "時間をおいて再度お試しください。");
+      }
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDeleteDraft = (questId: string) => {
+    if (!userId || actionLoading) return;
+
+    if (Platform.OS === "web") {
+      const shouldDelete =
+        typeof globalThis.confirm === "function"
+          ? globalThis.confirm("この下書きを消去しますか？")
+          : true;
+      if (!shouldDelete) return;
+      void runDeleteDraft(questId);
+      return;
+    }
+
+    Alert.alert("下書きを消去", "この下書きを消去しますか？", [
+      { text: "キャンセル", style: "cancel" },
+      {
+        text: "消去",
+        style: "destructive",
+        onPress: () => {
+          void runDeleteDraft(questId);
+        },
+      },
+    ]);
+  };
+
   const handleLogout = async () => {
     if (actionLoading) return;
 
@@ -576,39 +626,58 @@ export const ProfileScreen = ({}: Props) => {
     return (
       <View className="gap-3">
         {draftSeries.map((quest) => (
-          <Pressable
+          <View
             key={quest.id}
             className="rounded-2xl border border-[#ECE6DF] bg-white px-4 py-3"
-            onPress={() => rootNavigation.navigate("SeriesDetail", { questId: quest.id })}
           >
             <View className="flex-row items-center justify-between gap-3">
-              <View className="flex-1 min-w-0">
+              <Pressable
+                className="flex-1 min-w-0"
+                onPress={() => rootNavigation.navigate("SeriesDetail", { questId: quest.id })}
+              >
                 <Text className="text-sm text-[#221910]" numberOfLines={1} style={{ fontFamily: fonts.displayBold }}>
                   {quest.title}
                 </Text>
                 <Text className="text-xs text-[#6B6762] mt-1" style={{ fontFamily: fonts.bodyRegular }}>
                   {quest.areaName || "エリア未設定"}
                 </Text>
-              </View>
-
-              <Pressable
-                className="h-8 rounded-lg bg-[#EE8C2B] px-3 items-center justify-center"
-                onPress={(event) => {
-                  event.stopPropagation();
-                  void handlePublishDraft(quest.id);
-                }}
-                disabled={actionLoading === "publish"}
-              >
-                {actionLoading === "publish" ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text className="text-xs text-white" style={{ fontFamily: fonts.displayBold }}>
-                    公開
-                  </Text>
-                )}
               </Pressable>
+
+              <View className="flex-row items-center gap-2">
+                <Pressable
+                  className="h-8 rounded-lg border border-[#D8CFC6] bg-white px-3 items-center justify-center"
+                  onPress={() => {
+                    handleDeleteDraft(quest.id);
+                  }}
+                  disabled={Boolean(actionLoading)}
+                >
+                  {actionLoading === "delete" ? (
+                    <ActivityIndicator size="small" color="#9A4236" />
+                  ) : (
+                    <Text className="text-xs text-[#9A4236]" style={{ fontFamily: fonts.displayBold }}>
+                      消去
+                    </Text>
+                  )}
+                </Pressable>
+
+                <Pressable
+                  className="h-8 rounded-lg bg-[#EE8C2B] px-3 items-center justify-center"
+                  onPress={() => {
+                    void handlePublishDraft(quest.id);
+                  }}
+                  disabled={Boolean(actionLoading)}
+                >
+                  {actionLoading === "publish" ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text className="text-xs text-white" style={{ fontFamily: fonts.displayBold }}>
+                      公開
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
             </View>
-          </Pressable>
+          </View>
         ))}
       </View>
     );

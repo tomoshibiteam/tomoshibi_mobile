@@ -5,12 +5,14 @@ import type { RootStackParamList } from "@/navigation/types";
 import { MainTabs } from "@/navigation/MainTabs";
 import { AuthScreen } from "@/screens/AuthScreen";
 import { CreateSeriesScreen } from "@/screens/CreateSeriesScreen";
+import { SeriesGenerationResultScreen } from "@/screens/SeriesGenerationResultScreen";
 import { AddEpisodeScreen } from "@/screens/AddEpisodeScreen";
 import { ProfileEditScreen } from "@/screens/ProfileEditScreen";
 import { SettingsScreen } from "@/screens/SettingsScreen";
 import { UserProfileScreen } from "@/screens/UserProfileScreen";
 import { UserConnectionsScreen } from "@/screens/UserConnectionsScreen";
 import { SeriesDetailScreen } from "@/screens/SeriesDetailScreen";
+import { GamePlayScreen } from "@/screens/GamePlayScreen";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -35,10 +37,12 @@ export const RootNavigator = () => {
         <Stack.Screen name="MainTabs" component={MainTabs} />
         <Stack.Screen name="Auth" component={AuthScreen} />
         <Stack.Screen name="CreateSeries" component={CreateSeriesScreen} />
+        <Stack.Screen name="SeriesGenerationResult" component={SeriesGenerationResultScreen} />
         <Stack.Screen name="AddEpisode" component={AddEpisodeScreen} />
         <Stack.Screen name="ProfileEdit" component={ProfileEditScreen} />
         <Stack.Screen name="Settings" component={SettingsScreen} />
         <Stack.Screen name="SeriesDetail" component={SeriesDetailScreen} />
+        <Stack.Screen name="GamePlay" component={GamePlayScreen} />
         <Stack.Screen name="UserProfile" component={UserProfileScreen} />
         <Stack.Screen name="UserConnections" component={UserConnectionsScreen} />
       </Stack.Navigator>

@@ -226,7 +226,10 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
     }
 
     if (nextEpisode) {
-      Alert.alert("準備中", "プレイ画面は次フェーズで追加予定です。", [{ text: "閉じる" }]);
+      navigation.navigate("GamePlay", {
+        questId,
+        startEpisodeNo: nextEpisode.episodeNo,
+      });
       return;
     }
 

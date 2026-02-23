@@ -3,11 +3,22 @@
   "version": "1.0.0",
   "main": "index.ts",
   "scripts": {
-    "start": "expo start",
+    "start": "npm run dev",
+    "start:expo": "expo start",
+    "dev": "concurrently -k -n MASTRA,EXPO -c yellow,cyan \"npm run mastra:dev\" \"npm run start:expo -- --clear\"",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "mastra:dev": "npm --prefix ./mastra run dev",
+    "mastra:start": "npm --prefix ./mastra run start",
+    "mastra:build": "npm --prefix ./mastra run build",
+    "eas:env:push:production": "npx --yes eas-cli@latest env:push production --path .env",
+    "eas:build:android:firebase": "npx --yes eas-cli@latest build --platform android --profile firebase",
+    "eas:build:ios:firebase": "npx --yes eas-cli@latest build --platform ios --profile firebase",
+    "firebase:distribute:android": "node scripts/firebase-distribute.js --platform android",
+    "firebase:distribute:ios": "node scripts/firebase-distribute.js --platform ios",
+    "firebase:distribute:help": "node scripts/firebase-distribute.js --help"
   },
   "dependencies": {
     "@expo-google-fonts/noto-sans-jp": "^0.4.2",
@@ -21,12 +32,14 @@
     "expo": "~54.0.33",
     "expo-constants": "^18.0.10",
     "expo-font": "~14.0.9",
+    "expo-location": "^19.0.8",
     "expo-status-bar": "~3.0.9",
     "nativewind": "^4.2.1",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
     "react-native-gesture-handler": "^2.28.0",
+    "react-native-maps": "1.20.1",
     "react-native-reanimated": "^4.1.3",
     "react-native-safe-area-context": "^5.6.2",
     "react-native-screens": "^4.17.0",
@@ -38,6 +51,7 @@
     "@types/react": "~19.1.0",
     "babel-plugin-module-resolver": "^5.0.2",
     "babel-preset-expo": "^54.0.10",
+    "concurrently": "^9.1.2",
     "typescript": "~5.9.2"
   },
   "private": true

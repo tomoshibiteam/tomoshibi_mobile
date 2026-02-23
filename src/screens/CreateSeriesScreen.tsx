@@ -18,8 +18,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import type { RootStackParamList } from "@/navigation/types";
 import { fonts } from "@/theme/fonts";
 import { useSessionUserId } from "@/hooks/useSessionUser";
-import { createQuestDraft } from "@/services/quests";
-import { isSupabaseConfigured } from "@/lib/supabase";
+import {
+  generateSeriesDraftViaMastra,
+  type GeneratedSeriesDraft,
+  type SeriesInterviewInput,
+} from "@/services/seriesAi";
 
 const SERIES_OPTIONS_KEY = "tomoshibi.seriesOptions";
 const SELECTED_SERIES_KEY = "tomoshibi.selectedSeries";
@@ -53,18 +56,6 @@ type ChatMessage = {
   id: string;
   role: "assistant" | "user";
   text: string;
-};
-
-type GeneratedCharacter = {
-  name: string;
-  role: string;
-};
-
-type GeneratedSeriesDraft = {
-  title: string;
-  overview: string;
-  aiRules: string;
-  characters: GeneratedCharacter[];
 };
 
 const generateId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -102,9 +93,9 @@ const deriveSeriesTitle = (prompt: string) => {
   return compact.length >= 3 ? compact : "新しいシリーズ";
 };
 
-const deriveCharacters = (prompt: string): GeneratedCharacter[] => {
+const deriveCharacters = (prompt: string): GeneratedSeriesDraft["characters"] => {
   const cleaned = prompt.replace(/\s+/g, " ").trim();
-  const rules: Array<{ keywords: string[]; character: GeneratedCharacter }> = [
+  const rules: Array<{ keywords: string[]; character: GeneratedSeriesDraft["characters"][number] }> = [
     {
       keywords: ["探偵", "事件", "推理", "謎解き"],
       character: { name: "レイ", role: "推理役" },
@@ -131,7 +122,7 @@ const deriveCharacters = (prompt: string): GeneratedCharacter[] => {
     },
   ];
 
-  const picked: GeneratedCharacter[] = [];
+  const picked: GeneratedSeriesDraft["characters"] = [];
   const usedNames = new Set<string>();
 
   rules.forEach((rule) => {
@@ -141,7 +132,7 @@ const deriveCharacters = (prompt: string): GeneratedCharacter[] => {
     picked.push(rule.character);
   });
 
-  const fallback: GeneratedCharacter[] = [
+  const fallback: GeneratedSeriesDraft["characters"] = [
     { name: "アオイ", role: "主人公" },
     { name: "ユウ", role: "相棒" },
     { name: "クロ", role: "ライバル" },
@@ -200,6 +191,8 @@ const generateSeriesDraftFromPrompt = (prompt: string): GeneratedSeriesDraft => 
   overview: deriveOverview(prompt),
   aiRules: deriveAiRules(prompt),
   characters: deriveCharacters(prompt),
+  premise: deriveOverview(prompt),
+  seasonGoal: "シリーズ全体の核心を解き明かす",
 });
 
 const inferSeriesName = (rawText: string) => {
@@ -251,6 +244,16 @@ const persistSeriesDraft = async (generated: GeneratedSeriesDraft, sourcePrompt:
       overview: generated.overview,
       aiRules: generated.aiRules,
       characters: generated.characters,
+      coverImagePrompt: generated.coverImagePrompt || null,
+      coverImageUrl: generated.coverImageUrl || null,
+      genre: generated.genre || null,
+      tone: generated.tone || null,
+      premise: generated.premise || null,
+      seasonGoal: generated.seasonGoal || null,
+      world: generated.world || null,
+      continuity: generated.continuity || null,
+      episodeBlueprints: generated.episodeBlueprints || [],
+      workflowVersion: generated.workflowVersion || null,
       sourcePrompt: trimmedPrompt,
       updatedAt: new Date().toISOString(),
     };
@@ -294,6 +297,21 @@ export const CreateSeriesScreen = ({ route }: Props) => {
       .join("\n");
     return joined.trim();
   }, [seriesChatMessages]);
+
+  const interviewInput = useMemo<SeriesInterviewInput>(() => {
+    const answers = seriesChatMessages
+      .filter((message) => message.role === "user")
+      .map((message) => message.text.trim())
+      .filter(Boolean);
+
+    return {
+      genreWorld: answers[0] || latestUserMessage || "現代ドラマ",
+      mainObjective: answers[1] || "未解決の核心へ到達する",
+      protagonistPosition: answers[2] || "偶然事件に巻き込まれた旅人",
+      partnerDescription: answers[3] || "冷静に支えてくれる相棒",
+      additionalNotes: answers.slice(4).join("\n").trim() || undefined,
+    };
+  }, [seriesChatMessages, latestUserMessage]);
 
   const canSubmit = sourcePrompt.length > 0;
 
@@ -379,13 +397,6 @@ export const CreateSeriesScreen = ({ route }: Props) => {
     const promptForGeneration = (sourcePrompt || latestUserMessage).trim();
     if (!promptForGeneration) return;
 
-    const generated = generateSeriesDraftFromPrompt(promptForGeneration);
-    const generatedTitle = (seriesNameCandidate.trim() || generated.title || "新しいシリーズ").trim();
-    const normalizedDraft: GeneratedSeriesDraft = {
-      ...generated,
-      title: generatedTitle,
-    };
-
     setIsSaving(true);
     setIsGenerating(true);
     setMessageIndex(0);
@@ -397,22 +408,43 @@ export const CreateSeriesScreen = ({ route }: Props) => {
       setMessageIndex((prev) => (prev + 1) % GENERATING_MESSAGES.length);
     }, 2200);
 
-    let createdQuestId: string | null = null;
+    let normalizedDraft: GeneratedSeriesDraft | null = null;
 
     try {
-      await persistSeriesDraft(normalizedDraft, promptForGeneration);
+      const titleCandidate = seriesNameCandidate.trim();
 
-      if (isSupabaseConfigured && userId) {
-        createdQuestId = await createQuestDraft({
-          creatorId: userId,
-          title: normalizedDraft.title,
-          description: normalizedDraft.overview,
-          areaName: null,
-          coverImageUrl: null,
+      try {
+        const aiDraft = await generateSeriesDraftViaMastra({
+          interview: interviewInput,
+          prompt: promptForGeneration,
+          desiredEpisodeCount: 8,
+          creatorId: userId || undefined,
         });
+
+        normalizedDraft = {
+          ...aiDraft,
+          title: (aiDraft.title || titleCandidate || "新しいシリーズ").trim(),
+          aiRules:
+            aiDraft.aiRules?.trim() ||
+            "キャラクターと伏線の整合性を保ち、各話の結果を次話へ引き継ぐこと。",
+        };
+      } catch (error) {
+        console.warn("CreateSeriesScreen: Mastra generation failed, fallback local draft", error);
+        const fallbackDraft = generateSeriesDraftFromPrompt(promptForGeneration);
+        normalizedDraft = {
+          ...fallbackDraft,
+          title: (titleCandidate || fallbackDraft.title || "新しいシリーズ").trim(),
+        };
       }
+
+      if (!normalizedDraft) {
+        throw new Error("Series draft generation returned empty result.");
+      }
+
+      await persistSeriesDraft(normalizedDraft, promptForGeneration);
     } catch (error) {
       console.error("CreateSeriesScreen: failed to create draft", error);
+      Alert.alert("シリーズ作成に失敗しました", "時間をおいて再度お試しください。");
     }
 
     setTimeout(() => {
@@ -422,19 +454,14 @@ export const CreateSeriesScreen = ({ route }: Props) => {
       setIsSaving(false);
       setIsGenerating(false);
 
-      if (!userId && isSupabaseConfigured) {
-        Alert.alert(
-          "ログインすると下書きを同期できます",
-          "今回はローカル下書きとして保存しました。ログイン後に同期できます。"
-        );
-      }
+      if (!normalizedDraft) return;
 
-      navigation.replace("AddEpisode", {
-        prefillSeriesId: createdQuestId || undefined,
-        prefillSeriesTitle: normalizedDraft.title,
+      navigation.replace("SeriesGenerationResult", {
+        generated: normalizedDraft,
+        sourcePrompt: promptForGeneration,
       });
     }, 3400);
-  }, [canSubmit, isSaving, sourcePrompt, latestUserMessage, seriesNameCandidate, userId, navigation]);
+  }, [canSubmit, isSaving, sourcePrompt, latestUserMessage, seriesNameCandidate, interviewInput, userId, navigation]);
 
   if (isGenerating) {
     return (

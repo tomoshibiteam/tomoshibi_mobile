@@ -9,6 +9,13 @@ export type GameplayMessage = {
   text: string;
 };
 
+export type GameplayCharacter = {
+  id: string;
+  name: string;
+  role: string;
+  avatarUrl: string | null;
+};
+
 export type GameplaySpot = {
   id: string;
   orderIndex: number;
@@ -30,7 +37,66 @@ export type GameplayQuest = {
   title: string;
   areaName: string | null;
   coverImageUrl: string | null;
+  prologue: string | null;
+  epilogue: string | null;
+  characters: GameplayCharacter[];
   spots: GameplaySpot[];
+};
+
+type QuestRow = {
+  id: string;
+  title: string | null;
+  area_name: string | null;
+  cover_image_url: string | null;
+};
+
+type SpotRow = {
+  id: string;
+  name: string | null;
+  order_index: number | null;
+  lat: number | null;
+  lng: number | null;
+};
+
+type SpotDetailRow = {
+  id: string;
+  spot_id: string;
+  question_text: string | null;
+  answer_text: string | null;
+  hint_text: string | null;
+  explanation_text: string | null;
+};
+
+type SpotStoryMessageRow = {
+  id: string;
+  spot_id: string | null;
+  stage: string | null;
+  order_index: number | null;
+  speaker_type: string | null;
+  speaker_name: string | null;
+  avatar_url: string | null;
+  text: string | null;
+};
+
+type StoryTimelineRow = {
+  prologue: string | null;
+  epilogue: string | null;
+};
+
+type QuestCharacterRow = {
+  id: string | number | null;
+  name: string | null;
+  role: string | null;
+  image_url: string | null;
+};
+
+type QuestDialogueRow = {
+  id: string | number | null;
+  spot_id: string | null;
+  character_id: string | number | null;
+  timing: string | null;
+  text: string | null;
+  order_index: number | null;
 };
 
 const BACKGROUND_IMAGES = [
@@ -40,7 +106,8 @@ const BACKGROUND_IMAGES = [
   "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1080&q=80",
 ] as const;
 
-const normalizeText = (value?: string | null) => (value || "").replace(/\s+/g, " ").trim();
+const normalizeText = (value?: string | null) =>
+  (value || "").replace(/\s+/g, " ").trim();
 
 const parseHints = (hintText?: string | null) =>
   (hintText || "")
@@ -58,7 +125,11 @@ const isMissingRelationError = (error: unknown) => {
   if (!error || typeof error !== "object") return false;
   const maybe = error as { code?: string; message?: string; details?: string };
   const body = `${maybe.message || ""} ${maybe.details || ""}`.toLowerCase();
-  return maybe.code === "42P01" || body.includes("does not exist") || body.includes("relation");
+  return (
+    maybe.code === "42P01" ||
+    body.includes("does not exist") ||
+    body.includes("relation")
+  );
 };
 
 const toMessage = (row: {
@@ -73,15 +144,54 @@ const toMessage = (row: {
   const type = (row.speaker_type || "").toLowerCase();
   return {
     id: row.id,
-    speakerType: type === "character" ? "character" : type === "system" ? "system" : "narrator",
+    speakerType:
+      type === "character"
+        ? "character"
+        : type === "system"
+          ? "system"
+          : "narrator",
     name: normalizeText(row.speaker_name) || null,
     avatarUrl: row.avatar_url || null,
     text,
   };
 };
 
-const buildFallbackQuestFromEpisodes = async (questId: string): Promise<GameplayQuest | null> => {
-  const [series, episodes] = await Promise.all([fetchSeriesDetail(questId), fetchSeriesEpisodes(questId)]);
+const fetchStoryTimeline = async (
+  questId: string
+): Promise<{ prologue: string | null; epilogue: string | null }> => {
+  const supabase = getSupabaseOrThrow();
+
+  const { data, error } = await supabase
+    .from("story_timelines")
+    .select("prologue, epilogue")
+    .eq("quest_id", questId)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingRelationError(error)) {
+      return { prologue: null, epilogue: null };
+    }
+    console.warn("fetchStoryTimeline: failed, fallback to null", error);
+    return { prologue: null, epilogue: null };
+  }
+
+  const row = (data || null) as StoryTimelineRow | null;
+  return {
+    prologue: row?.prologue || null,
+    epilogue: row?.epilogue || null,
+  };
+};
+
+const buildFallbackQuestFromEpisodes = async (
+  questId: string,
+  story?: { prologue: string | null; epilogue: string | null }
+): Promise<GameplayQuest | null> => {
+  const [series, episodes, timeline] = await Promise.all([
+    fetchSeriesDetail(questId),
+    fetchSeriesEpisodes(questId),
+    story ? Promise.resolve(story) : fetchStoryTimeline(questId),
+  ]);
+
   if (!series) return null;
 
   const spots: GameplaySpot[] = episodes.map((episode, index) => {
@@ -123,28 +233,37 @@ const buildFallbackQuestFromEpisodes = async (questId: string): Promise<Gameplay
     title: series.title,
     areaName: series.areaName,
     coverImageUrl: series.coverImageUrl,
+    prologue: timeline.prologue,
+    epilogue: timeline.epilogue,
+    characters: [],
     spots,
   } satisfies GameplayQuest;
 };
 
-export const fetchGameplayQuest = async (questId: string): Promise<GameplayQuest | null> => {
+const normalizeStage = (raw: string | null) => {
+  const stage = (raw || "").toLowerCase();
+  if (stage.includes("post") || stage.includes("after")) return "post" as const;
+  return "pre" as const;
+};
+
+export const fetchGameplayQuest = async (
+  questId: string
+): Promise<GameplayQuest | null> => {
   const supabase = getSupabaseOrThrow();
 
-  const { data: questData, error: questError } = await supabase
-    .from("quests")
-    .select("id, title, area_name, cover_image_url")
-    .eq("id", questId)
-    .maybeSingle();
+  const [{ data: questData, error: questError }, timeline] = await Promise.all([
+    supabase
+      .from("quests")
+      .select("id, title, area_name, cover_image_url")
+      .eq("id", questId)
+      .maybeSingle(),
+    fetchStoryTimeline(questId),
+  ]);
 
   if (questError) throw questError;
   if (!questData) return null;
 
-  const questRow = questData as {
-    id: string;
-    title: string | null;
-    area_name: string | null;
-    cover_image_url: string | null;
-  };
+  const questRow = questData as QuestRow;
 
   try {
     const { data: spotsData, error: spotsError } = await supabase
@@ -155,71 +274,78 @@ export const fetchGameplayQuest = async (questId: string): Promise<GameplayQuest
 
     if (spotsError) throw spotsError;
 
-    const rawSpots = (spotsData || []) as Array<{
-      id: string;
-      name: string | null;
-      order_index: number | null;
-      lat: number | null;
-      lng: number | null;
-    }>;
-
+    const rawSpots = (spotsData || []) as SpotRow[];
     if (rawSpots.length === 0) {
-      return buildFallbackQuestFromEpisodes(questId);
+      return buildFallbackQuestFromEpisodes(questId, timeline);
     }
 
     const spotIds = rawSpots.map((spot) => spot.id);
 
-    const [{ data: detailsData, error: detailsError }, { data: messagesData, error: messagesError }] =
-      await Promise.all([
-        supabase
-          .from("spot_details")
-          .select("id, spot_id, question_text, answer_text, hint_text, explanation_text")
-          .in("spot_id", spotIds),
-        supabase
-          .from("spot_story_messages")
-          .select("id, spot_id, stage, order_index, speaker_type, speaker_name, avatar_url, text")
-          .in("spot_id", spotIds)
-          .order("order_index", { ascending: true }),
-      ]);
+    const [
+      { data: detailsData, error: detailsError },
+      { data: messagesData, error: messagesError },
+      { data: charactersData, error: charactersError },
+      { data: questDialoguesData, error: questDialoguesError },
+    ] = await Promise.all([
+      supabase
+        .from("spot_details")
+        .select("id, spot_id, question_text, answer_text, hint_text, explanation_text")
+        .in("spot_id", spotIds),
+      supabase
+        .from("spot_story_messages")
+        .select("id, spot_id, stage, order_index, speaker_type, speaker_name, avatar_url, text")
+        .in("spot_id", spotIds)
+        .order("order_index", { ascending: true }),
+      supabase
+        .from("quest_characters")
+        .select("id, name, role, image_url")
+        .eq("quest_id", questId),
+      supabase
+        .from("quest_dialogues")
+        .select("id, spot_id, character_id, timing, text, order_index")
+        .in("spot_id", spotIds)
+        .order("order_index", { ascending: true }),
+    ]);
 
     if (detailsError) throw detailsError;
     if (messagesError) throw messagesError;
 
-    const detailsBySpotId = new Map<string, {
-      question_text: string | null;
-      answer_text: string | null;
-      hint_text: string | null;
-      explanation_text: string | null;
-    }>();
+    if (charactersError && !isMissingRelationError(charactersError)) {
+      console.warn("fetchGameplayQuest: quest_characters read warning", charactersError);
+    }
 
-    ((detailsData || []) as Array<{
-      spot_id: string;
-      question_text: string | null;
-      answer_text: string | null;
-      hint_text: string | null;
-      explanation_text: string | null;
-    }>).forEach((row) => {
-      detailsBySpotId.set(row.spot_id, {
-        question_text: row.question_text,
-        answer_text: row.answer_text,
-        hint_text: row.hint_text,
-        explanation_text: row.explanation_text,
-      });
+    if (questDialoguesError && !isMissingRelationError(questDialoguesError)) {
+      console.warn("fetchGameplayQuest: quest_dialogues read warning", questDialoguesError);
+    }
+
+    const rawCharacters = (charactersData || []) as QuestCharacterRow[];
+    const characters: GameplayCharacter[] = rawCharacters.map((row, index) => ({
+      id: String(row.id || `quest-char-${index + 1}`),
+      name: normalizeText(row.name) || `キャラクター${index + 1}`,
+      role: normalizeText(row.role) || "旅の同行者",
+      avatarUrl: normalizeText(row.image_url) || null,
+    }));
+
+    const characterById = new Map<string, GameplayCharacter>();
+    characters.forEach((character) => {
+      characterById.set(character.id, character);
     });
 
-    const messagesBySpotId = new Map<string, { pre: GameplayMessage[]; post: GameplayMessage[] }>();
-    ((messagesData || []) as Array<{
-      id: string;
-      spot_id: string | null;
-      stage: string | null;
-      speaker_type: string | null;
-      speaker_name: string | null;
-      avatar_url: string | null;
-      text: string | null;
-    }>).forEach((row) => {
+    const detailsBySpotId = new Map<string, SpotDetailRow>();
+    ((detailsData || []) as SpotDetailRow[]).forEach((row) => {
+      detailsBySpotId.set(row.spot_id, row);
+    });
+
+    const storyMessagesBySpot = new Map<
+      string,
+      { pre: GameplayMessage[]; post: GameplayMessage[] }
+    >();
+
+    ((messagesData || []) as SpotStoryMessageRow[]).forEach((row, index) => {
       if (!row.spot_id) return;
+
       const mapped = toMessage({
-        id: row.id,
+        id: row.id || `${row.spot_id}-msg-${index}`,
         speaker_type: row.speaker_type,
         speaker_name: row.speaker_name,
         avatar_url: row.avatar_url,
@@ -227,25 +353,82 @@ export const fetchGameplayQuest = async (questId: string): Promise<GameplayQuest
       });
       if (!mapped) return;
 
-      const existing = messagesBySpotId.get(row.spot_id) || { pre: [], post: [] };
-      const stage = (row.stage || "").toLowerCase();
-      if (stage.includes("post") || stage.includes("after")) {
-        existing.post.push(mapped);
-      } else {
-        existing.pre.push(mapped);
-      }
-      messagesBySpotId.set(row.spot_id, existing);
+      const existing = storyMessagesBySpot.get(row.spot_id) || {
+        pre: [],
+        post: [],
+      };
+      const stage = normalizeStage(row.stage);
+      existing[stage].push(mapped);
+      storyMessagesBySpot.set(row.spot_id, existing);
+    });
+
+    const questDialoguesBySpot = new Map<
+      string,
+      { pre: GameplayMessage[]; post: GameplayMessage[] }
+    >();
+
+    ((questDialoguesData || []) as QuestDialogueRow[]).forEach((row, index) => {
+      if (!row.spot_id) return;
+      const text = normalizeText(row.text);
+      if (!text) return;
+
+      const characterId = row.character_id ? String(row.character_id) : null;
+      const character = characterId ? characterById.get(characterId) : undefined;
+      const stage = normalizeStage(row.timing);
+
+      const existing = questDialoguesBySpot.get(row.spot_id) || {
+        pre: [],
+        post: [],
+      };
+
+      existing[stage].push({
+        id: String(row.id || `${row.spot_id}-qd-${index}`),
+        speakerType: character ? "character" : "narrator",
+        name: character?.name || null,
+        avatarUrl: character?.avatarUrl || null,
+        text,
+      });
+
+      questDialoguesBySpot.set(row.spot_id, existing);
     });
 
     const spots: GameplaySpot[] = rawSpots.map((spot, index) => {
       const detail = detailsBySpotId.get(spot.id);
-      const messageBundle = messagesBySpotId.get(spot.id) || { pre: [], post: [] };
+      const storyBundle = storyMessagesBySpot.get(spot.id) || { pre: [], post: [] };
+      const questBundle = questDialoguesBySpot.get(spot.id) || { pre: [], post: [] };
+
+      const mergedPre =
+        storyBundle.pre.length > 0
+          ? storyBundle.pre
+          : questBundle.pre.length > 0
+            ? questBundle.pre
+            : [
+                makeNarration(
+                  `pre-${spot.id}`,
+                  `${normalizeText(spot.name) || "スポット"}に到着しました。`
+                ),
+              ];
+
+      const mergedPost =
+        storyBundle.post.length > 0
+          ? storyBundle.post
+          : questBundle.post.length > 0
+            ? questBundle.post
+            : [
+                makeNarration(
+                  `post-${spot.id}`,
+                  "謎を解き明かしました。次の地点へ進みましょう。"
+                ),
+              ];
 
       return {
         id: spot.id,
         orderIndex: spot.order_index ?? index + 1,
         name: normalizeText(spot.name) || `スポット${index + 1}`,
-        description: normalizeText(detail?.explanation_text) || "周辺を観察し、手がかりを集めましょう。",
+        description:
+          normalizeText(detail?.question_text) ||
+          normalizeText(detail?.explanation_text) ||
+          "周辺を観察し、手がかりを集めましょう。",
         lat: typeof spot.lat === "number" ? spot.lat : null,
         lng: typeof spot.lng === "number" ? spot.lng : null,
         backgroundImage: BACKGROUND_IMAGES[index % BACKGROUND_IMAGES.length],
@@ -253,14 +436,8 @@ export const fetchGameplayQuest = async (questId: string): Promise<GameplayQuest
         puzzleAnswer: normalizeText(detail?.answer_text) || null,
         puzzleHints: parseHints(detail?.hint_text),
         puzzleSuccessMessage: normalizeText(detail?.explanation_text) || null,
-        preMessages:
-          messageBundle.pre.length > 0
-            ? messageBundle.pre
-            : [makeNarration(`pre-${spot.id}`, `${normalizeText(spot.name) || "スポット"}に到着しました。`)],
-        postMessages:
-          messageBundle.post.length > 0
-            ? messageBundle.post
-            : [makeNarration(`post-${spot.id}`, "謎を解き明かしました。次の地点へ進みましょう。")],
+        preMessages: mergedPre,
+        postMessages: mergedPost,
       } satisfies GameplaySpot;
     });
 
@@ -269,10 +446,13 @@ export const fetchGameplayQuest = async (questId: string): Promise<GameplayQuest
       title: normalizeText(questRow.title) || "旅のエピソード",
       areaName: questRow.area_name,
       coverImageUrl: questRow.cover_image_url,
+      prologue: timeline.prologue,
+      epilogue: timeline.epilogue,
+      characters,
       spots,
     } satisfies GameplayQuest;
   } catch (error) {
     if (!isMissingRelationError(error)) throw error;
-    return buildFallbackQuestFromEpisodes(questId);
+    return buildFallbackQuestFromEpisodes(questId, timeline);
   }
 };
