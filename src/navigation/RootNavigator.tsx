@@ -7,6 +7,7 @@ import { AuthScreen } from "@/screens/AuthScreen";
 import { CreateSeriesScreen } from "@/screens/CreateSeriesScreen";
 import { SeriesGenerationResultScreen } from "@/screens/SeriesGenerationResultScreen";
 import { AddEpisodeScreen } from "@/screens/AddEpisodeScreen";
+import { EpisodeGenerationResultScreen } from "@/screens/EpisodeGenerationResultScreen";
 import { ProfileEditScreen } from "@/screens/ProfileEditScreen";
 import { SettingsScreen } from "@/screens/SettingsScreen";
 import { UserProfileScreen } from "@/screens/UserProfileScreen";
@@ -39,6 +40,7 @@ export const RootNavigator = () => {
         <Stack.Screen name="CreateSeries" component={CreateSeriesScreen} />
         <Stack.Screen name="SeriesGenerationResult" component={SeriesGenerationResultScreen} />
         <Stack.Screen name="AddEpisode" component={AddEpisodeScreen} />
+        <Stack.Screen name="EpisodeGenerationResult" component={EpisodeGenerationResultScreen} />
         <Stack.Screen name="ProfileEdit" component={ProfileEditScreen} />
         <Stack.Screen name="Settings" component={SettingsScreen} />
         <Stack.Screen name="SeriesDetail" component={SeriesDetailScreen} />

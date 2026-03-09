@@ -14,6 +14,7 @@ import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import type { MainTabParamList, RootStackParamList } from "@/navigation/types";
 import { fonts } from "@/theme/fonts";
 import { useSessionUserId } from "@/hooks/useSessionUser";
+import { useFriendshipsRealtime } from "@/hooks/useFriendshipsRealtime";
 import {
   fetchFollowCounts,
   fetchQuestSocialStats,
@@ -297,6 +298,8 @@ export const ProfileScreen = ({}: Props) => {
     }, [refresh])
   );
 
+  useFriendshipsRealtime([userId], refresh);
+
   const displayName = useMemo(() => profile?.name || "旅人", [profile?.name]);
   const displayBio = useMemo(
     () => profile?.bio || "日常の中にある小さな奇跡を探しています。あなたの次の冒険を書き残しましょう。",
@@ -403,27 +406,48 @@ export const ProfileScreen = ({}: Props) => {
     ]);
   };
 
-  const handleLogout = async () => {
+  const runLogout = async () => {
     if (actionLoading) return;
+
+    setActionLoading("logout");
+    try {
+      const supabase = getSupabaseOrThrow();
+      const { error } = await supabase.auth.signOut();
+      const canIgnoreSignOutError =
+        typeof error?.message === "string" && /auth session missing/i.test(error.message);
+
+      if (error && !canIgnoreSignOutError) throw error;
+      rootNavigation.reset({ index: 0, routes: [{ name: "Auth" }] });
+    } catch (error) {
+      console.error("ProfileScreen: sign out failed", error);
+      if (Platform.OS === "web" && typeof globalThis.alert === "function") {
+        globalThis.alert("ログアウトに失敗しました。時間をおいて再度お試しください。");
+      } else {
+        Alert.alert("ログアウトに失敗しました", "時間をおいて再度お試しください。");
+      }
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleLogout = () => {
+    if (actionLoading) return;
+
+    if (Platform.OS === "web") {
+      const shouldLogout =
+        typeof globalThis.confirm === "function" ? globalThis.confirm("ログアウトしますか？") : true;
+      if (!shouldLogout) return;
+      void runLogout();
+      return;
+    }
 
     Alert.alert("ログアウト", "ログアウトしますか？", [
       { text: "キャンセル", style: "cancel" },
       {
         text: "ログアウト",
         style: "destructive",
-        onPress: async () => {
-          setActionLoading("logout");
-          try {
-            const supabase = getSupabaseOrThrow();
-            const { error } = await supabase.auth.signOut();
-            if (error) throw error;
-            rootNavigation.navigate("Auth");
-          } catch (error) {
-            console.error("ProfileScreen: sign out failed", error);
-            Alert.alert("ログアウトに失敗しました", "時間をおいて再度お試しください。");
-          } finally {
-            setActionLoading(null);
-          }
+        onPress: () => {
+          void runLogout();
         },
       },
     ]);

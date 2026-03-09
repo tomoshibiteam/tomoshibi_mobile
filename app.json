@@ -2,6 +2,7 @@
   "expo": {
     "name": "TOMOSHIBI Mobile",
     "slug": "tomoshibi-mobile",
+    "scheme": "com.tomoshibi.mobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -43,7 +44,8 @@
         {
           "locationWhenInUsePermission": "ゲームプレイ中に現在地を利用してスポット到着を判定します。"
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
     "extra": {
       "eas": {

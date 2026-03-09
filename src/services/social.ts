@@ -109,6 +109,7 @@ export const fetchViewerRelations = async (viewerUserId: string) => {
   const { data, error } = await supabase
     .from("friendships")
     .select("id, requester_id, receiver_id, status, created_at")
+    .eq("status", "accepted")
     .or(`requester_id.eq.${viewerUserId},receiver_id.eq.${viewerUserId}`);
 
   if (error) throw error;
@@ -116,11 +117,25 @@ export const fetchViewerRelations = async (viewerUserId: string) => {
   const map: Record<string, FriendshipRow> = {};
   ((data || []) as FriendshipRow[]).forEach((row) => {
     const otherId = row.requester_id === viewerUserId ? row.receiver_id : row.requester_id;
-    map[otherId] = row;
+    const current = map[otherId];
+    if (!current) {
+      map[otherId] = row;
+      return;
+    }
+
+    // Prefer "viewer -> other" row if both directions exist.
+    if (row.requester_id === viewerUserId && current.requester_id !== viewerUserId) {
+      map[otherId] = row;
+    }
   });
 
   return map;
 };
+
+export const isFollowingUser = (
+  relation: FriendshipRow | null | undefined,
+  viewerUserId: string | null | undefined
+) => Boolean(relation && viewerUserId && relation.status === "accepted" && relation.requester_id === viewerUserId);
 
 const dedupeProfiles = (profiles: ProfileRow[]) => {
   const seen = new Set<string>();
@@ -272,8 +287,25 @@ export const followUser = async (viewerUserId: string, targetUserId: string) => 
     status: "accepted",
   });
 
-  if (error && error.code !== "23505") throw error;
+  if (!error) return;
+
+  if (error.code === "23505") {
+    const message = String(error.message || "");
+    // Legacy schema (friendships_unique_pair) blocks reverse-direction follows.
+    if (message.includes("friendships_unique_pair")) {
+      const conflict = new Error("MUTUAL_FOLLOW_BLOCKED_BY_SCHEMA");
+      conflict.name = "MutualFollowBlockedError";
+      throw conflict;
+    }
+    // Same-direction duplicate follow is idempotent.
+    return;
+  }
+
+  throw error;
 };
+
+export const isMutualFollowBlockedError = (error: unknown) =>
+  error instanceof Error && error.message === "MUTUAL_FOLLOW_BLOCKED_BY_SCHEMA";
 
 export const unfollowByRelationId = async (relationId: string) => {
   const supabase = getSupabaseOrThrow();

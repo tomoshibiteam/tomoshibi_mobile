@@ -3,7 +3,8 @@ import { z } from "zod";
 import { MASTRA_SERIES_EPISODE_MODEL } from "../modelConfig";
 import {
   seriesCharacterSchema,
-  seriesEpisodeBlueprintSchema,
+  seriesCheckpointSchema,
+  seriesEpisodeSeedSchema,
   seriesWorldSchema,
 } from "../../schemas/series";
 
@@ -19,22 +20,26 @@ export const seriesEpisodePlannerAgentInputSchema = z.object({
 });
 
 export const seriesEpisodePlannerAgentOutputSchema = z.object({
-  episode_blueprints: z.array(seriesEpisodeBlueprintSchema).min(3).max(24),
+  checkpoints: z.array(seriesCheckpointSchema).min(4).max(8),
+  first_episode_seed: seriesEpisodeSeedSchema,
 });
 
 export type SeriesEpisodePlannerAgentInput = z.infer<typeof seriesEpisodePlannerAgentInputSchema>;
 export type SeriesEpisodePlannerAgentOutput = z.infer<typeof seriesEpisodePlannerAgentOutputSchema>;
 
 const SERIES_EPISODE_AGENT_INSTRUCTIONS = `
-あなたは連載シリーズの構成作家です。
-シーズン全体を「導入→展開→転換→収束」で設計し、各話が次話の前提になるようにしてください。
+あなたは連載シリーズの体験設計作家です。
+シリーズの継続導線を設計しつつ、初回の街歩きエピソードに着地させてください。
 
 ## 必須方針
-- episode_no は 1 から連番
-- required_setups は過去話から受け取る前提
-- payoff_targets は将来話で回収する要素
-- continuity_notes には前後話との接続条件を明記
-- cliffhanger は次話への推進力として機能させる
+- checkpoints は 4〜8 個
+- checkpoints.checkpoint_no は 1 から連番
+- checkpoints.carry_over は次回に引き継ぐ状態変化を記述
+- first_episode_seed は 15〜30 分の街歩き体験を想定
+- first_episode_seed.carry_over_hint は次回へ続けたくなる余韻にする
+- 各話は徒歩で複数スポット（2〜4箇所）を巡る前提を守る
+- 単一の屋内拠点で完結させず、街路・公共空間の移動を含める
+- 空中都市・宇宙・海底・閉鎖施設内のみ等、街歩き不能な舞台を避ける
 `;
 
 export const seriesEpisodePlannerAgent = new Agent({
@@ -45,6 +50,36 @@ export const seriesEpisodePlannerAgent = new Agent({
 });
 
 const clean = (value?: string) => (value || "").replace(/\s+/g, " ").trim();
+const WALK_ROUTE_PATTERN = /(徒歩|街歩き|周遊|散策)/;
+const INCOMPATIBLE_SPOT_PATTERN =
+  /(オフィス内(?:だけ|のみ)?|社内(?:だけ|のみ)?|会議室|閉鎖施設|空中都市|天空都市|浮遊都市|宇宙|海底|塔内(?:だけ|のみ)?)/i;
+
+const dedupeStrings = (values: string[]) => {
+  const seen = new Set<string>();
+  return values
+    .map((value) => clean(value))
+    .filter((value) => {
+      if (!value) return false;
+      if (seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    });
+};
+
+const ensureWalkableRouteStyle = (value?: string) => {
+  const normalized = clean(value);
+  if (normalized && WALK_ROUTE_PATTERN.test(normalized)) return normalized;
+  return "徒歩中心の周遊";
+};
+
+const normalizeSuggestedSpots = (spots: string[], fallback: string[]) => {
+  const filtered = dedupeStrings(spots).filter((spot) => !INCOMPATIBLE_SPOT_PATTERN.test(spot));
+  const fallbackFiltered = dedupeStrings(fallback).filter((spot) => !INCOMPATIBLE_SPOT_PATTERN.test(spot));
+  const merged = dedupeStrings([...filtered, ...fallbackFiltered]);
+  if (merged.length >= 2) return merged.slice(0, 6);
+  if (merged.length === 1) return [merged[0], "商店街"];
+  return ["駅前広場", "商店街"];
+};
 
 const hasModelApiKey = () =>
   Boolean(
@@ -53,69 +88,84 @@ const hasModelApiKey = () =>
       process.env.ANTHROPIC_API_KEY
   );
 
-const buildFallbackEpisode = (
+const resolveCheckpointCount = (desiredEpisodeCount: number) =>
+  Math.max(4, Math.min(8, Math.round(desiredEpisodeCount / 2)));
+
+const buildFallbackCheckpoint = (
   input: SeriesEpisodePlannerAgentInput,
-  episodeNo: number
+  checkpointNo: number,
+  checkpointCount: number
 ) => {
-  const isFinal = episodeNo === input.desired_episode_count;
+  const pivotCharacter = input.characters[(checkpointNo - 1) % input.characters.length];
   const phase =
-    episodeNo <= Math.ceil(input.desired_episode_count * 0.3)
+    checkpointNo === 1
       ? "導入"
-      : episodeNo <= Math.ceil(input.desired_episode_count * 0.75)
-        ? "展開"
+      : checkpointNo < checkpointCount
+        ? "進展"
         : "収束";
-  const pivotCharacter = input.characters[(episodeNo - 1) % input.characters.length];
 
   return {
-    episode_no: episodeNo,
-    title: isFinal ? `最終話: ${input.season_goal}` : `第${episodeNo}話 ${phase}編`,
-    objective: isFinal
-      ? "シーズン目標を達成し、主要対立の結論を示す。"
-      : `${pivotCharacter.name}を軸に新しい手がかりを獲得する。`,
-    synopsis: isFinal
-      ? `${input.premise}の結末として、これまでの伏線を回収する。`
-      : `${input.world.setting}で事件が進展し、${pivotCharacter.name}の選択が次話の条件になる。`,
-    key_location: input.world.setting || "主要舞台",
-    emotional_beat: isFinal ? "喪失と再生" : "緊張と発見",
-    required_setups:
-      episodeNo === 1
-        ? ["シリーズ開始時点の関係性を提示する。"]
-        : [`第${episodeNo - 1}話のクリフハンガーを受けて開始する。`],
-    payoff_targets: isFinal
-      ? ["序盤で提示した対立構造", "主人公と相棒の関係変化"]
-      : [`第${Math.min(input.desired_episode_count, episodeNo + 1)}話で回収する伏線`],
-    cliffhanger: isFinal ? "次章へ続く余白を残して幕を閉じる。" : "新たな事実が発覚し、次話へ直結する。",
-    continuity_notes: isFinal
-      ? "全キャラクターの到達点を明示して閉じる。"
-      : `この話で得た情報を次話冒頭で必ず参照する。`,
-    suggested_mission: isFinal ? "最終判断を下す。" : `${pivotCharacter.role}の協力を得て核心へ近づく。`,
+    checkpoint_no: checkpointNo,
+    title: `CP${checkpointNo}: ${phase}`,
+    purpose:
+      checkpointNo === checkpointCount
+        ? "シーズン目標の達成条件を満たし、主要対立を決着へ導く。"
+        : `${pivotCharacter.name}の選択で、徒歩で巡る次の街歩き目的を明確化する。`,
+    unlock_hint:
+      checkpointNo === 1
+        ? "初回エピソードで街路の違和感を提示し、伏線として固定する。"
+        : `CP${checkpointNo - 1}で生じた未解決点を、移動先スポットで回収して前進する。`,
+    expected_emotion: checkpointNo === checkpointCount ? "達成と余韻" : "発見と高まり",
+    carry_over: "次回冒頭で参照する状態変化を1つ明示する。",
   };
 };
 
-const normalizeEpisode = (
-  raw: z.infer<typeof seriesEpisodeBlueprintSchema>,
-  fallback: z.infer<typeof seriesEpisodeBlueprintSchema>,
-  episodeNo: number
+const buildFallbackEpisodeSeed = (input: SeriesEpisodePlannerAgentInput) => ({
+  title: "第1話: 旅の始まり",
+  objective: "シリーズの主要目的へ向かう最初の手がかりを得る。",
+  opening_scene: `${input.world.setting}を歩き始めた直後に小さな違和感に出会い、2〜4スポットを巡る行動を開始する。`,
+  expected_duration_minutes: 20,
+  route_style: "徒歩中心の周遊",
+  completion_condition: "主要スポットを2つ以上巡り、次回につながる発見を得る。",
+  carry_over_hint: "相棒との会話で新たな疑問が残る。",
+  suggested_spots: [input.world.setting || "中心エリア", "駅前広場", "静かな裏通り"],
+});
+
+const normalizeCheckpoint = (
+  raw: z.infer<typeof seriesCheckpointSchema>,
+  fallback: z.infer<typeof seriesCheckpointSchema>,
+  checkpointNo: number
 ) => {
-  const requiredSetups = Array.isArray(raw.required_setups)
-    ? raw.required_setups.map((item) => clean(item)).filter(Boolean)
-    : [];
-  const payoffTargets = Array.isArray(raw.payoff_targets)
-    ? raw.payoff_targets.map((item) => clean(item)).filter(Boolean)
-    : [];
+  return {
+    checkpoint_no: checkpointNo,
+    title: clean(raw.title) || fallback.title,
+    purpose: clean(raw.purpose) || fallback.purpose,
+    unlock_hint: clean(raw.unlock_hint) || fallback.unlock_hint,
+    expected_emotion: clean(raw.expected_emotion) || fallback.expected_emotion,
+    carry_over: clean(raw.carry_over) || fallback.carry_over,
+  };
+};
+
+const normalizeEpisodeSeed = (
+  raw: z.infer<typeof seriesEpisodeSeedSchema>,
+  fallback: z.infer<typeof seriesEpisodeSeedSchema>
+) => {
+  const duration = Number.parseInt(String(raw.expected_duration_minutes), 10);
+  const safeDuration = Number.isFinite(duration) ? Math.max(10, Math.min(45, duration)) : fallback.expected_duration_minutes;
+  const suggestedSpots = normalizeSuggestedSpots(
+    Array.isArray(raw.suggested_spots) ? raw.suggested_spots.map((item) => clean(item)).filter(Boolean) : [],
+    fallback.suggested_spots
+  );
 
   return {
-    episode_no: episodeNo,
     title: clean(raw.title) || fallback.title,
     objective: clean(raw.objective) || fallback.objective,
-    synopsis: clean(raw.synopsis) || fallback.synopsis,
-    key_location: clean(raw.key_location) || fallback.key_location,
-    emotional_beat: clean(raw.emotional_beat) || fallback.emotional_beat,
-    required_setups: requiredSetups.length > 0 ? requiredSetups : fallback.required_setups,
-    payoff_targets: payoffTargets.length > 0 ? payoffTargets : fallback.payoff_targets,
-    cliffhanger: clean(raw.cliffhanger) || fallback.cliffhanger,
-    continuity_notes: clean(raw.continuity_notes) || fallback.continuity_notes,
-    suggested_mission: clean(raw.suggested_mission) || fallback.suggested_mission,
+    opening_scene: clean(raw.opening_scene) || fallback.opening_scene,
+    expected_duration_minutes: safeDuration,
+    route_style: ensureWalkableRouteStyle(raw.route_style || fallback.route_style),
+    completion_condition: clean(raw.completion_condition) || fallback.completion_condition,
+    carry_over_hint: clean(raw.carry_over_hint) || fallback.carry_over_hint,
+    suggested_spots: suggestedSpots,
   };
 };
 
@@ -126,32 +176,37 @@ const normalizeEpisodeOutput = (
   const parsed = seriesEpisodePlannerAgentOutputSchema.safeParse(raw);
   if (!parsed.success) return null;
 
-  const byEpisodeNo = new Map<number, z.infer<typeof seriesEpisodeBlueprintSchema>>();
-  parsed.data.episode_blueprints.forEach((episode, index) => {
-    const parsedEpisodeNo = Number.parseInt(String(episode.episode_no), 10);
-    const safeNo =
-      Number.isFinite(parsedEpisodeNo) && parsedEpisodeNo > 0
-        ? parsedEpisodeNo
-        : index + 1;
-    if (!byEpisodeNo.has(safeNo)) {
-      byEpisodeNo.set(safeNo, episode);
+  const checkpointCount = resolveCheckpointCount(input.desired_episode_count);
+  const byCheckpointNo = new Map<number, z.infer<typeof seriesCheckpointSchema>>();
+  parsed.data.checkpoints.forEach((checkpoint, index) => {
+    const parsedCheckpointNo = Number.parseInt(String(checkpoint.checkpoint_no), 10);
+    const safeNo = Number.isFinite(parsedCheckpointNo) && parsedCheckpointNo > 0 ? parsedCheckpointNo : index + 1;
+    if (!byCheckpointNo.has(safeNo)) {
+      byCheckpointNo.set(safeNo, checkpoint);
     }
   });
 
-  const normalizedEpisodes = Array.from({ length: input.desired_episode_count }, (_, index) => {
-    const episodeNo = index + 1;
-    const fallback = buildFallbackEpisode(input, episodeNo);
-    const rawEpisode = byEpisodeNo.get(episodeNo) || fallback;
-    return normalizeEpisode(rawEpisode, fallback, episodeNo);
+  const normalizedCheckpoints = Array.from({ length: checkpointCount }, (_, index) => {
+    const checkpointNo = index + 1;
+    const fallback = buildFallbackCheckpoint(input, checkpointNo, checkpointCount);
+    const rawCheckpoint = byCheckpointNo.get(checkpointNo) || fallback;
+    return normalizeCheckpoint(rawCheckpoint, fallback, checkpointNo);
   });
 
-  return { episode_blueprints: normalizedEpisodes };
+  const fallbackSeed = buildFallbackEpisodeSeed(input);
+  const normalizedSeed = normalizeEpisodeSeed(parsed.data.first_episode_seed, fallbackSeed);
+
+  return {
+    checkpoints: normalizedCheckpoints,
+    first_episode_seed: normalizedSeed,
+  };
 };
 
 const buildFallbackPlan = (input: SeriesEpisodePlannerAgentInput): SeriesEpisodePlannerAgentOutput => ({
-  episode_blueprints: Array.from({ length: input.desired_episode_count }, (_, index) =>
-    buildFallbackEpisode(input, index + 1)
+  checkpoints: Array.from({ length: resolveCheckpointCount(input.desired_episode_count) }, (_, index) =>
+    buildFallbackCheckpoint(input, index + 1, resolveCheckpointCount(input.desired_episode_count))
   ),
+  first_episode_seed: buildFallbackEpisodeSeed(input),
 });
 
 export const generateSeriesEpisodePlan = async (
@@ -170,7 +225,13 @@ export const generateSeriesEpisodePlan = async (
 - 前提: ${input.premise}
 - シーズン目標: ${input.season_goal}
 - 世界の対立: ${input.world.core_conflict}
-- エピソード数: ${input.desired_episode_count}
+- 想定エピソード数: ${input.desired_episode_count}
+
+## TOMOSHIBI 制約（最優先）
+- 各 checkpoint は「徒歩で2〜4スポットを巡る」導線を前提にする。
+- first_episode_seed.route_style は徒歩中心にする。
+- first_episode_seed.suggested_spots は2件以上で、街歩き可能な地上スポットにする。
+- 単一屋内完結・空中都市・宇宙・海底・閉鎖施設内のみの舞台は採用しない。
 
 ## キャラクター
 ${input.characters
@@ -184,18 +245,26 @@ seriesEpisodePlannerAgentOutputSchema を満たす JSON を返してください
 `;
 
   const maxAttempts = 2;
+  const timeoutMs = 60_000;
+  const logPrefix = "[series-episode-planner-agent]";
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const response = await seriesEpisodePlannerAgent.generate(prompt, {
-        structuredOutput: { schema: seriesEpisodePlannerAgentOutputSchema },
-      });
-      const normalized = normalizeEpisodeOutput(input, response.object);
+      console.log(`${logPrefix} attempt ${attempt}/${maxAttempts} — LLM呼び出し中`);
+      const result = await Promise.race([
+        seriesEpisodePlannerAgent.generate(prompt, {
+          structuredOutput: { schema: seriesEpisodePlannerAgentOutputSchema },
+        }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`${timeoutMs / 1000}秒タイムアウト`)), timeoutMs)),
+      ]);
+      console.log(`${logPrefix} attempt ${attempt} — LLM応答受信`);
+      const normalized = normalizeEpisodeOutput(input, result.object);
       if (normalized) return normalized;
-    } catch (error) {
-      console.warn("[series-episode-planner-agent] generation failed", { attempt, error });
+      console.warn(`${logPrefix} attempt ${attempt} — パース失敗`);
+    } catch (error: any) {
+      console.warn(`${logPrefix} attempt ${attempt} 失敗:`, error?.message ?? error);
     }
   }
 
-  console.warn("[series-episode-planner-agent] fallback episode plan used");
-  return buildFallbackPlan(input);
+  console.error(`${logPrefix} 全試行失敗`);
+  throw new Error("エピソード計画の生成に失敗しました。AIモデルからの応答が得られませんでした。再度お試しください。");
 };

@@ -1,11 +1,13 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { useFocusEffect } from "@react-navigation/native";
 import type { RootStackParamList } from "@/navigation/types";
 import { TopBar } from "@/components/common/TopBar";
 import { fonts } from "@/theme/fonts";
 import { useSessionUserId } from "@/hooks/useSessionUser";
+import { useFriendshipsRealtime } from "@/hooks/useFriendshipsRealtime";
 import {
   fetchFollowCounts,
   fetchQuestSocialStats,
@@ -14,6 +16,8 @@ import {
   fetchUserPublishedSeries,
   fetchViewerRelations,
   followUser,
+  isMutualFollowBlockedError,
+  isFollowingUser,
   unfollowByRelationId,
 } from "@/services/social";
 import type { AchievementRow, FriendshipRow, ProfileRow, UserSeriesRow } from "@/types/social";
@@ -70,6 +74,7 @@ export const UserProfileScreen = ({ navigation, route }: Props) => {
   const [activeTab, setActiveTab] = useState<ProfileTab>("series");
 
   const isSelf = viewerUserId === targetUserId;
+  const isFollowing = useMemo(() => isFollowingUser(relation, viewerUserId), [relation, viewerUserId]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -110,9 +115,13 @@ export const UserProfileScreen = ({ navigation, route }: Props) => {
     }
   }, [targetUserId, viewerUserId, isSelf]);
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+  useFocusEffect(
+    useCallback(() => {
+      void refresh();
+    }, [refresh])
+  );
+
+  useFriendshipsRealtime([targetUserId, viewerUserId], refresh);
 
   const displayName = profile?.name || "旅人";
   const displayBio = profile?.bio || "物語を紡ぎながら、新しい景色を探しています。";
@@ -141,14 +150,18 @@ export const UserProfileScreen = ({ navigation, route }: Props) => {
 
     setActionLoading(true);
     try {
-      if (!relation) {
+      if (!isFollowing) {
         await followUser(viewerUserId, targetUserId);
-      } else {
+      } else if (relation) {
         await unfollowByRelationId(relation.id);
       }
       await refresh();
     } catch (error) {
       console.error("UserProfileScreen: follow action failed", error);
+      if (isMutualFollowBlockedError(error)) {
+        Alert.alert("フォロー操作に失敗しました", "DB設定の制約により相互フォローが作成できません。");
+        return;
+      }
       Alert.alert("フォロー操作に失敗しました", "時間をおいて再度お試しください。");
     } finally {
       setActionLoading(false);
@@ -277,7 +290,7 @@ export const UserProfileScreen = ({ navigation, route }: Props) => {
                   <>
                     <Ionicons name="person-add" size={16} color="#FFFFFF" />
                     <Text className="text-sm text-white" style={{ fontFamily: fonts.displayBold }}>
-                      {isSelf ? "マイプロフィール" : relation ? "フォロー中" : "フォローする"}
+                      {isSelf ? "マイプロフィール" : isFollowing ? "フォロー中" : "フォローする"}
                     </Text>
                   </>
                 )}

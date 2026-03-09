@@ -26,6 +26,12 @@ export {
   seriesConsistencyAgentOutputSchema,
 } from "./seriesConsistencyAgent";
 export {
+  seriesRuntimeEpisodeAgent,
+  generateSeriesRuntimeEpisode,
+  seriesRuntimeEpisodeRequestSchema,
+  seriesRuntimeEpisodeOutputSchema,
+} from "./seriesRuntimeEpisodeAgent";
+export {
   tourismResearchAgent,
   generateSpotTourismResearch,
   tourismResearchInputSchema,

@@ -28,26 +28,46 @@ const SERIES_OPTIONS_KEY = "tomoshibi.seriesOptions";
 const SELECTED_SERIES_KEY = "tomoshibi.selectedSeries";
 const SERIES_DRAFTS_KEY = "tomoshibi.seriesDrafts";
 
-const GENERATING_MESSAGES = ["世界観を構築中...", "登場人物の命を吹き込み中...", "歴史の断片を収集中..."] as const;
+const GENERATING_MESSAGES = [
+  "世界観を構築中...",
+  "登場人物の命を吹き込み中...",
+  "物語の骨格を設計中...",
+  "伏線と関係性を編み込み中...",
+  "エピソードの流れを調整中...",
+  "最終チェック中...",
+] as const;
 
 const SERIES_INTERVIEW_STEPS = [
   {
-    question: "Q1. 作りたいシリーズの『ジャンルや世界観』を教えてください。",
-    placeholder: "探偵ミステリー",
+    question: "Q1. どんなジャンル・世界観の話が好きですか？",
+    placeholder: "例: 日常系 / 冒険 / ミステリー",
   },
   {
-    question: "Q2. 作りたいシリーズを通して追いかける『最大の目的』は何ですか？",
-    placeholder: "未解決事件の真相を暴く",
+    question: "Q2. この物語で、どんな気持ちになりたいですか？",
+    placeholder: "例: 癒されたい / ワクワクしたい / 前向き",
   },
   {
-    question: "Q3. この世界で、あなた自身はどのような立ち位置ですか？",
-    placeholder: "偶然事件に巻き込まれた旅行者",
+    question: "Q3. どんな相棒・キャラクターと一緒に進みたいですか？",
+    placeholder: "例: 優しい相棒 / クールなバディ / 友達っぽい距離感",
   },
   {
-    question: "Q4. シリーズを通して、あなたのパートナーとなる人物はどんな人物ですか？",
-    placeholder: "いつも前向きで引っ張ってくれる後輩",
+    question: "Q4. どんなときに「続きが気になる」と感じますか？",
+    placeholder: "例: 謎が残る / 伏線が張られる / 達成感と余韻",
+  },
+  {
+    question: "Q5. 苦手な展開や、避けてほしい表現はありますか？",
+    placeholder: "例: グロい表現NG / 怖すぎる演出NG / 救いなしNG",
   },
 ] as const;
+
+/** 各質問に対応するキーワードバッジ（タップで入力に挿入） */
+const INTERVIEW_KEYWORD_BADGES: readonly (readonly string[])[] = [
+  ["日常系", "冒険", "ミステリー"],
+  ["癒されたい", "ワクワクしたい", "前向き"],
+  ["優しい相棒", "クールなバディ", "友達っぽい距離感"],
+  ["謎が残る", "伏線が張られる", "達成感と余韻"],
+  ["グロい表現NG", "怖すぎる演出NG", "救いなしNG"],
+];
 
 const SERIES_INTERVIEW_DONE_MESSAGE =
   "ありがとうございます。必要な情報が揃いました。右下の「生成する」でシリーズ骨格を作成できます。";
@@ -73,6 +93,11 @@ const buildInterviewDoneMessage = (): ChatMessage => ({
 });
 
 const containsAny = (source: string, keywords: string[]) => keywords.some((keyword) => source.includes(keyword));
+
+const enforceWalkabilityInOverview = (text: string) => {
+  if (text.includes("街歩き") || text.includes("徒歩")) return text;
+  return `${text}\n各エピソードは徒歩で街を巡り、2〜4スポットを移動しながら体験が進行します。`;
+};
 
 const deriveSeriesTitle = (prompt: string) => {
   const cleaned = prompt.replace(/\s+/g, " ").trim();
@@ -153,16 +178,24 @@ const deriveOverview = (prompt: string) => {
   const concept = cleaned.length > 170 ? `${cleaned.slice(0, 170)}...` : cleaned;
 
   if (containsAny(cleaned, ["探偵", "事件", "謎", "推理"])) {
-    return `${concept}\nこのシリーズでは、各地で発生する不可解な事件を解きながら、背後でつながる大きな真相へ迫っていきます。`;
+    return enforceWalkabilityInOverview(
+      `${concept}\nこのシリーズでは、各地で発生する不可解な事件を解きながら、背後でつながる大きな真相へ迫っていきます。`
+    );
   }
   if (containsAny(cleaned, ["歴史", "伝承", "遺跡", "古代"])) {
-    return `${concept}\n土地に残る史実や伝承を手がかりに、過去と現在を結ぶ真実を一歩ずつ解き明かしていくシリーズです。`;
+    return enforceWalkabilityInOverview(
+      `${concept}\n土地に残る史実や伝承を手がかりに、過去と現在を結ぶ真実を一歩ずつ解き明かしていくシリーズです。`
+    );
   }
   if (containsAny(cleaned, ["旅", "放浪", "巡る", "各地"])) {
-    return `${concept}\n舞台が変わるたびに新しい出会いと謎が生まれ、積み重なった記憶がシリーズ全体の核心につながっていきます。`;
+    return enforceWalkabilityInOverview(
+      `${concept}\n舞台が変わるたびに新しい出会いと謎が生まれ、積み重なった記憶がシリーズ全体の核心につながっていきます。`
+    );
   }
 
-  return `${concept}\n毎話で新しい舞台と出来事を描きながら、シリーズ全体を通してひとつの大きなテーマへ収束していきます。`;
+  return enforceWalkabilityInOverview(
+    `${concept}\n毎話で新しい舞台と出来事を描きながら、シリーズ全体を通してひとつの大きなテーマへ収束していきます。`
+  );
 };
 
 const deriveAiRules = (prompt: string) => {
@@ -183,6 +216,16 @@ const deriveAiRules = (prompt: string) => {
     rules.push("キャラクターの一貫性とシリーズ全体のテーマを保ち、毎話に発見がある構成にすること。");
   }
 
+  const mandatoryWalkRules = [
+    "各エピソードは徒歩で2〜4スポットを巡る街歩き導線を必ず含めること。",
+    "単一の屋内拠点だけで完結させず、街路・公共空間での移動を入れること。",
+    "空中都市・宇宙・海底・閉鎖施設内のみなど街歩き不能な舞台設定を採用しないこと。",
+  ];
+
+  for (const rule of mandatoryWalkRules) {
+    if (!rules.includes(rule)) rules.push(rule);
+  }
+
   return rules.join(" ");
 };
 
@@ -193,6 +236,57 @@ const generateSeriesDraftFromPrompt = (prompt: string): GeneratedSeriesDraft => 
   characters: deriveCharacters(prompt),
   premise: deriveOverview(prompt),
   seasonGoal: "シリーズ全体の核心を解き明かす",
+  checkpoints: [
+    {
+      checkpointNo: 1,
+      title: "CP1: 導入",
+      purpose: "世界観と目的を提示し、次回につながる違和感を残す。",
+      unlockHint: "主人公と相棒の初期関係を示す。",
+      expectedEmotion: "期待",
+      carryOver: "手がかりを持ち帰る。",
+    },
+    {
+      checkpointNo: 2,
+      title: "CP2: 進展",
+      purpose: "目的達成のために必要な情報を具体化する。",
+      unlockHint: "前回の手がかりを参照する。",
+      expectedEmotion: "発見",
+      carryOver: "次回の行動目標を明確にする。",
+    },
+    {
+      checkpointNo: 3,
+      title: "CP3: 転換",
+      purpose: "前提を揺るがす事実を示し、関係性を変化させる。",
+      unlockHint: "相棒との選択の差を描く。",
+      expectedEmotion: "緊張",
+      carryOver: "最終局面への課題を残す。",
+    },
+    {
+      checkpointNo: 4,
+      title: "CP4: 収束",
+      purpose: "主要対立の結論を示し、次章への余白を残す。",
+      unlockHint: "これまでの伏線を回収する。",
+      expectedEmotion: "達成と余韻",
+      carryOver: "次シリーズへつながる問いを残す。",
+    },
+  ],
+  firstEpisodeSeed: {
+    title: "第1話: 旅の始まり",
+    objective: "シリーズ目的へ向かう最初の手がかりを得る。",
+    openingScene: "街歩き中に小さな違和感を見つける。",
+    expectedDurationMinutes: 20,
+    routeStyle: "徒歩中心の周遊",
+    completionCondition: "主要スポットで発見を得る。",
+    carryOverHint: "次回につながる問いを1つ残す。",
+    suggestedSpots: ["中心エリア", "裏通り"],
+  },
+  progressState: {
+    lastCompletedEpisodeNo: 0,
+    unresolvedThreads: ["核心に関わる未解決の謎"],
+    revealedFacts: [],
+    companionTrustLevel: 40,
+    nextHook: "次回で回収すべき違和感が残る。",
+  },
 });
 
 const inferSeriesName = (rawText: string) => {
@@ -252,6 +346,9 @@ const persistSeriesDraft = async (generated: GeneratedSeriesDraft, sourcePrompt:
       seasonGoal: generated.seasonGoal || null,
       world: generated.world || null,
       continuity: generated.continuity || null,
+      checkpoints: generated.checkpoints || [],
+      firstEpisodeSeed: generated.firstEpisodeSeed || null,
+      progressState: generated.progressState || null,
       episodeBlueprints: generated.episodeBlueprints || [],
       workflowVersion: generated.workflowVersion || null,
       sourcePrompt: trimmedPrompt,
@@ -305,11 +402,12 @@ export const CreateSeriesScreen = ({ route }: Props) => {
       .filter(Boolean);
 
     return {
-      genreWorld: answers[0] || latestUserMessage || "現代ドラマ",
-      mainObjective: answers[1] || "未解決の核心へ到達する",
-      protagonistPosition: answers[2] || "偶然事件に巻き込まれた旅人",
-      partnerDescription: answers[3] || "冷静に支えてくれる相棒",
-      additionalNotes: answers.slice(4).join("\n").trim() || undefined,
+      genreWorld: answers[0] || latestUserMessage || "現代日本が舞台の少し不思議な物語",
+      desiredEmotion: answers[1] || "ワクワクしつつ前向きな気持ちになりたい",
+      companionPreference: answers[2] || "落ち着いていて安心できる相棒",
+      continuationTrigger: answers[3] || "謎が残って次回で答え合わせがありそうな終わり方",
+      avoidExpressions: answers[4] || "グロい表現や救いのない結末は避けたい",
+      additionalNotes: answers.slice(5).join("\n").trim() || undefined,
     };
   }, [seriesChatMessages, latestUserMessage]);
 
@@ -408,59 +506,50 @@ export const CreateSeriesScreen = ({ route }: Props) => {
       setMessageIndex((prev) => (prev + 1) % GENERATING_MESSAGES.length);
     }, 2200);
 
-    let normalizedDraft: GeneratedSeriesDraft | null = null;
-
     try {
       const titleCandidate = seriesNameCandidate.trim();
 
-      try {
-        const aiDraft = await generateSeriesDraftViaMastra({
-          interview: interviewInput,
-          prompt: promptForGeneration,
-          desiredEpisodeCount: 8,
-          creatorId: userId || undefined,
-        });
+      const aiDraft = await generateSeriesDraftViaMastra({
+        interview: interviewInput,
+        prompt: promptForGeneration,
+        desiredEpisodeCount: 8,
+        creatorId: userId || undefined,
+      });
 
-        normalizedDraft = {
-          ...aiDraft,
-          title: (aiDraft.title || titleCandidate || "新しいシリーズ").trim(),
-          aiRules:
-            aiDraft.aiRules?.trim() ||
-            "キャラクターと伏線の整合性を保ち、各話の結果を次話へ引き継ぐこと。",
-        };
-      } catch (error) {
-        console.warn("CreateSeriesScreen: Mastra generation failed, fallback local draft", error);
-        const fallbackDraft = generateSeriesDraftFromPrompt(promptForGeneration);
-        normalizedDraft = {
-          ...fallbackDraft,
-          title: (titleCandidate || fallbackDraft.title || "新しいシリーズ").trim(),
-        };
-      }
-
-      if (!normalizedDraft) {
-        throw new Error("Series draft generation returned empty result.");
-      }
+      const normalizedDraft: GeneratedSeriesDraft = {
+        ...aiDraft,
+        title: (aiDraft.title || titleCandidate || "新しいシリーズ").trim(),
+        aiRules:
+          aiDraft.aiRules?.trim() ||
+          "キャラクターと伏線の整合性を保ち、各話の結果を次話へ引き継ぐこと。",
+      };
 
       await persistSeriesDraft(normalizedDraft, promptForGeneration);
-    } catch (error) {
-      console.error("CreateSeriesScreen: failed to create draft", error);
-      Alert.alert("シリーズ作成に失敗しました", "時間をおいて再度お試しください。");
-    }
 
-    setTimeout(() => {
       if (generationIntervalRef.current) {
         clearInterval(generationIntervalRef.current);
       }
       setIsSaving(false);
       setIsGenerating(false);
 
-      if (!normalizedDraft) return;
-
       navigation.replace("SeriesGenerationResult", {
         generated: normalizedDraft,
         sourcePrompt: promptForGeneration,
       });
-    }, 3400);
+    } catch (error: any) {
+      console.error("CreateSeriesScreen: AI generation failed", error);
+      if (generationIntervalRef.current) {
+        clearInterval(generationIntervalRef.current);
+      }
+      setIsSaving(false);
+      setIsGenerating(false);
+
+      const errorMessage = error?.message || "不明なエラー";
+      Alert.alert(
+        "シリーズ生成に失敗しました",
+        `AIによる生成中にエラーが発生しました。\n\n${errorMessage}\n\n時間をおいて再度お試しください。`
+      );
+    }
   }, [canSubmit, isSaving, sourcePrompt, latestUserMessage, seriesNameCandidate, interviewInput, userId, navigation]);
 
   if (isGenerating) {
@@ -546,27 +635,10 @@ export const CreateSeriesScreen = ({ route }: Props) => {
               )
             )}
 
-            {seriesNameCandidate.trim().length > 0 ? (
-              <View className="flex-row items-start gap-3 pr-10">
-                <View className="w-8 h-8 rounded-full bg-[#EE8C2B] items-center justify-center mt-1">
-                  <Ionicons name="sparkles" size={14} color="#FFFFFF" />
-                </View>
-                <View className="flex-1">
-                  <Text className="text-[11px] text-[#9A9389] mb-1" style={{ fontFamily: fonts.bodyRegular }}>
-                    AIアシスタント
-                  </Text>
-                  <View className="rounded-2xl rounded-tl-md bg-[#FFF7EC] border border-[#F4DFC6] px-3.5 py-3">
-                    <Text className="text-sm text-[#2B1E16]" style={{ fontFamily: fonts.bodyRegular }}>
-                      現在の仮タイトル: <Text style={{ fontFamily: fonts.displayBold, color: "#C87A2D" }}>「{seriesNameCandidate}」</Text>
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            ) : null}
           </View>
         </ScrollView>
 
-        <SafeAreaView edges={["bottom"]} className="bg-[#F8F7F6] border-t border-[#EFE7DD]">
+        <SafeAreaView edges={["bottom"]} className="bg-[#F8F7F6]">
           <View className="px-4 pt-2 pb-3">
             {isInterviewComplete ? (
               <Pressable
@@ -574,18 +646,17 @@ export const CreateSeriesScreen = ({ route }: Props) => {
                   void handleGenerateSeries();
                 }}
                 disabled={!canSubmit || isSaving}
-                className={`h-12 rounded-2xl items-center justify-center ${
-                  canSubmit && !isSaving ? "bg-[#EE8C2B]" : "bg-[#E8E2DA]"
-                }`}
+                className={`h-12 rounded-2xl items-center justify-center ${canSubmit && !isSaving ? "bg-[#EE8C2B]" : "bg-[#E8E2DA]"
+                  }`}
                 style={
                   canSubmit && !isSaving
                     ? {
-                        shadowColor: "#EE8C2B",
-                        shadowOffset: { width: 0, height: 5 },
-                        shadowOpacity: 0.28,
-                        shadowRadius: 12,
-                        elevation: 3,
-                      }
+                      shadowColor: "#EE8C2B",
+                      shadowOffset: { width: 0, height: 5 },
+                      shadowOpacity: 0.28,
+                      shadowRadius: 12,
+                      elevation: 3,
+                    }
                     : undefined
                 }
               >
@@ -601,21 +672,68 @@ export const CreateSeriesScreen = ({ route }: Props) => {
                 )}
               </Pressable>
             ) : (
-              <View className="rounded-3xl border border-[#E6DED5] bg-white px-2 py-1.5 flex-row items-end gap-2">
-                <Pressable
-                  className="w-9 h-9 rounded-full items-center justify-center"
-                  onPress={() => Alert.alert("準備中", "画像入力は次フェーズで追加予定です。")}
+              <View style={{ width: "100%" }}>
+                {/* キーワードバッジ（タップで入力欄に挿入） */}
+                <View
+                  style={{
+                    display: "flex",
+                    flexDirection: "row",
+                    flexWrap: "wrap",
+                    marginBottom: 6,
+                    paddingLeft: 4,
+                    paddingRight: 4,
+                  }}
                 >
-                  <Ionicons name="image-outline" size={20} color="#A39A90" />
-                </Pressable>
+                  {(INTERVIEW_KEYWORD_BADGES[activeQuestionIndex] ?? []).map((keyword) => (
+                    <Pressable
+                      key={keyword}
+                      onPress={() => {
+                        setSeriesChatInput((prev) =>
+                          prev.trim() ? `${prev.trim()} ${keyword}` : keyword
+                        );
+                      }}
+                      style={{
+                        marginRight: 8,
+                        marginBottom: 8,
+                        paddingLeft: 16,
+                        paddingRight: 16,
+                        paddingTop: 8,
+                        paddingBottom: 8,
+                        borderRadius: 20,
+                        borderWidth: 1,
+                        borderColor: "#E6DED5",
+                        backgroundColor: "#FFFFFF",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontFamily: fonts.bodyMedium,
+                          fontSize: 13,
+                          color: "#6C5647",
+                        }}
+                      >
+                        {keyword}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <View className="rounded-3xl border border-[#E6DED5] bg-white px-2 py-1.5 flex-row items-end gap-2">
+                  <Pressable
+                    className="w-9 h-9 rounded-full items-center justify-center"
+                    onPress={() => Alert.alert("準備中", "画像入力は次フェーズで追加予定です。")}
+                  >
+                    <Ionicons name="image-outline" size={20} color="#A39A90" />
+                  </Pressable>
 
-                <TextInput
+                  <TextInput
                   value={seriesChatInput}
                   onChangeText={setSeriesChatInput}
                   placeholder={inputPlaceholder}
                   placeholderTextColor="#A39A90"
-                  multiline
-                  className="flex-1 min-h-[40px] max-h-[120px] py-2 px-1 text-sm text-[#221910]"
+                  multiline={false}
+                  numberOfLines={1}
+                  allowFontScaling={false}
+                  className="flex-1 h-[40px] py-2 px-1 text-[13px] text-[#221910]"
                   style={{ fontFamily: fonts.bodyRegular, textAlignVertical: "center" }}
                 />
 
@@ -625,6 +743,7 @@ export const CreateSeriesScreen = ({ route }: Props) => {
                 >
                   <Ionicons name="send" size={16} color="#FFFFFF" />
                 </Pressable>
+                </View>
               </View>
             )}
           </View>

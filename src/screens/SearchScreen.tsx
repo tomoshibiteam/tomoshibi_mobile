@@ -18,14 +18,17 @@ import {
   fetchViewerRelations,
   fetchUsersByKeyword,
   followUser,
+  isMutualFollowBlockedError,
+  isFollowingUser,
   unfollowByRelationId,
 } from "@/services/social";
 import { fetchExplorePayload } from "@/services/feed";
 import type { ExploreCreator, ExploreQuest } from "@/types/feed";
 import type { FriendshipRow, ProfileRow } from "@/types/social";
 import { useSessionUserId } from "@/hooks/useSessionUser";
+import { useFriendshipsRealtime } from "@/hooks/useFriendshipsRealtime";
 import { getSupabaseOrThrow, isSupabaseConfigured } from "@/lib/supabase";
-import { useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ProfileAvatar } from "@/components/common/ProfileAvatar";
@@ -158,13 +161,13 @@ export const SearchScreen = ({}: Props) => {
     }
   }, [userId]);
 
-  useEffect(() => {
-    void refreshExplore();
-  }, [refreshExplore]);
+  useFocusEffect(
+    useCallback(() => {
+      void Promise.all([refreshExplore(), refreshRelations()]);
+    }, [refreshExplore, refreshRelations])
+  );
 
-  useEffect(() => {
-    void refreshRelations();
-  }, [refreshRelations]);
+  useFriendshipsRealtime([userId], refreshRelations);
 
   useEffect(() => {
     if (!isSupabaseConfigured || !hasKeyword) {
@@ -335,16 +338,21 @@ export const SearchScreen = ({}: Props) => {
     }
 
     const relation = relationsByUserId[profileId];
+    const isFollowing = isFollowingUser(relation, userId);
     setActionTargetId(profileId);
     try {
-      if (!relation) {
+      if (!isFollowing) {
         await followUser(userId, profileId);
-      } else {
+      } else if (relation) {
         await unfollowByRelationId(relation.id);
       }
       await refreshRelations();
     } catch (error) {
       console.error("SearchScreen: follow action failed", error);
+      if (isMutualFollowBlockedError(error)) {
+        Alert.alert("操作に失敗しました", "DB設定の制約により相互フォローが作成できません。");
+        return;
+      }
       Alert.alert("操作に失敗しました", "時間をおいて再度お試しください。");
     } finally {
       setActionTargetId(null);
@@ -524,7 +532,7 @@ export const SearchScreen = ({}: Props) => {
                   {(keywordLoading ? [] : visibleCreators).map((creator) => {
                     const relation = relationsByUserId[creator.id];
                     const isSelfCreator = userId === creator.id;
-                    const isFollowing = Boolean(relation);
+                    const isFollowing = isFollowingUser(relation, userId);
                     const isActionLoading = actionTargetId === creator.id;
                     return (
                       <View
@@ -680,7 +688,7 @@ export const SearchScreen = ({}: Props) => {
                   {visibleCreators.slice(0, 12).map((creator) => {
                     const relation = relationsByUserId[creator.id];
                     const isSelfCreator = userId === creator.id;
-                    const isFollowing = Boolean(relation);
+                    const isFollowing = isFollowingUser(relation, userId);
                     const isActionLoading = actionTargetId === creator.id;
 
                     return (

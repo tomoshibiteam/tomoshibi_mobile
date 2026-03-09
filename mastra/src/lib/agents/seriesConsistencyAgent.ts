@@ -3,8 +3,9 @@ import { z } from "zod";
 import { MASTRA_SERIES_CONSISTENCY_MODEL } from "../modelConfig";
 import {
   seriesCharacterSchema,
+  seriesCheckpointSchema,
   seriesContinuitySchema,
-  seriesEpisodeBlueprintSchema,
+  seriesEpisodeSeedSchema,
 } from "../../schemas/series";
 
 export const seriesConsistencyAgentInputSchema = z.object({
@@ -14,7 +15,8 @@ export const seriesConsistencyAgentInputSchema = z.object({
   season_goal: z.string(),
   ai_rule_points: z.array(z.string()).min(3).max(12),
   characters: z.array(seriesCharacterSchema).min(3).max(8),
-  episode_blueprints: z.array(seriesEpisodeBlueprintSchema).min(3).max(24),
+  checkpoints: z.array(seriesCheckpointSchema).min(4).max(8),
+  first_episode_seed: seriesEpisodeSeedSchema,
 });
 
 export const seriesConsistencyAgentOutputSchema = z.object({
@@ -32,9 +34,12 @@ const SERIES_CONSISTENCY_AGENT_INSTRUCTIONS = `
 出力済みのシリーズ設計をチェックし、後続エピソード生成で破綻しない運用規則へ整えてください。
 
 ## 重点チェック
-- キャラクターの弧（arc_start -> arc_end）がエピソード計画に反映されているか
-- 各話の required_setups / payoff_targets が連結しているか
+- キャラクターの弧（arc_start -> arc_end）が checkpoints に反映されているか
+- 各 checkpoint.carry_over が連結しているか
 - シーズン目標への収束導線があるか
+- first_episode_seed がシリーズ導入として機能するか
+- 街歩き（徒歩で複数スポットを巡る）前提が継続的に守られているか
+- 単一屋内完結や街歩き不能な舞台へ逸脱していないか
 
 ## 出力方針
 - overview_refined は 2〜4文で全体像を短く再定義
@@ -71,17 +76,38 @@ const dedupe = (values: string[]) => {
     });
 };
 
+const MANDATORY_WALK_AI_RULES = [
+  "各エピソードは徒歩で2〜4スポットを巡る地上の街歩き導線を維持する。",
+  "単一屋内拠点だけで完結させず、街路や公共空間を含む移動を必ず入れる。",
+  "空中都市・宇宙・海底・閉鎖施設内のみなど街歩き不能な舞台へ逸脱しない。",
+];
+
+const MANDATORY_WALK_INVARIANT_RULES = [
+  "舞台は地上で歩行可能な都市・街区に限定する。",
+  "各話で最低2スポット以上の徒歩移動を行う。",
+  "屋内のみで完結する構成を採用しない。",
+];
+
+const MANDATORY_WALK_EPISODE_LINK_POLICY = [
+  "次回冒頭で前話の移動経路または到達地点を参照する。",
+  "各話の終わりに次回で向かう街区・スポットを明示する。",
+  "シリーズ進行に合わせて徒歩ルートを段階的に拡張する。",
+];
+
+const withMandatory = (base: string[], mandatory: string[], limit = 12) =>
+  dedupe([...mandatory, ...base]).slice(0, limit);
+
 const buildFallbackContinuity = (input: SeriesConsistencyAgentInput) => {
-  const lastEpisode = input.episode_blueprints[input.episode_blueprints.length - 1];
-  const midEpisode = input.episode_blueprints[Math.floor((input.episode_blueprints.length - 1) / 2)];
+  const lastCheckpoint = input.checkpoints[input.checkpoints.length - 1];
+  const midCheckpoint = input.checkpoints[Math.floor((input.checkpoints.length - 1) / 2)];
   const lead = input.characters[0];
   return {
     global_mystery: `${input.season_goal}を阻む真因は何か。`,
-    mid_season_twist: midEpisode
-      ? `${midEpisode.title}で、前提が覆る新事実を提示する。`
+    mid_season_twist: midCheckpoint
+      ? `${midCheckpoint.title}で、前提が覆る新事実を提示する。`
       : "中盤で同盟関係が崩れる。",
-    finale_payoff: lastEpisode
-      ? `${lastEpisode.title}で主要伏線を回収し、${lead?.name || "主人公"}の選択を結論にする。`
+    finale_payoff: lastCheckpoint
+      ? `${lastCheckpoint.title}で主要伏線を回収し、${lead?.name || "主人公"}の選択を結論にする。`
       : "最終話で主要伏線を回収する。",
     invariant_rules: [
       "各話の冒頭で前話の結果を最低1つ継承する。",
@@ -89,9 +115,9 @@ const buildFallbackContinuity = (input: SeriesConsistencyAgentInput) => {
       "伏線は未回収のまま3話以上放置しない。",
     ],
     episode_link_policy: [
-      "required_setups の要素を次話本文で明示的に参照する。",
-      "payoff_targets は回収話を脚本内に注記する。",
-      "最終話へ向けて対立軸を段階的に絞り込む。",
+      "carry_over の要素を次回エピソード冒頭で明示的に参照する。",
+      "チェックポイントで示した目的の達成条件を各回で1つずつ更新する。",
+      "最終チェックポイントへ向けて対立軸を段階的に絞り込む。",
     ],
   };
 };
@@ -99,13 +125,18 @@ const buildFallbackContinuity = (input: SeriesConsistencyAgentInput) => {
 const buildFallbackOutput = (input: SeriesConsistencyAgentInput): SeriesConsistencyAgentOutput => {
   const continuity = buildFallbackContinuity(input);
   return {
-    overview_refined: `${input.overview} ${input.premise} を軸に、各話の連鎖で${input.season_goal}へ収束する。`,
-    ai_rule_points: dedupe([
+    overview_refined: `${input.overview} ${input.premise} を軸に、各回の街歩き体験を積み重ねて${input.season_goal}へ収束する。`,
+    ai_rule_points: withMandatory(
+      [
       ...input.ai_rule_points,
-      "各話で新規情報を1つ追加し、既存情報を1つ更新する。",
+      "各エピソードで新規情報を1つ追加し、既存情報を1つ更新する。",
       "主要人物の感情変化は行動で示し、説明のみで済ませない。",
-      "エピソード末尾は次話の行動目標を明文化して終える。",
-    ]).slice(0, 12),
+      "エピソード末尾は次回の行動目標を明文化して終える。",
+      "1回の体験は15〜30分で完結する粒度を維持する。",
+      ],
+      MANDATORY_WALK_AI_RULES,
+      12
+    ),
     continuity,
     warnings: [],
   };
@@ -120,9 +151,13 @@ const normalizeOutput = (
   const fallback = buildFallbackOutput(input);
   const output = parsed.data;
 
-  const aiRulePoints = dedupe(output.ai_rule_points || []);
-  const invariantRules = dedupe(output.continuity.invariant_rules || []);
-  const episodeLinkPolicy = dedupe(output.continuity.episode_link_policy || []);
+  const aiRulePoints = withMandatory(output.ai_rule_points || [], MANDATORY_WALK_AI_RULES, 12);
+  const invariantRules = withMandatory(output.continuity.invariant_rules || [], MANDATORY_WALK_INVARIANT_RULES, 12);
+  const episodeLinkPolicy = withMandatory(
+    output.continuity.episode_link_policy || [],
+    MANDATORY_WALK_EPISODE_LINK_POLICY,
+    12
+  );
   const warnings = dedupe(output.warnings || []);
 
   return {
@@ -163,30 +198,48 @@ ${input.characters
   .map((character) => `- ${character.name}: ${character.arc_start} -> ${character.arc_end}`)
   .join("\n")}
 
-## エピソード
-${input.episode_blueprints
+## チェックポイント
+${input.checkpoints
   .map(
-    (episode) =>
-      `- #${episode.episode_no} ${episode.title} / setup=${episode.required_setups.join(" | ")} / payoff=${episode.payoff_targets.join(" | ")}`
+    (checkpoint) =>
+      `- #${checkpoint.checkpoint_no} ${checkpoint.title} / unlock=${checkpoint.unlock_hint} / carry=${checkpoint.carry_over}`
   )
   .join("\n")}
+
+## 初回エピソード seed
+- タイトル: ${input.first_episode_seed.title}
+- 目的: ${input.first_episode_seed.objective}
+- 所要時間: ${input.first_episode_seed.expected_duration_minutes}分
+- 次回への余韻: ${input.first_episode_seed.carry_over_hint}
+
+## TOMOSHIBI 制約（最優先）
+- 街歩き（徒歩で2〜4スポット移動）前提を運用ルールに必ず明記する。
+- 単一屋内完結・非歩行舞台への逸脱を抑止する invariant/policy を含める。
 
 seriesConsistencyAgentOutputSchema を満たす JSON を返してください。
 `;
 
   const maxAttempts = 2;
+  const timeoutMs = 60_000;
+  const logPrefix = "[series-consistency-agent]";
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const response = await seriesConsistencyAgent.generate(prompt, {
-        structuredOutput: { schema: seriesConsistencyAgentOutputSchema },
-      });
-      const normalized = normalizeOutput(input, response.object);
+      console.log(`${logPrefix} attempt ${attempt}/${maxAttempts} — LLM呼び出し中`);
+      const result = await Promise.race([
+        seriesConsistencyAgent.generate(prompt, {
+          structuredOutput: { schema: seriesConsistencyAgentOutputSchema },
+        }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`${timeoutMs / 1000}秒タイムアウト`)), timeoutMs)),
+      ]);
+      console.log(`${logPrefix} attempt ${attempt} — LLM応答受信`);
+      const normalized = normalizeOutput(input, result.object);
       if (normalized) return normalized;
-    } catch (error) {
-      console.warn("[series-consistency-agent] generation failed", { attempt, error });
+      console.warn(`${logPrefix} attempt ${attempt} — パース失敗`);
+    } catch (error: any) {
+      console.warn(`${logPrefix} attempt ${attempt} 失敗:`, error?.message ?? error);
     }
   }
 
-  console.warn("[series-consistency-agent] fallback consistency used");
-  return buildFallbackOutput(input);
+  console.error(`${logPrefix} 全試行失敗`);
+  throw new Error("一貫性チェックに失敗しました。AIモデルからの応答が得られませんでした。再度お試しください。");
 };

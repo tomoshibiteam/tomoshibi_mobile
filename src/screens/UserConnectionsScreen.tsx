@@ -2,15 +2,19 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Pressable, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { useFocusEffect } from "@react-navigation/native";
 import type { RootStackParamList } from "@/navigation/types";
 import { TopBar } from "@/components/common/TopBar";
 import { fonts } from "@/theme/fonts";
 import { useSessionUserId } from "@/hooks/useSessionUser";
+import { useFriendshipsRealtime } from "@/hooks/useFriendshipsRealtime";
 import {
   fetchConnections,
   fetchUserProfile,
   fetchViewerRelations,
   followUser,
+  isMutualFollowBlockedError,
+  isFollowingUser,
   unfollowByRelationId,
 } from "@/services/social";
 import type { ConnectionTab, FriendshipRow, ProfileRow } from "@/types/social";
@@ -83,13 +87,17 @@ export const UserConnectionsScreen = ({ navigation, route }: Props) => {
     }
   }, [viewerUserId]);
 
-  useEffect(() => {
-    void refreshTarget();
-  }, [refreshTarget]);
+  const refreshAll = useCallback(async () => {
+    await Promise.all([refreshTarget(), refreshViewerRelations()]);
+  }, [refreshTarget, refreshViewerRelations]);
 
-  useEffect(() => {
-    void refreshViewerRelations();
-  }, [refreshViewerRelations]);
+  useFocusEffect(
+    useCallback(() => {
+      void refreshAll();
+    }, [refreshAll])
+  );
+
+  useFriendshipsRealtime([targetUserId, viewerUserId], refreshAll);
 
   const visibleUsers = useMemo(() => {
     const source = activeTab === "followers" ? followers : following;
@@ -121,18 +129,23 @@ export const UserConnectionsScreen = ({ navigation, route }: Props) => {
     if (profileId === viewerUserId) return;
 
     const relation = relationsByUserId[profileId];
+    const isFollowing = isFollowingUser(relation, viewerUserId);
     setActionUserId(profileId);
 
     try {
-      if (!relation) {
+      if (!isFollowing) {
         await followUser(viewerUserId, profileId);
-      } else {
+      } else if (relation) {
         await unfollowByRelationId(relation.id);
       }
 
-      await Promise.all([refreshTarget(), refreshViewerRelations()]);
+      await refreshAll();
     } catch (error) {
       console.error("UserConnectionsScreen: follow action failed", error);
+      if (isMutualFollowBlockedError(error)) {
+        Alert.alert("フォロー操作に失敗しました", "DB設定の制約により相互フォローが作成できません。");
+        return;
+      }
       Alert.alert("フォロー操作に失敗しました", "時間をおいて再度お試しください。");
     } finally {
       setActionUserId(null);
@@ -243,7 +256,7 @@ export const UserConnectionsScreen = ({ navigation, route }: Props) => {
             <UserListItem
               profile={item}
               isSelf={Boolean(viewerUserId && item.id === viewerUserId)}
-              relation={relationsByUserId[item.id]}
+              isFollowing={isFollowingUser(relationsByUserId[item.id], viewerUserId)}
               loading={actionUserId === item.id}
               onPressProfile={() => handleOpenProfile(item.id)}
               onToggleFollow={() => {

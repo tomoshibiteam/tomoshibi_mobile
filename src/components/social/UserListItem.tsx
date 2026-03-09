@@ -1,13 +1,13 @@
 import React from "react";
 import { Pressable, Text, View, ActivityIndicator } from "react-native";
 import { ProfileAvatar } from "@/components/common/ProfileAvatar";
-import { FALLBACK_BIO, type FriendshipRow, type ProfileRow } from "@/types/social";
+import { FALLBACK_BIO, type ProfileRow } from "@/types/social";
 import { fonts } from "@/theme/fonts";
 
 type UserListItemProps = {
   profile: ProfileRow;
   isSelf: boolean;
-  relation?: FriendshipRow;
+  isFollowing: boolean;
   loading?: boolean;
   onPressProfile: () => void;
   onToggleFollow: () => void;
@@ -16,12 +16,11 @@ type UserListItemProps = {
 export const UserListItem = ({
   profile,
   isSelf,
-  relation,
+  isFollowing,
   loading,
   onPressProfile,
   onToggleFollow,
 }: UserListItemProps) => {
-  const isFollowing = Boolean(relation);
   const isDisabled = isSelf || loading;
   const followingTone = isFollowing || isSelf;
 

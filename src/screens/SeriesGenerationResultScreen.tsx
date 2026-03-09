@@ -1,8 +1,8 @@
-import React, { useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Image, ImageBackground, Pressable, ScrollView, Text, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, Alert, Image, ImageBackground, Pressable, ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { createQuestDraft, saveSeriesBlueprint } from "@/services/quests";
 import { useSessionUserId } from "@/hooks/useSessionUser";
 import { isSupabaseConfigured } from "@/lib/supabase";
@@ -12,18 +12,51 @@ import { fonts } from "@/theme/fonts";
 
 type Props = NativeStackScreenProps<RootStackParamList, "SeriesGenerationResult">;
 
+type ResultTabKey = "overview" | "characters" | "world";
+
+type RuleItem = {
+  title: string;
+  description: string;
+  tone: "warning" | "accent";
+};
+
 const HERO_IMAGE_URI =
   "https://lh3.googleusercontent.com/aida-public/AB6AXuClaK6Cep3ioLM4ETJDiSBSHomcRYBC44vZUU6feXa67oKcHgv0H75jOgYm6ns5DWBqix-Xeu0UGZyMGGUgWBeq3p9qztCn2lpS6NDefOwUrmNFsyyplPmT0yQpjhACOp57nmStss03to0qE8PfSvvJgMV11p-18haW6Gggq1KHkasxWV_yw-qAqF8hDATxrLPFRQ7NE1BOFNw4WDdM1Kyfngzf7m8h8FueIsGtHNt7f-hjlQ6TLEMhG5sFs0wN6IYUG4zxziPvP0ih";
+
+const RESULT_TABS: Array<{ key: ResultTabKey; label: string }> = [
+  { key: "overview", label: "概要" },
+  { key: "characters", label: "登場人物" },
+  { key: "world", label: "世界観" },
+];
+
+type CharacterTone = {
+  accent: string;
+  accentSoft: string;
+  glow: string;
+};
+
+const CHARACTER_TONES: CharacterTone[] = [
+  { accent: "#FF9F43", accentSoft: "#FFE7D0", glow: "rgba(255, 159, 67, 0.25)" },
+  { accent: "#54A0FF", accentSoft: "#DDEBFF", glow: "rgba(84, 160, 255, 0.25)" },
+  { accent: "#FF6B6B", accentSoft: "#FFD9D9", glow: "rgba(255, 107, 107, 0.25)" },
+  { accent: "#A29BFE", accentSoft: "#E7E5FF", glow: "rgba(162, 155, 254, 0.25)" },
+];
 
 const normalizeText = (value?: string | null, fallback = "未設定") => {
   const cleaned = (value || "").replace(/\s+/g, " ").trim();
   return cleaned || fallback;
 };
 
+const stripAlphabetFromName = (name: string) =>
+  name
+    .replace(/\s*[（(]\s*[A-Za-z\s]+\s*[）)]\s*/g, "")
+    .replace(/\s*[/／]\s*[A-Za-z\s]+$/g, "")
+    .replace(/\s+[A-Za-z][A-Za-z\s]+$/g, "")
+    .trim();
+
 const buildSeedFallbackImageUrl = (seedBase: string, width: number, height: number) =>
   `https://picsum.photos/seed/${encodeURIComponent((seedBase || "tomoshibi").slice(0, 80))}/${Math.max(120, width)}/${Math.max(120, height)}`;
 
-const roleBadge = (index: number) => (index === 0 ? "Protagonist" : "Key Person");
 const pickCharacterEmoji = (character: GeneratedSeriesCharacter, index: number) => {
   const source = `${character.role} ${character.name}`.toLowerCase();
   if (source.includes("猫") || source.includes("ねこ")) return "🐈";
@@ -34,42 +67,199 @@ const pickCharacterEmoji = (character: GeneratedSeriesCharacter, index: number) 
   return index % 2 === 0 ? "✨" : "🌙";
 };
 
+const splitParagraphs = (...texts: Array<string | null | undefined>) =>
+  texts
+    .map((item) => normalizeText(item, "").trim())
+    .filter(Boolean)
+    .flatMap((item) =>
+      item
+        .split(/\n+/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+    );
+
+const formatDateLabel = () => {
+  const text = new Intl.DateTimeFormat("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  return text.replace(/\//g, ".");
+};
+
+const pickCharacterTone = (index: number) => CHARACTER_TONES[index % CHARACTER_TONES.length];
+const PROTAGONIST_ROLE_PATTERN = /(主人公|主役|メイン|語り手|protagonist|hero|lead|main character|mc)/i;
+
+const isProtagonistRole = (role?: string | null) => PROTAGONIST_ROLE_PATTERN.test(normalizeText(role, ""));
+
+const sortCharactersForDisplay = (characters: GeneratedSeriesCharacter[]) =>
+  characters
+    .map((character, index) => ({ character, index }))
+    .sort((a, b) => {
+      const aPriority = isProtagonistRole(a.character.role) ? 0 : 1;
+      const bPriority = isProtagonistRole(b.character.role) ? 0 : 1;
+      if (aPriority !== bPriority) return aPriority - bPriority;
+      return a.index - b.index;
+    })
+    .map((item) => item.character);
+
+const buildCharacterTags = (character: GeneratedSeriesCharacter) => {
+  const sources = [character.role, ...(character.relationshipHooks || [])]
+    .map((value) => normalizeText(value, ""))
+    .filter(Boolean)
+    .flatMap((value) =>
+      value
+        .split(/[、,・/／\s]+/)
+        .map((part) => part.trim())
+        .filter(Boolean)
+    );
+
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const source of sources) {
+    const tag = source.replace(/[「」『』()（）]/g, "").slice(0, 10);
+    if (!tag || seen.has(tag)) continue;
+    seen.add(tag);
+    unique.push(`#${tag}`);
+    if (unique.length >= 3) break;
+  }
+
+  if (unique.length > 0) return unique;
+  const fallback = normalizeText(character.role, "人物");
+  return [`#${fallback.slice(0, 10)}`];
+};
+
 export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
   const { generated, sourcePrompt } = route.params;
   const { userId } = useSessionUserId();
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
 
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [revealedSecrets, setRevealedSecrets] = useState<Record<string, boolean>>({});
+  const [activeTab, setActiveTab] = useState<ResultTabKey>("overview");
   const [heroImageFailed, setHeroImageFailed] = useState(false);
   const [failedPortraits, setFailedPortraits] = useState<Record<string, boolean>>({});
+  const [failedWorldVisuals, setFailedWorldVisuals] = useState<Record<string, boolean>>({});
+  const [characterSlideIndex, setCharacterSlideIndex] = useState(0);
+  const [imagesReady, setImagesReady] = useState(false);
 
-  const sceneText = useMemo(
-    () => normalizeText(generated.world?.setting || generated.premise || generated.overview, "舞台情報はまだありません。"),
-    [generated.overview, generated.premise, generated.world?.setting]
-  );
+  const dateLabel = useMemo(() => formatDateLabel(), []);
+  const orderedCharacters = useMemo(() => sortCharactersForDisplay(generated.characters), [generated.characters]);
 
-  const worldRuleText = useMemo(() => {
-    const taboo = generated.world?.tabooRules?.find((item) => item.trim().length > 0);
-    if (taboo) return taboo;
+  const storyParagraphs = useMemo(() => {
+    const paragraphs = splitParagraphs(generated.overview, generated.premise);
+    if (paragraphs.length > 0) return paragraphs;
+    return ["あらすじ情報はまだ生成されていません。"];
+  }, [generated.overview, generated.premise]);
 
-    const invariant = generated.continuity?.invariantRules?.find((item) => item.trim().length > 0);
-    if (invariant) return invariant;
+  const ruleItems = useMemo<RuleItem[]>(() => {
+    const fromWorld = (generated.world?.tabooRules || []).map((item) => ({
+      text: normalizeText(item, ""),
+      tone: "warning" as const,
+    }));
 
-    const aiRuleFirst = generated.aiRules
+    const fromContinuity = (generated.continuity?.invariantRules || []).map((item) => ({
+      text: normalizeText(item, ""),
+      tone: "accent" as const,
+    }));
+
+    const fromAiRule = generated.aiRules
       .split(/[。.!?]/)
-      .map((item) => item.trim())
-      .find(Boolean);
-    if (aiRuleFirst) return aiRuleFirst;
+      .map((item) => normalizeText(item, ""))
+      .filter(Boolean)
+      .map((item) => ({ text: item, tone: "accent" as const }));
 
-    return "特有のルールはまだ生成されていません。";
+    const merged = [...fromWorld, ...fromContinuity, ...fromAiRule].filter((item) => item.text.length > 0);
+    const unique: Array<{ text: string; tone: "warning" | "accent" }> = [];
+    const seen = new Set<string>();
+
+    for (const item of merged) {
+      if (seen.has(item.text)) continue;
+      seen.add(item.text);
+      unique.push(item);
+      if (unique.length >= 5) break;
+    }
+
+    if (unique.length === 0) {
+      return [
+        {
+          title: "ルール未設定",
+          description: "特有のルールはまだ生成されていません。",
+          tone: "accent",
+        },
+      ];
+    }
+
+    return unique.map((item, index) => {
+      const shortTitle = item.text.length > 16 ? `${item.text.slice(0, 16)}...` : item.text;
+      return {
+        title: shortTitle || `Rule ${index + 1}`,
+        description: item.text,
+        tone: item.tone,
+      };
+    });
   }, [generated.aiRules, generated.continuity?.invariantRules, generated.world?.tabooRules]);
 
-  const sectionTags = useMemo(() => {
-    const tags: string[] = [];
-    if (generated.genre) tags.push(`ジャンル：${generated.genre}`);
-    if (generated.tone) tags.push(`トーン：${generated.tone}`);
-    return tags;
-  }, [generated.genre, generated.tone]);
+  const settingRows = useMemo(
+    () => [
+      { label: "ジャンル", value: normalizeText(generated.genre, "未設定") },
+      { label: "トーン", value: normalizeText(generated.tone, "未設定") },
+      { label: "シーズンゴール", value: normalizeText(generated.seasonGoal, "未設定") },
+    ],
+    [generated.genre, generated.seasonGoal, generated.tone]
+  );
+
+  const worldRows = useMemo(
+    () => [
+      { label: "舞台", value: normalizeText(generated.world?.setting, "未設定") },
+      { label: "時代", value: normalizeText(generated.world?.era, "未設定") },
+      { label: "社会構造", value: normalizeText(generated.world?.socialStructure, "未設定") },
+      { label: "中核対立", value: normalizeText(generated.world?.coreConflict, "未設定") },
+    ],
+    [generated.world?.coreConflict, generated.world?.era, generated.world?.setting, generated.world?.socialStructure]
+  );
+
+  const characterPageWidth = Math.max(1, width);
+  const characterCardWidth = Math.min(380, Math.max(300, width - 56));
+  const worldVisualCards = useMemo(() => {
+    const first = generated.world?.visualAssets?.[0];
+    const second = generated.world?.visualAssets?.[1];
+    const firstFallback = buildSeedFallbackImageUrl(`${generated.title}-world-upper`, 960, 640);
+    const secondFallback = buildSeedFallbackImageUrl(`${generated.title}-world-lower`, 960, 640);
+
+    return [
+      {
+        key: first?.id || "world_upper",
+        badge: "上層エリア",
+        title: normalizeText(first?.title, normalizeText(generated.world?.socialStructure, "上層街区")),
+        description: normalizeText(
+          first?.description,
+          normalizeText(generated.world?.setting, "主要スポットが密集する歩行導線の中心エリア。")
+        ),
+        imageUri: first?.imageUrl || generated.coverImageUrl || firstFallback,
+        fallbackUri: firstFallback,
+      },
+      {
+        key: second?.id || "world_lower",
+        badge: "下層エリア",
+        title: normalizeText(second?.title, normalizeText(generated.world?.coreConflict, "下層街区")),
+        description: normalizeText(
+          second?.description,
+          normalizeText(generated.continuity?.globalMystery, "暮らしの現場に謎が潜む探索エリア。")
+        ),
+        imageUri: second?.imageUrl || generated.coverImageUrl || secondFallback,
+        fallbackUri: secondFallback,
+      },
+    ];
+  }, [
+    generated.continuity?.globalMystery,
+    generated.coverImageUrl,
+    generated.title,
+    generated.world?.coreConflict,
+    generated.world?.setting,
+    generated.world?.socialStructure,
+    generated.world?.visualAssets,
+  ]);
 
   const handleAdopt = useCallback(async () => {
     if (isSubmitting) return;
@@ -79,25 +269,43 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
 
     try {
       if (isSupabaseConfigured && userId) {
-        createdQuestId = await createQuestDraft({
-          creatorId: userId,
-          title: generated.title,
-          description: generated.overview,
-          areaName: generated.world?.setting || null,
-          coverImageUrl: generated.coverImageUrl || null,
-        });
-
-        if (createdQuestId) {
-          try {
-            await saveSeriesBlueprint({
-              questId: createdQuestId,
-              userId,
-              sourcePrompt,
-              generated,
-            });
-          } catch (error) {
-            console.warn("SeriesGenerationResultScreen: failed to save series blueprint", error);
-          }
+        try {
+          const draft = await createQuestDraft({
+            creatorId: userId,
+            title: generated.title,
+            description: generated.overview,
+            areaName: generated.world?.setting || null,
+            coverImageUrl: generated.coverImageUrl || null,
+          });
+          createdQuestId = draft.questId;
+          await saveSeriesBlueprint({
+            questId: draft.questId,
+            seriesId: draft.seriesId,
+            userId,
+            sourcePrompt,
+            generated,
+          });
+        } catch (questError) {
+          const errorMessage = questError instanceof Error ? questError.message : String(questError);
+          const errorDetail = (questError as { code?: string; details?: string })?.details || "";
+          console.error("SeriesGenerationResultScreen: createQuestDraft/saveSeriesBlueprint failed", questError);
+          Alert.alert(
+            "シリーズの保存に失敗しました",
+            `Supabaseへの保存時にエラーが発生しました。\n\n${errorMessage}${errorDetail ? `\n${errorDetail}` : ""}\n\nSupabase SQL Editorで quests テーブルのINSERTポリシーが設定されているか確認してください。\n\nsupabase/sql/20260301_quests_insert_policy.sql を実行してください。`,
+            [
+              { text: "OK", style: "cancel" },
+              {
+                text: "ローカルのみで続ける",
+                onPress: () => {
+                  navigation.replace("AddEpisode", {
+                    prefillSeriesTitle: generated.title || "新しいシリーズ",
+                  });
+                },
+              },
+            ]
+          );
+          setIsSubmitting(false);
+          return;
         }
       }
 
@@ -108,13 +316,14 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
         );
       }
 
-      navigation.replace("AddEpisode", {
-        prefillSeriesId: createdQuestId || undefined,
-        prefillSeriesTitle: generated.title || "新しいシリーズ",
+      navigation.reset({
+        index: 0,
+        routes: [{ name: "MainTabs", params: { screen: "Profile" } }],
       });
     } catch (error) {
       console.error("SeriesGenerationResultScreen: failed to adopt generated series", error);
-      Alert.alert("保存に失敗しました", "時間をおいて再度お試しください。");
+      const msg = error instanceof Error ? error.message : String(error);
+      Alert.alert("保存に失敗しました", `${msg}\n\n時間をおいて再度お試しください。`);
     } finally {
       setIsSubmitting(false);
     }
@@ -124,264 +333,774 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
     navigation.replace("CreateSeries", { prefillPrompt: sourcePrompt });
   }, [navigation, sourcePrompt]);
 
-  return (
-    <View className="flex-1 bg-white">
-      <ScrollView className="flex-1" contentContainerStyle={{ paddingBottom: 190 }} showsVerticalScrollIndicator={false}>
-        <View className="relative h-[360px] overflow-hidden">
-          <ImageBackground
-            source={{
-              uri: heroImageFailed
-                ? buildSeedFallbackImageUrl(`${generated.title}-cover-fallback`, 1024, 1365)
-                : generated.coverImageUrl || HERO_IMAGE_URI,
-            }}
-            resizeMode="cover"
-            className="absolute inset-0"
-            onError={() => setHeroImageFailed(true)}
-          >
-            <View className="absolute inset-0 bg-black/55" />
-            <View className="absolute inset-x-0 bottom-0 h-36 bg-black/50" />
-          </ImageBackground>
+  const renderCharacterAvatar = (character: GeneratedSeriesCharacter, index: number, size: number) => {
+    const portraitKey = `${character.id || index}-${character.name}`;
+    const fallbackUrl = buildSeedFallbackImageUrl(`${generated.title}-${character.name}-portrait`, 512, 512);
+    const portraitUri = failedPortraits[portraitKey] ? fallbackUrl : character.portraitImageUrl || fallbackUrl;
 
-          <SafeAreaView edges={["top"]} className="absolute top-0 left-0 right-0 z-40">
-            <View className="px-4 py-3 flex-row items-center justify-between">
-              <Pressable
-                className="w-10 h-10 rounded-full bg-black/20 items-center justify-center"
-                onPress={() => navigation.goBack()}
-              >
-                <Ionicons name="close" size={22} color="#FFFFFF" />
-              </Pressable>
-              <View className="w-10 h-10" />
-            </View>
-          </SafeAreaView>
+    if (!portraitUri) {
+      return (
+        <View className="items-center justify-center rounded-full bg-[#F4F1ED] border border-[#E8DED2]" style={{ width: size, height: size }}>
+          <Text style={{ fontSize: Math.floor(size * 0.5) }}>{pickCharacterEmoji(character, index)}</Text>
+        </View>
+      );
+    }
 
-          <View className="absolute left-0 right-0 bottom-0 px-6 pb-8">
-            <View className="self-start rounded-full bg-[#EE8C2B] px-3 py-1 mb-3">
-              <Text className="text-[10px] text-white tracking-[2px]" style={{ fontFamily: fonts.displayBold }}>
-                SERIES GENERATED
+    return (
+      <View className="rounded-full overflow-hidden bg-[#F4F1ED] border border-[#E8DED2]" style={{ width: size, height: size }}>
+        <Image
+          source={{ uri: portraitUri }}
+          className="w-full h-full"
+          resizeMode="cover"
+          onError={() =>
+            setFailedPortraits((prev) => ({
+              ...prev,
+              [portraitKey]: true,
+            }))
+          }
+        />
+      </View>
+    );
+  };
+
+  const renderOverviewTab = () => {
+    const genre = settingRows.find((row) => row.label === "ジャンル")?.value || "未設定";
+    const tone = settingRows.find((row) => row.label === "トーン")?.value || "未設定";
+    const seasonGoal = settingRows.find((row) => row.label === "シーズンゴール")?.value || "未設定";
+    const primaryRule = ruleItems[0];
+    const secondaryRule = ruleItems[1];
+    const charactersThumb =
+      orderedCharacters[0]?.portraitImageUrl ||
+      buildSeedFallbackImageUrl(`${generated.title}-characters-thumb`, 640, 400);
+    const worldThumb =
+      worldVisualCards[0]?.imageUri ||
+      generated.coverImageUrl ||
+      buildSeedFallbackImageUrl(`${generated.title}-world-thumb`, 640, 400);
+    const storyLead = `「${normalizeText(generated.genre, "物語")}の世界で、${normalizeText(orderedCharacters[0]?.name, "主人公")}が真実を追う」`;
+
+    return (
+      <View className="px-4 pt-4 pb-6 gap-6">
+        <View className="gap-3">
+          <View className="flex-row gap-3">
+            <View className="flex-1 rounded-2xl border border-[#EFE6DD] bg-white p-4 overflow-hidden">
+              <View className="absolute -right-4 -top-4 w-16 h-16 rounded-full bg-[#DFECFF]" />
+              <View className="w-8 h-8 rounded-lg bg-[#EEF4FF] items-center justify-center mb-3">
+                <Ionicons name="film-outline" size={18} color="#3B82F6" />
+              </View>
+              <Text className="text-[10px] text-[#8B8177] tracking-[0.8px] mb-1" style={{ fontFamily: fonts.displayBold }}>
+                ジャンル
+              </Text>
+              <Text className="text-sm text-[#221910] leading-5" style={{ fontFamily: fonts.displayBold }}>
+                {genre}
               </Text>
             </View>
 
-            <Text className="text-[31px] text-white leading-[40px]" style={{ fontFamily: fonts.displayExtraBold }}>
-              {normalizeText(generated.title, "新しいシリーズ")}
-            </Text>
-
-            {sectionTags.length > 0 ? (
-              <View className="mt-4 flex-row flex-wrap gap-2">
-                {sectionTags.map((tag) => (
-                  <View key={tag} className="rounded-md border border-white/35 bg-white/20 px-2.5 py-1">
-                    <Text className="text-[10px] text-white tracking-[0.6px]" style={{ fontFamily: fonts.bodyMedium }}>
-                      {tag}
-                    </Text>
-                  </View>
-                ))}
+            <View className="flex-1 rounded-2xl border border-[#EFE6DD] bg-white p-4 overflow-hidden">
+              <View className="absolute -right-4 -top-4 w-16 h-16 rounded-full bg-[#FFF0DA]" />
+              <View className="w-8 h-8 rounded-lg bg-[#FFF6E8] items-center justify-center mb-3">
+                <Ionicons name="color-palette-outline" size={18} color="#D97706" />
               </View>
-            ) : null}
+              <Text className="text-[10px] text-[#8B8177] tracking-[0.8px] mb-1" style={{ fontFamily: fonts.displayBold }}>
+                トーン
+              </Text>
+              <Text className="text-sm text-[#221910] leading-5" style={{ fontFamily: fonts.displayBold }}>
+                {tone}
+              </Text>
+            </View>
+          </View>
+
+          <View className="rounded-2xl border border-[#EFE6DD] bg-white p-4 overflow-hidden">
+            <View className="absolute -right-8 -bottom-8 w-24 h-24 rounded-full bg-[#EE8C2B]/10" />
+            <View className="flex-row items-center gap-4">
+              <View className="w-10 h-10 rounded-lg bg-[#EE8C2B]/10 items-center justify-center">
+                <Ionicons name="flag-outline" size={22} color="#EE8C2B" />
+              </View>
+              <View className="flex-1">
+                <Text className="text-[10px] text-[#8B8177] tracking-[0.8px] mb-0.5" style={{ fontFamily: fonts.displayBold }}>
+                  シーズンゴール
+                </Text>
+                <Text className="text-base text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
+                  {seasonGoal}
+                </Text>
+              </View>
+            </View>
           </View>
         </View>
 
-        <View className="-mt-6 px-4">
-          <View
-            className="rounded-xl bg-white shadow-sm px-5 py-5 mb-6 border border-[#EFE6DD]"
-            style={{ borderLeftWidth: 4, borderLeftColor: "#EE8C2B" }}
-          >
-            <View className="flex-row items-center gap-2 mb-2">
-              <Ionicons name="flag-outline" size={16} color="#EE8C2B" />
-              <Text className="text-[11px] text-[#8B8177] tracking-[1.8px]" style={{ fontFamily: fonts.displayBold }}>
-                SEASON GOAL
+        <View className="rounded-2xl border border-[#EFE6DD] bg-white p-6 overflow-hidden">
+          <View className="absolute top-0 right-0 w-32 h-32 rounded-bl-full bg-[#EE8C2B]/10" />
+          <View className="flex-row items-center gap-2 mb-4">
+            <Ionicons name="book-outline" size={20} color="#EE8C2B" />
+            <Text className="text-xs text-[#EE8C2B] tracking-[0.9px]" style={{ fontFamily: fonts.displayBold }}>
+              Story Logic
+            </Text>
+          </View>
+          <Text className="text-xl text-[#221910] leading-9 mb-5" style={{ fontFamily: fonts.displayBold }}>
+            {storyLead}
+          </Text>
+          <View className="gap-4">
+            {storyParagraphs.slice(0, 2).map((paragraph, index) => (
+              <Text key={`overview-story-${index}`} className="text-sm text-[#62584E] leading-7" style={{ fontFamily: fonts.bodyMedium }}>
+                {paragraph}
               </Text>
-            </View>
-            <Text className="text-[16px] text-[#221910] leading-7" style={{ fontFamily: fonts.displayBold }}>
-              {normalizeText(generated.seasonGoal, "シーズンゴールは未設定です。")}
+            ))}
+          </View>
+        </View>
+
+        <View className="gap-4">
+          <View className="flex-row items-center gap-2 px-1">
+            <Ionicons name="hammer-outline" size={18} color="#EE8C2B" />
+            <Text className="text-lg text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
+              特有のルール・制約
             </Text>
           </View>
 
-          <View className="mb-8 px-2">
-            <View className="flex-row items-center gap-2 mb-3">
-              <View className="w-1.5 h-1.5 bg-[#EE8C2B] rounded-full" />
-              <Text className="text-[11px] text-[#9E958C] tracking-[1.8px]" style={{ fontFamily: fonts.displayBold }}>
-                WORLD SETTING
-              </Text>
-            </View>
-
-            <View className="rounded-2xl bg-[#F8F7F6] border border-[#EEE6DD] px-5 py-5 gap-4">
-              <View>
-                <Text className="text-xs text-[#221910] mb-1.5" style={{ fontFamily: fonts.displayBold }}>
-                  物語の舞台
+          <View className="rounded-2xl border border-[#EFE6DD] bg-white overflow-hidden">
+            <View className="flex-row">
+              <View className="w-1.5 bg-[#EF4444]" />
+              <View className="flex-1 p-4">
+                <View className="flex-row items-center justify-between mb-2">
+                  <View className="flex-row items-center gap-2 flex-1 pr-2">
+                    <Ionicons name="warning-outline" size={18} color="#EF4444" />
+                    <Text className="text-sm text-[#221910] flex-1" style={{ fontFamily: fonts.displayBold }}>
+                      {normalizeText(primaryRule?.title, "重要な制約")}
+                    </Text>
+                  </View>
+                  <View className="rounded-full bg-[#FEE2E2] px-2 py-0.5">
+                    <Text className="text-[10px] text-[#B91C1C]" style={{ fontFamily: fonts.displayBold }}>
+                      重罪
+                    </Text>
+                  </View>
+                </View>
+                <Text className="text-sm text-[#62584E] leading-6 mb-3" style={{ fontFamily: fonts.bodyRegular }}>
+                  {normalizeText(primaryRule?.description, "この世界では厳格な禁止事項が存在します。")}
                 </Text>
-                <Text className="text-sm text-[#62584E] leading-6" style={{ fontFamily: fonts.bodyRegular }}>
-                  {sceneText}
-                </Text>
-              </View>
-
-              <View className="pt-3 border-t border-[#E7DDD3]">
-                <Text className="text-xs text-[#221910] mb-1.5" style={{ fontFamily: fonts.displayBold }}>
-                  特有のルール
-                </Text>
-                <Text className="text-sm text-[#62584E] leading-6" style={{ fontFamily: fonts.bodyRegular }}>
-                  {worldRuleText}
-                </Text>
+                <View className="h-12 rounded-lg bg-[#F3F1EE] relative overflow-hidden">
+                  <View className="absolute top-1/2 left-4 right-4 h-px bg-[#CEC6BC]" />
+                  <View className="absolute top-1/2 left-[26%] w-3 h-3 rounded-full bg-[#F87171] -mt-1.5" />
+                  <View className="absolute top-1/2 left-[66%] w-2 h-2 rounded-full bg-[#9A9084] -mt-1" />
+                </View>
               </View>
             </View>
           </View>
 
-          <View className="mb-8">
-            <View className="px-2 mb-4 flex-row items-center justify-between">
-              <View className="flex-row items-center gap-2">
-                <View className="w-1.5 h-1.5 bg-[#EE8C2B] rounded-full" />
-                <Text className="text-[11px] text-[#9E958C] tracking-[1.8px]" style={{ fontFamily: fonts.displayBold }}>
-                  CHARACTER CAST
+          <View className="rounded-2xl border border-[#EFE6DD] bg-white overflow-hidden">
+            <View className="flex-row">
+              <View className="w-1.5 bg-[#EE8C2B]" />
+              <View className="flex-1 p-4">
+                <View className="flex-row items-center justify-between mb-2">
+                  <View className="flex-row items-center gap-2 flex-1 pr-2">
+                    <Ionicons name="layers-outline" size={18} color="#EE8C2B" />
+                    <Text className="text-sm text-[#221910] flex-1" style={{ fontFamily: fonts.displayBold }}>
+                      {normalizeText(secondaryRule?.title, "社会ルール")}
+                    </Text>
+                  </View>
+                  <View className="rounded-full bg-[#FFEDD5] px-2 py-0.5">
+                    <Text className="text-[10px] text-[#C2410C]" style={{ fontFamily: fonts.displayBold }}>
+                      社会構造
+                    </Text>
+                  </View>
+                </View>
+                <Text className="text-sm text-[#62584E] leading-6 mb-3" style={{ fontFamily: fonts.bodyRegular }}>
+                  {normalizeText(secondaryRule?.description, "社会構造そのものが、行動範囲や立場を決めています。")}
                 </Text>
-              </View>
-              <View className="rounded-md bg-[#F5F2EE] px-2 py-0.5">
-                <Text className="text-[10px] text-[#8C837A]" style={{ fontFamily: fonts.bodyMedium }}>
-                  {generated.characters.length}名生成
-                </Text>
+                <View className="h-12 rounded-lg bg-[#F3F1EE] flex-row items-end gap-1 px-4 py-2">
+                  <View className="h-8 flex-1 rounded-sm bg-[#A855F7]" />
+                  <View className="h-6 flex-1 rounded-sm bg-[#3B82F6]" />
+                  <View className="h-4 flex-1 rounded-sm bg-[#22C55E]" />
+                  <View className="h-2 flex-1 rounded-sm bg-[#9CA3AF]" />
+                </View>
               </View>
             </View>
+          </View>
+        </View>
 
-            <View className="px-1 gap-4">
-              {generated.characters.map((character, index) => {
-                const cardKey = `${character.id || index}-${character.name}`;
-                const secret = normalizeText(character.secrets?.[0], "秘密情報は未設定です。");
-                const relation = normalizeText(
-                  character.relationshipHooks?.[0],
-                  "他キャラクターとの関係情報は未設定です。"
-                );
-                const isVisible = Boolean(revealedSecrets[cardKey]);
-                const portraitFallbackUrl = buildSeedFallbackImageUrl(
-                  `${generated.title}-${character.name}-${character.role}-portrait-fallback`,
-                  512,
-                  512
-                );
-                const portraitUri = failedPortraits[cardKey]
-                  ? portraitFallbackUrl
-                  : character.portraitImageUrl || portraitFallbackUrl;
+        <View className="flex-row gap-3 pb-8">
+          <Pressable onPress={() => setActiveTab("characters")} className="flex-1 rounded-2xl overflow-hidden" style={{ aspectRatio: 1.4 }}>
+            <Image source={{ uri: charactersThumb }} className="absolute inset-0 w-full h-full" resizeMode="cover" />
+            <View className="absolute inset-0 bg-black/45" />
+            <View className="absolute left-3 right-3 bottom-3">
+              <Text className="text-[10px] text-white/80 mb-1 tracking-[0.8px]" style={{ fontFamily: fonts.displayBold }}>
+                Characters
+              </Text>
+              <View className="flex-row items-center justify-between">
+                <Text className="text-sm text-white" style={{ fontFamily: fonts.displayBold }}>
+                  登場人物を見る
+                </Text>
+                <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
+              </View>
+            </View>
+          </Pressable>
 
-                return (
+          <Pressable onPress={() => setActiveTab("world")} className="flex-1 rounded-2xl overflow-hidden" style={{ aspectRatio: 1.4 }}>
+            <Image source={{ uri: worldThumb }} className="absolute inset-0 w-full h-full" resizeMode="cover" />
+            <View className="absolute inset-0 bg-black/45" />
+            <View className="absolute left-3 right-3 bottom-3">
+              <Text className="text-[10px] text-white/80 mb-1 tracking-[0.8px]" style={{ fontFamily: fonts.displayBold }}>
+                World Build
+              </Text>
+              <View className="flex-row items-center justify-between">
+                <Text className="text-sm text-white" style={{ fontFamily: fonts.displayBold }}>
+                  世界観を見る
+                </Text>
+                <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
+              </View>
+            </View>
+          </Pressable>
+        </View>
+      </View>
+    );
+  };
+
+  const renderCharactersTab = () => (
+    <View className="pt-4 pb-6 gap-4">
+      {orderedCharacters.length === 0 ? (
+        <View className="mx-4 rounded-2xl border border-[#EFE6DD] bg-white p-5">
+          <Text className="text-sm text-[#62584E]" style={{ fontFamily: fonts.bodyRegular }}>
+            登場人物はまだ生成されていません。
+          </Text>
+        </View>
+      ) : (
+        <>
+          <View className="mx-4 rounded-2xl border border-[#EFE6DD] bg-white px-4 py-3.5">
+            <View className="flex-row items-center gap-2 mb-1">
+              <Ionicons name="people-outline" size={18} color="#EE8C2B" />
+              <Text className="text-lg text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
+                登場人物
+              </Text>
+            </View>
+            <Text className="text-xs text-[#62584E]" style={{ fontFamily: fonts.bodyRegular }}>
+              役割と関係性を中心に、物語の主要人物を確認できます。
+            </Text>
+          </View>
+
+          <ScrollView
+            className="-mx-4"
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            decelerationRate="fast"
+            disableIntervalMomentum
+            snapToInterval={characterPageWidth}
+            contentContainerStyle={{ paddingBottom: 8 }}
+            onMomentumScrollEnd={({ nativeEvent }) => {
+              const next = Math.round(nativeEvent.contentOffset.x / characterPageWidth);
+              const safe = Math.max(0, Math.min(orderedCharacters.length - 1, next));
+              setCharacterSlideIndex(safe);
+            }}
+          >
+            {orderedCharacters.map((character, index) => {
+              const tone = pickCharacterTone(index);
+              const cardKey = `${character.id || index}-${character.name}`;
+              const relation = normalizeText(character.relationshipHooks?.[0], "他の登場人物との関係性は未設定です。");
+              const role = normalizeText(character.role, "主要人物");
+              const tags = buildCharacterTags(character);
+              const portraitFallback = buildSeedFallbackImageUrl(
+                `${generated.title}-${character.name}-${character.role}-character`,
+                640,
+                640
+              );
+              const portraitUri = failedPortraits[cardKey] ? portraitFallback : character.portraitImageUrl || portraitFallback;
+
+              return (
+                <View
+                  key={cardKey}
+                  className="items-center px-4"
+                  style={{ width: characterPageWidth }}
+                >
                   <View
-                    key={cardKey}
-                    className="rounded-2xl bg-white border border-[#EFE6DD] shadow-sm px-5 py-5"
+                    className="rounded-2xl overflow-hidden border border-[#EFE6DD] bg-white"
+                    style={{
+                      width: characterCardWidth,
+                      shadowColor: "#000000",
+                      shadowOffset: { width: 0, height: 10 },
+                      shadowOpacity: 0.1,
+                      shadowRadius: 24,
+                      elevation: 6,
+                    }}
                   >
-                    <View className="flex-row items-start gap-4">
-                      {portraitUri ? (
-                        <View className="w-12 h-12 rounded-full bg-[#F4F1ED] border border-[#E8DED2] overflow-hidden">
-                          <Image
-                            source={{ uri: portraitUri }}
-                            className="w-full h-full"
-                            resizeMode="cover"
-                            onError={() =>
-                              setFailedPortraits((prev) => ({
-                                ...prev,
-                                [cardKey]: true,
-                              }))
-                            }
-                          />
-                        </View>
-                      ) : (
-                        <View className="w-12 h-12 rounded-full bg-[#F4F1ED] border border-[#E8DED2] items-center justify-center">
-                          <Text className="text-[23px]">{pickCharacterEmoji(character, index)}</Text>
-                        </View>
-                      )}
+                    <View className="absolute top-0 left-0 h-full w-1.5" style={{ backgroundColor: tone.accent }} />
+                    <View className="absolute -top-24 -right-24 w-56 h-56 rounded-full" style={{ backgroundColor: tone.glow }} />
 
-                      <View className="flex-1">
-                        <View className="flex-row items-start justify-between mb-1 gap-2">
-                          <Text className="text-lg text-[#221910] flex-1" style={{ fontFamily: fonts.displayBold }}>
-                            {normalizeText(character.name)}
-                          </Text>
-                          <View
-                            className="rounded-full px-2 py-0.5"
-                            style={{
-                              backgroundColor: index === 0 ? "rgba(238, 140, 43, 0.1)" : "#F2EEE9",
-                            }}
-                          >
-                            <Text
-                              className="text-[10px] uppercase"
-                              style={{ fontFamily: fonts.displayBold, color: index === 0 ? "#EE8C2B" : "#6F675F" }}
-                            >
-                              {roleBadge(index)}
+                    <View className="p-6">
+                      <View className="items-center">
+                        <View
+                          className="w-32 h-32 rounded-full p-1 mb-4"
+                          style={{
+                            backgroundColor: tone.accentSoft,
+                            shadowColor: tone.accent,
+                            shadowOffset: { width: 0, height: 4 },
+                            shadowOpacity: 0.3,
+                            shadowRadius: 10,
+                            elevation: 4,
+                          }}
+                        >
+                          <View className="w-full h-full rounded-full overflow-hidden border-2 border-white bg-[#F4F1ED]">
+                            {portraitUri ? (
+                              <Image
+                                source={{ uri: portraitUri }}
+                                className="w-full h-full"
+                                resizeMode="cover"
+                                onError={() =>
+                                  setFailedPortraits((prev) => ({
+                                    ...prev,
+                                    [cardKey]: true,
+                                  }))
+                                }
+                              />
+                            ) : (
+                              <View className="w-full h-full items-center justify-center">
+                                <Text style={{ fontSize: 48 }}>{pickCharacterEmoji(character, index)}</Text>
+                              </View>
+                            )}
+                          </View>
+                        </View>
+
+                        <Text className="text-3xl text-[#221910] mb-4" style={{ fontFamily: fonts.displayExtraBold }}>
+                          {stripAlphabetFromName(normalizeText(character.name, `人物${index + 1}`))}
+                        </Text>
+
+                        <View className="flex-row flex-wrap justify-center gap-2 mb-6">
+                          {tags.map((tag, tagIndex) => (
+                            <View key={`${cardKey}-tag-${tagIndex}`} className="px-2.5 py-1 rounded-full bg-[#F3F1EE]">
+                              <Text className="text-xs text-[#62584E]" style={{ fontFamily: fonts.bodyMedium }}>
+                                {tag}
+                              </Text>
+                            </View>
+                          ))}
+                        </View>
+                      </View>
+
+                      <View className="rounded-xl border border-[#EFE6DD] bg-[#FCFBFA] p-4 mb-4">
+                        <View className="flex-row items-start gap-2.5">
+                          <Ionicons name="person-outline" size={17} color={tone.accent} style={{ marginTop: 1 }} />
+                          <View className="flex-1">
+                            <Text className="text-[11px] text-[#221910] mb-0.5" style={{ fontFamily: fonts.displayBold }}>
+                              役割
+                            </Text>
+                            <Text className="text-xs text-[#62584E] leading-5" style={{ fontFamily: fonts.bodyRegular }}>
+                              {role}
                             </Text>
                           </View>
                         </View>
 
-                        <Text className="text-xs text-[#8A7E72] mb-3" style={{ fontFamily: fonts.bodyMedium }}>
-                          {normalizeText(character.role)}
-                        </Text>
-
-                        {character.appearance ? (
-                          <Text className="text-xs text-[#8A7E72] mb-3 -mt-1" style={{ fontFamily: fonts.bodyRegular }}>
-                            {character.appearance}
-                          </Text>
-                        ) : null}
-
-                        <View className="rounded-lg bg-[#F8F7F6] px-3 py-3 mb-2.5">
-                          <Text className="text-[11px] text-[#A1978D] mb-1 tracking-[1.1px]" style={{ fontFamily: fonts.displayBold }}>
-                            PERSONALITY
-                          </Text>
-                          <Text className="text-xs text-[#64594F] leading-5" style={{ fontFamily: fonts.bodyRegular }}>
-                            {normalizeText(character.personality, "性格情報は未設定です。")}
-                          </Text>
-                        </View>
-
-                        <View className="flex-row gap-2">
-                          <View className="flex-1 rounded-lg bg-[#F8F7F6] px-2.5 py-2.5">
-                            <Text className="text-[10px] text-[#A1978D] mb-0.5 tracking-[1px]" style={{ fontFamily: fonts.displayBold }}>
-                              RELATIONSHIP
+                        <View className="mt-3 pt-3 border-t border-dashed border-[#E6DED5] flex-row items-start gap-2.5">
+                          <Ionicons name="people-outline" size={17} color={tone.accent} style={{ marginTop: 1 }} />
+                          <View className="flex-1">
+                            <Text className="text-[11px] text-[#221910] mb-0.5" style={{ fontFamily: fonts.displayBold }}>
+                              関係性
                             </Text>
-                            <Text className="text-[11px] text-[#64594F] leading-4" style={{ fontFamily: fonts.bodyRegular }}>
+                            <Text className="text-xs text-[#62584E] leading-5" style={{ fontFamily: fonts.bodyRegular }}>
                               {relation}
                             </Text>
                           </View>
-
-                          <Pressable
-                            className="flex-1 rounded-lg bg-[#F8F7F6] border border-[#F0DABF] px-2.5 py-2.5"
-                            onPress={() =>
-                              setRevealedSecrets((prev) => ({
-                                ...prev,
-                                [cardKey]: !prev[cardKey],
-                              }))
-                            }
-                          >
-                            <View className="absolute top-1 right-1">
-                              <Ionicons name="lock-closed-outline" size={11} color="#EE8C2B" />
-                            </View>
-                            <Text className="text-[10px] text-[#EE8C2B] mb-0.5 tracking-[1px]" style={{ fontFamily: fonts.displayBold }}>
-                              SECRET
-                            </Text>
-                            <Text
-                              className={`text-[11px] leading-4 ${isVisible ? "text-[#64594F]" : "text-[#A69A8D]"}`}
-                              style={{ fontFamily: fonts.bodyRegular }}
-                              numberOfLines={isVisible ? undefined : 2}
-                            >
-                              {isVisible ? secret : "タップして秘密を見る"}
-                            </Text>
-                          </Pressable>
                         </View>
                       </View>
                     </View>
                   </View>
-                );
-              })}
+                </View>
+              );
+            })}
+          </ScrollView>
+
+          <View className="flex-row justify-center items-center gap-2 mt-2 px-6">
+            {orderedCharacters.slice(0, 8).map((_, index) => {
+              const active = index === characterSlideIndex;
+              const tone = pickCharacterTone(characterSlideIndex);
+              return (
+                <View
+                  key={`character-indicator-${index}`}
+                  className={`rounded-full ${active ? "w-6 h-1.5" : "w-1.5 h-1.5"}`}
+                  style={{ backgroundColor: active ? tone.accent : "#D6D0C8" }}
+                />
+              );
+            })}
+          </View>
+        </>
+      )}
+    </View>
+  );
+
+  const renderWorldTab = () => (
+    <View className="px-4 pt-4 pb-6 gap-6">
+      <View className="rounded-2xl border border-[#EFE6DD] bg-white overflow-hidden">
+        <View className="p-5 pb-2">
+          <View className="flex-row items-center gap-2 mb-1">
+            <Ionicons name="earth-outline" size={18} color="#EE8C2B" />
+            <Text className="text-lg text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
+              舞台設定
+            </Text>
+          </View>
+          <Text className="text-xs text-[#62584E]" style={{ fontFamily: fonts.bodyRegular }}>
+            {normalizeText(generated.world?.setting, "舞台未設定")}
+          </Text>
+        </View>
+
+        <View className="px-5 pb-5">
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 4 }}>
+            {worldVisualCards.map((card, index) => {
+              const visualUri = failedWorldVisuals[card.key] ? card.fallbackUri : card.imageUri;
+              return (
+                <View
+                  key={card.key}
+                  className={`w-[240px] rounded-lg border border-[#EFE6DD] bg-[#F8F7F6] p-3 ${index === 0 ? "mr-3" : ""}`}
+                >
+                  <View className="h-28 rounded-md mb-3 overflow-hidden">
+                    <Image
+                      source={{ uri: visualUri }}
+                      className="absolute inset-0 w-full h-full"
+                      resizeMode="cover"
+                      onError={() =>
+                        setFailedWorldVisuals((prev) => ({
+                          ...prev,
+                          [card.key]: true,
+                        }))
+                      }
+                    />
+                    <View className="absolute inset-0 bg-black/20" />
+                    <View className="absolute right-2 bottom-2 rounded bg-white/90 px-2 py-0.5">
+                      <Text className="text-[10px] text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
+                        {card.badge}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text className="text-sm text-[#221910] mb-1" style={{ fontFamily: fonts.displayBold }}>
+                    {card.title}
+                  </Text>
+                  <Text className="text-[11px] text-[#62584E] leading-5" style={{ fontFamily: fonts.bodyRegular }}>
+                    {card.description}
+                  </Text>
+                </View>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </View>
+
+      <View className="gap-3">
+        <View className="flex-row items-center gap-2 px-1">
+          <Ionicons name="book-outline" size={18} color="#EE8C2B" />
+          <Text className="text-lg text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
+            キーワード
+          </Text>
+        </View>
+
+        <View className="flex-row gap-3">
+          <View className="flex-1 rounded-2xl border border-[#EFE6DD] bg-white p-4">
+            <View className="w-10 h-10 rounded-full bg-[#FCE7F3] items-center justify-center mb-3">
+              <Ionicons name="heart-outline" size={18} color="#EC4899" />
+            </View>
+            <Text className="text-sm text-[#221910] mb-1" style={{ fontFamily: fonts.displayBold }}>
+              {normalizeText(generated.world?.recurringMotifs?.[0], "感情エネルギー")}
+            </Text>
+            <Text className="text-[10px] text-[#62584E] leading-4" style={{ fontFamily: fonts.bodyRegular }}>
+              {normalizeText(generated.world?.tabooRules?.[0], "人々の感情と都市の動力が深く結びついている。")}
+            </Text>
+          </View>
+
+          <View className="flex-1 rounded-2xl border border-[#EFE6DD] bg-white p-4">
+            <View className="w-10 h-10 rounded-full bg-[#DBEAFE] items-center justify-center mb-3">
+              <Ionicons name="diamond-outline" size={18} color="#3B82F6" />
+            </View>
+            <Text className="text-sm text-[#221910] mb-1" style={{ fontFamily: fonts.displayBold }}>
+              {normalizeText(generated.world?.recurringMotifs?.[1], "原初のプリズム")}
+            </Text>
+            <Text className="text-[10px] text-[#62584E] leading-4" style={{ fontFamily: fonts.bodyRegular }}>
+              {normalizeText(generated.continuity?.midSeasonTwist, "世界の均衡を支える中核概念が存在する。")}
+            </Text>
+          </View>
+        </View>
+
+        <View className="rounded-2xl border border-[#EFE6DD] bg-white p-4">
+          <View className="flex-row items-start gap-4">
+            <View className="w-10 h-10 rounded-full bg-[#F3F4F6] items-center justify-center">
+              <Ionicons name="aperture-outline" size={18} color="#6B7280" />
+            </View>
+            <View className="flex-1">
+              <Text className="text-sm text-[#221910] mb-1" style={{ fontFamily: fonts.displayBold }}>
+                {normalizeText(generated.world?.recurringMotifs?.[2], "ゼロ・クロマ")}
+              </Text>
+              <Text className="text-[10px] text-[#62584E] leading-5" style={{ fontFamily: fonts.bodyRegular }}>
+                {normalizeText(generated.continuity?.finalePayoff, "この世界では色の有無が地位や行動範囲に強く影響する。")}
+              </Text>
             </View>
           </View>
+        </View>
+      </View>
+
+      <View className="gap-3 mb-4">
+        <View className="flex-row items-center gap-2 px-1">
+          <Ionicons name="hammer-outline" size={18} color="#EE8C2B" />
+          <Text className="text-lg text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
+            都市の掟
+          </Text>
+        </View>
+
+        <View className="rounded-2xl border border-[#FECACA] bg-[#FEF2F2] p-4 flex-row items-center gap-4 overflow-hidden">
+          <View className="w-12 h-12 rounded-full border border-[#FCA5A5] bg-[#FEE2E2] items-center justify-center">
+            <Ionicons name="ban-outline" size={24} color="#DC2626" />
+          </View>
+          <View className="flex-1">
+            <View className="flex-row items-center gap-2 mb-1">
+              <View className="rounded bg-[#DC2626] px-1.5 py-0.5">
+                <Text className="text-[10px] text-white tracking-[0.6px]" style={{ fontFamily: fonts.displayBold }}>
+                  Warning
+                </Text>
+              </View>
+              <Text className="text-sm text-[#7F1D1D]" style={{ fontFamily: fonts.displayBold }}>
+                {normalizeText(ruleItems[0]?.title, "抽出禁止")}
+              </Text>
+            </View>
+            <Text className="text-[11px] text-[#991B1B] leading-5" style={{ fontFamily: fonts.bodyRegular }}>
+              {normalizeText(ruleItems[0]?.description, "違反行為は都市からの追放対象となる。")}
+            </Text>
+          </View>
+        </View>
+
+        <View className="rounded-2xl border border-[#EFE6DD] bg-white p-4 flex-row items-center gap-4">
+          <View className="w-12 h-12 rounded-full bg-[#FFF7E6] items-center justify-center">
+            <Ionicons name="color-palette-outline" size={24} color="#F59E0B" />
+          </View>
+          <View className="flex-1">
+            <Text className="text-sm text-[#221910] mb-1" style={{ fontFamily: fonts.displayBold }}>
+              {normalizeText(ruleItems[1]?.title, "色彩階級制度")}
+            </Text>
+            <View className="h-1.5 rounded-full overflow-hidden flex-row mb-1.5">
+              <View className="flex-1 bg-[#EF4444]" />
+              <View className="flex-1 bg-[#22C55E]" />
+              <View className="flex-1 bg-[#3B82F6]" />
+            </View>
+            <Text className="text-[10px] text-[#62584E] leading-5" style={{ fontFamily: fonts.bodyRegular }}>
+              {normalizeText(ruleItems[1]?.description, "社会階層は色の純度や希少性によって規定される。")}
+            </Text>
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+
+  const coverImageUri = heroImageFailed
+    ? buildSeedFallbackImageUrl(`${generated.title}-cover-fallback`, 1024, 1365)
+    : generated.coverImageUrl || HERO_IMAGE_URI;
+
+  const allImageUris = useMemo(() => {
+    const uris: string[] = [];
+    if (coverImageUri) uris.push(coverImageUri);
+    for (const character of orderedCharacters) {
+      if (character.portraitImageUrl) uris.push(character.portraitImageUrl);
+    }
+    for (const card of worldVisualCards) {
+      if (card.imageUri) uris.push(card.imageUri);
+    }
+    return uris.filter(Boolean);
+  }, [coverImageUri, orderedCharacters, worldVisualCards]);
+
+  const [loadedCount, setLoadedCount] = useState(0);
+  const totalImages = allImageUris.length;
+  const loadingProgress = totalImages > 0 ? Math.min(1, loadedCount / totalImages) : 1;
+
+  const LOADING_MESSAGES = useMemo(() => [
+    "カバー画像を生成中...",
+    "登場人物の姿を描いています...",
+    "世界観を可視化しています...",
+    "仕上げています...",
+  ], []);
+  const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
+
+  useEffect(() => {
+    if (imagesReady) return;
+    const interval = setInterval(() => {
+      setLoadingMessageIndex((prev) => (prev + 1) % LOADING_MESSAGES.length);
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [imagesReady, LOADING_MESSAGES.length]);
+
+  useEffect(() => {
+    if (totalImages === 0) {
+      setImagesReady(true);
+      return;
+    }
+
+    let cancelled = false;
+    let completed = 0;
+
+    const onDone = () => {
+      completed += 1;
+      if (!cancelled) setLoadedCount(completed);
+      if (!cancelled && completed >= totalImages) {
+        setImagesReady(true);
+      }
+    };
+
+    for (const uri of allImageUris) {
+      Image.prefetch(uri)
+        .then(() => onDone())
+        .catch(() => onDone());
+    }
+
+    const timer = setTimeout(() => {
+      if (!cancelled) setImagesReady(true);
+    }, 25000);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [totalImages, allImageUris]);
+
+  if (!imagesReady) {
+    return (
+      <View className="flex-1 bg-[#2E1D13] items-center justify-center px-8">
+        <View className="absolute top-20 left-8 w-24 h-24 rounded-full bg-[#D88338]/20" />
+        <View className="absolute bottom-24 right-10 w-32 h-32 rounded-full bg-[#9E673C]/20" />
+        <View className="w-28 h-28 rounded-full border border-[#DCA16A]/35 items-center justify-center mb-8">
+          <Ionicons name="flame" size={44} color="#F4E2CF" />
+        </View>
+        <Text className="text-xl text-[#F2E8DC] tracking-[3px]" style={{ fontFamily: fonts.displayBold }}>
+          仕上げ中です...
+        </Text>
+        <Text className="text-sm text-[#D6B899] mt-3 text-center" style={{ fontFamily: fonts.bodyRegular }}>
+          {LOADING_MESSAGES[loadingMessageIndex]}
+        </Text>
+        <View className="w-full mt-10">
+          <View className="h-1 w-full rounded-full bg-[#4A3525] overflow-hidden">
+            <View
+              className="h-full rounded-full bg-[#D97B2E]"
+              style={{ width: `${Math.max(5, Math.round(loadingProgress * 100))}%` }}
+            />
+          </View>
+          <Text className="text-[10px] text-[#9E7E60] text-center mt-3" style={{ fontFamily: fonts.bodyRegular }}>
+            {loadedCount} / {totalImages} 画像読み込み中
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View className="flex-1 bg-[#F8F7F6]">
+      <ScrollView
+        className="flex-1"
+        contentContainerStyle={{ paddingBottom: 104 + insets.bottom }}
+        showsVerticalScrollIndicator={false}
+        stickyHeaderIndices={[1]}
+      >
+        <View className="relative h-[280px]">
+          <ImageBackground
+            source={{ uri: coverImageUri }}
+            resizeMode="cover"
+            className="absolute inset-0"
+            onError={() => setHeroImageFailed(true)}
+          >
+          </ImageBackground>
+
+          <SafeAreaView edges={["top"]} className="absolute top-0 left-0 right-0">
+            <View className="px-4 py-3">
+              <Pressable
+                className="w-10 h-10 rounded-full bg-black/25 items-center justify-center"
+                onPress={() => navigation.goBack()}
+              >
+                <Ionicons name="arrow-back" size={20} color="#FFFFFF" />
+              </Pressable>
+            </View>
+          </SafeAreaView>
+
+          <View className="absolute left-0 right-0 bottom-0 px-5 pb-6">
+            <View className="self-start rounded-md bg-white/20 border border-white/10 px-2.5 py-1 mb-3">
+              <Text className="text-[10px] text-white tracking-[1.4px]" style={{ fontFamily: fonts.displayBold, textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 }}>
+                SERIES #01
+              </Text>
+            </View>
+
+            <Text className="text-[30px] leading-[38px] text-white" style={{ fontFamily: fonts.displayExtraBold, textShadowColor: 'rgba(0,0,0,0.7)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 8 }}>
+              {normalizeText(generated.title, "新しいシリーズ")}
+            </Text>
+
+            <View className="flex-row items-center gap-4 mt-3">
+              <View className="flex-row items-center gap-1">
+                <Ionicons name="time-outline" size={15} color="#EAE4DE" />
+                <Text className="text-xs text-[#EAE4DE]" style={{ fontFamily: fonts.bodyMedium, textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 }}>
+                  {dateLabel}
+                </Text>
+              </View>
+              <View className="flex-row items-center gap-1">
+                <Ionicons name="eye-outline" size={15} color="#EAE4DE" />
+                <Text className="text-xs text-[#EAE4DE]" style={{ fontFamily: fonts.bodyMedium, textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 }}>
+                  Private
+                </Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        <View className="bg-[#F8F7F6] border-b border-[#EFE6DD]">
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 16, justifyContent: "center", flexGrow: 1 }}
+            className="max-h-[48px]"
+          >
+            {RESULT_TABS.map((tab) => {
+              const active = activeTab === tab.key;
+              return (
+                <Pressable
+                  key={tab.key}
+                  onPress={() => setActiveTab(tab.key)}
+                  className={`mx-1.5 px-6 py-3 border-b-2 ${active ? "border-[#EE8C2B]" : "border-transparent"}`}
+                >
+                  <Text
+                    className={`text-sm ${active ? "text-[#EE8C2B]" : "text-[#62584E]"}`}
+                    style={{ fontFamily: active ? fonts.displayBold : fonts.bodyMedium }}
+                  >
+                    {tab.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+
+        <View className="px-4 pt-4">
+          {activeTab === "overview" ? renderOverviewTab() : null}
+          {activeTab === "characters" ? renderCharactersTab() : null}
+          {activeTab === "world" ? renderWorldTab() : null}
         </View>
       </ScrollView>
 
       <SafeAreaView
-        edges={["bottom"]}
-        className="absolute left-0 right-0 bottom-0 border-t border-[#EFE7DD] bg-white px-6 pt-4 pb-4"
+        edges={[]}
+        className="absolute left-4 right-4 rounded-2xl bg-[#F8F7F6] px-3 pt-3 pb-2"
+        style={{
+          bottom: Math.max(10, insets.bottom + 6),
+          shadowColor: "#000000",
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.08,
+          shadowRadius: 10,
+          elevation: 3,
+        }}
       >
-        <View className="gap-3">
+        <View className="flex-row gap-3">
+          <Pressable
+            onPress={handleRetry}
+            className="flex-1 h-12 rounded-xl bg-white items-center justify-center flex-row gap-2"
+          >
+            <Ionicons name="create-outline" size={18} color="#6D6257" />
+            <Text className="text-sm text-[#6D6257]" style={{ fontFamily: fonts.displayBold }}>
+              修正
+            </Text>
+          </Pressable>
+
           <Pressable
             onPress={() => {
               void handleAdopt();
             }}
             disabled={isSubmitting}
-            className="h-14 rounded-2xl bg-[#EE8C2B] items-center justify-center flex-row gap-2"
+            className="flex-[1.7] h-12 rounded-xl bg-[#EE8C2B] items-center justify-center flex-row gap-2"
             style={{
               shadowColor: "#EE8C2B",
               shadowOffset: { width: 0, height: 6 },
-              shadowOpacity: 0.3,
-              shadowRadius: 12,
+              shadowOpacity: 0.28,
+              shadowRadius: 10,
               elevation: 4,
             }}
           >
@@ -394,22 +1113,12 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
               </>
             ) : (
               <>
+                <Ionicons name="save-outline" size={18} color="#FFFFFF" />
                 <Text className="text-sm text-white" style={{ fontFamily: fonts.displayBold }}>
-                  この物語の骨格を採用する
+                  シリーズを保存する
                 </Text>
-                <Ionicons name="checkmark" size={18} color="#FFFFFF" />
               </>
             )}
-          </Pressable>
-
-          <Pressable
-            onPress={handleRetry}
-            className="h-12 rounded-2xl bg-white border border-[#E8DED2] items-center justify-center flex-row gap-2"
-          >
-            <Ionicons name="create-outline" size={17} color="#6D6257" />
-            <Text className="text-sm text-[#6D6257]" style={{ fontFamily: fonts.displayBold }}>
-              プロンプトを修正して再試行
-            </Text>
           </Pressable>
         </View>
       </SafeAreaView>

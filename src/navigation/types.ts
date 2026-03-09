@@ -1,6 +1,9 @@
 import type { NavigatorScreenParams } from "@react-navigation/native";
 import type { ConnectionTab } from "@/types/social";
-import type { GeneratedSeriesDraft } from "@/services/seriesAi";
+import type {
+  GeneratedRuntimeEpisode,
+  GeneratedSeriesDraft,
+} from "@/services/seriesAi";
 
 export type MainTabParamList = {
   Home: undefined;
@@ -30,6 +33,13 @@ export type RootStackParamList = {
         prefillSeriesTitle?: string;
       }
     | undefined;
+  EpisodeGenerationResult: {
+    runtimeEpisode: GeneratedRuntimeEpisode;
+    seriesId: string;
+    seriesTitle: string;
+    coverImageUrl?: string | null;
+    episodeNo?: number;
+  };
   SeriesDetail: { questId: string };
   GamePlay: {
     questId: string;

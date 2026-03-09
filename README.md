@@ -17,6 +17,15 @@
 EXPO_PUBLIC_SUPABASE_URL=...
 EXPO_PUBLIC_SUPABASE_ANON_KEY=...
 EXPO_PUBLIC_MASTRA_BASE_URL=http://127.0.0.1:4111
+
+# Google Console OAuth (optional: direct OAuth fallback)
+EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID=
+EXPO_PUBLIC_GOOGLE_OAUTH_WEB_CLIENT_ID=
+EXPO_PUBLIC_GOOGLE_OAUTH_IOS_CLIENT_ID=
+EXPO_PUBLIC_GOOGLE_OAUTH_ANDROID_CLIENT_ID=
+
+# Google Maps (Android で地図表示に必要。設定後は再ビルドが必要)
+EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_API_KEY=
 ```
 
 3. 起動
@@ -27,6 +36,29 @@ npm start
 ```
 
 `npm start` は `Expo` と `Mastra` を同時に起動します。
+
+## Google Maps（地図表示）
+
+### Android
+1. [Google Cloud Console](https://console.cloud.google.com/) で Maps SDK for Android を有効化
+2. `.env` に `EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_API_KEY=` を設定
+3. **再ビルド**: `npx expo prebuild --clean` の後、`npx expo run:android` で起動
+
+### Web（Cursor ブラウザ等でのテスト）
+1. Google Cloud Console で以下を有効化:
+   - **Maps Embed API**（地図表示）
+   - **Geocoding API**（検索バー入力でピン表示）
+2. `.env` に `EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY=` を設定
+3. 開発サーバー再起動（`npm run dev`）
+
+同一の API キーで複数 API を有効化できます。
+
+iOS は Apple Maps を使用するため API キー不要。
+
+## Googleログイン（Google Console OAuthフォールバック）
+- `AuthScreen` の Googleボタンは、まず Google Console のOAuthで `id_token` を取得し、`supabase.auth.signInWithIdToken` でセッション化します。
+- 上記Client IDが未設定、または直接OAuthが失敗した場合は、従来の Supabase OAuth (`signInWithOAuth`) にフォールバックします。
+- Google Cloud Console の許可済みリダイレクトURIには `com.tomoshibi.mobile:/oauthredirect` を追加してください（ネイティブ）。
 
 ## Mastra (tomoshibi_mobile内)
 
@@ -40,6 +72,35 @@ npm start
 cd /Users/wataru/tomoshibi_mobile/mastra
 npm install
 npm run dev
+```
+
+Mastra 側の画像生成（シリーズカバー/キャラクター画像）を有効化する場合は、`mastra/.env` に以下を設定してください。
+
+```bash
+# 画像URLを Mastra 経由で返す（/api/series/image）
+SERIES_IMAGE_DELIVERY=proxy
+
+# モバイルアプリから到達できる Mastra の公開URL
+# 例: http://127.0.0.1:4111 （iOS Simulator）
+# 実機の場合は LAN IP 例: http://192.168.1.20:4111
+MASTRA_PUBLIC_BASE_URL=http://127.0.0.1:4111
+
+# 画像生成プロバイダ（省略時は GOOGLE_GENERATIVE_AI_API_KEY があれば gemini）
+SERIES_IMAGE_PROVIDER=gemini
+
+# Gemini 画像モデル（旧実装互換デフォルト）
+SERIES_IMAGE_GEMINI_MODEL=gemini-3-pro-image-preview
+
+# Gemini 失敗時に Pollinations へフォールバックする（off で無効化）
+SERIES_IMAGE_GEMINI_FALLBACK=on
+
+# 画像キャッシュ（秒）
+SERIES_IMAGE_CACHE_TTL_SEC=21600
+SERIES_IMAGE_CACHE_LIMIT=96
+
+# Pollinations 直指定で使う場合
+SERIES_IMAGE_PROVIDER_URL=https://image.pollinations.ai/prompt
+SERIES_IMAGE_PROVIDER_MODEL=flux
 ```
 
 モバイル側 `.env`:
