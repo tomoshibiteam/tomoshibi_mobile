@@ -5,7 +5,7 @@ import {
   seriesInterviewSchema,
   seriesWorldSchema,
 } from "../../schemas/series";
-import { buildCoverImagePrompt } from "../seriesVisuals";
+import { buildCoverImagePrompt, buildSeriesVisualStyleGuide } from "../seriesVisuals";
 
 export const seriesConceptAgentInputSchema = z.object({
   interview: seriesInterviewSchema,
@@ -129,6 +129,8 @@ const buildFallbackConcept = (input: SeriesConceptAgentInput): SeriesConceptAgen
   const companion = clean(input.interview.companion_preference);
   const continuationTrigger = clean(input.interview.continuation_trigger);
   const avoidancePreferences = clean(input.interview.avoidance_preferences);
+  const visualStylePreset = clean(input.interview.visual_style_preset);
+  const visualStyleNotes = clean(input.interview.visual_style_notes);
   const extra = clean(input.interview.additional_notes);
   const prompt = clean(input.prompt);
   const safeGenre = hasIncompatibleWorld(genreWorld) ? "現代都市街歩き連続劇" : genreWorld || "現代日本の都市圏";
@@ -138,6 +140,14 @@ const buildFallbackConcept = (input: SeriesConceptAgentInput): SeriesConceptAgen
   const safeContinuation = continuationTrigger || "次回で答え合わせしたくなる余韻";
   const safeAvoidance = avoidancePreferences || "過度に重い・刺激の強い表現";
   const fallbackTitle = inferFallbackTitle(input);
+  const styleGuide = buildSeriesVisualStyleGuide({
+    seriesTitle: fallbackTitle,
+    genre: safeGenre,
+    tone: `${safeEmotion}を重視した連続劇`,
+    setting: safeSetting,
+    stylePreset: visualStylePreset,
+    styleDirection: visualStyleNotes,
+  });
 
   return {
     title: fallbackTitle,
@@ -165,6 +175,8 @@ const buildFallbackConcept = (input: SeriesConceptAgentInput): SeriesConceptAgen
       tone: `${safeEmotion}を重視した連続劇`,
       premise: `${safeGenre}を舞台に、${safeCompanion}と共に進みながら${safeEmotion}を得られる物語体験。`,
       setting: safeSetting,
+      styleGuide,
+      excludeCharacters: true,
     }),
     ai_rule_points: withMandatoryWalkRules([
       "各話の冒頭で前話の結果を1行で継承する。",
@@ -219,6 +231,15 @@ const normalizeConceptOutput = (
         tone: clean(output.tone) || fallback.tone,
         premise: clean(output.premise) || fallback.premise,
         setting: clean(output.world?.setting) || fallback.world.setting,
+        styleGuide: buildSeriesVisualStyleGuide({
+          seriesTitle: clean(output.title) || fallback.title,
+          genre: clean(output.genre) || fallback.genre,
+          tone: clean(output.tone) || fallback.tone,
+          setting: clean(output.world?.setting) || fallback.world.setting,
+          stylePreset: input.interview.visual_style_preset,
+          styleDirection: input.interview.visual_style_notes,
+        }),
+        excludeCharacters: true,
       }),
     world: normalizeWorld(output.world, fallback.world),
     ai_rule_points: aiRulePoints.length > 0 ? withMandatoryWalkRules(aiRulePoints, 8) : fallback.ai_rule_points,
@@ -241,6 +262,8 @@ export const generateSeriesConcept = async (
 - 続きが気になる条件: ${input.interview.continuation_trigger}
 - 避けたい表現: ${input.interview.avoidance_preferences}
 - 補足: ${input.interview.additional_notes || "なし"}
+- 希望画風プリセット: ${input.interview.visual_style_preset || "未指定（シネマティックアニメ）"}
+- 画風の補足指示: ${input.interview.visual_style_notes || "なし"}
 - 自由入力: ${input.prompt || "なし"}
 - 想定エピソード数: ${input.desiredEpisodeCount}
 
@@ -250,6 +273,7 @@ export const generateSeriesConcept = async (
 - 空中都市・宇宙・海底・閉鎖施設内のみ・オフィス内完結は禁止。
 - 屋内単一拠点だけで終わらせず、街路や公共空間での移動を必ず含める。
 - 非歩行な要望が入力されても、雰囲気だけ活かして地上街区へ再解釈する。
+- cover/world/character で画風がぶれないよう、同一の画風カノンに揃える。
 
 seriesConceptAgentOutputSchema を満たす JSON のみを出力してください。
 `;

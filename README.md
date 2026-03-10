@@ -88,8 +88,21 @@ MASTRA_PUBLIC_BASE_URL=http://127.0.0.1:4111
 # 画像生成プロバイダ（省略時は GOOGLE_GENERATIVE_AI_API_KEY があれば gemini）
 SERIES_IMAGE_PROVIDER=gemini
 
+# Hybrid実行順（固定推奨: vertex -> diffusers -> gemini -> pollinations）
+SERIES_IMAGE_HYBRID_ORDER=vertex,diffusers,gemini,pollinations
+
+# 参照画像条件付き生成の外部エンドポイント（任意）
+# POST JSON: { prompt, seed, size:{width,height}, purpose, references, style_reference }
+SERIES_IMAGE_VERTEX_ENDPOINT=
+SERIES_IMAGE_VERTEX_TOKEN=
+SERIES_IMAGE_DIFFUSERS_ENDPOINT=
+SERIES_IMAGE_DIFFUSERS_TOKEN=
+
 # Gemini 画像モデル（旧実装互換デフォルト）
 SERIES_IMAGE_GEMINI_MODEL=gemini-3-pro-image-preview
+
+# カバー同一性の実画像評価モデル（Vision）
+SERIES_IMAGE_EVAL_MODEL=gemini-2.0-flash
 
 # Gemini 失敗時に Pollinations へフォールバックする（off で無効化）
 SERIES_IMAGE_GEMINI_FALLBACK=on
@@ -221,3 +234,5 @@ src/
 - 権限不足で検索/フォロー一覧が欠ける場合は `supabase/sql/20260222_social_visibility.sql` を実行してください。
 - `quest_episodes` を正式利用する場合は `supabase/sql/20260222_add_quest_episodes.sql` を実行してください。
 - Mastra連携でシリーズ骨格を保存する場合は `supabase/sql/20260223_series_blueprints.sql` を実行してください。
+- シリーズ進行状態を保存する場合は `supabase/sql/20260301_series_state_columns.sql` を実行してください。
+- シリーズ人物とカバー同一性を保存する場合は `supabase/sql/20260310_series_identity_consistency.sql` を実行してください。

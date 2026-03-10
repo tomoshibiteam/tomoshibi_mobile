@@ -15,6 +15,11 @@ import {
   NotoSansJP_700Bold,
   useFonts as useNotoSansFonts,
 } from "@expo-google-fonts/noto-sans-jp";
+import {
+  NotoSerifJP_400Regular,
+  NotoSerifJP_600SemiBold,
+  useFonts as useNotoSerifFonts,
+} from "@expo-google-fonts/noto-serif-jp";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { RootNavigator } from "@/navigation/RootNavigator";
 
@@ -29,8 +34,12 @@ export default function App() {
     NotoSansJP_500Medium,
     NotoSansJP_700Bold,
   });
+  const [storyLoaded] = useNotoSerifFonts({
+    NotoSerifJP_400Regular,
+    NotoSerifJP_600SemiBold,
+  });
 
-  const fontsReady = displayLoaded && bodyLoaded;
+  const fontsReady = displayLoaded && bodyLoaded && storyLoaded;
 
   if (!fontsReady) {
     return (

@@ -36,7 +36,6 @@ import {
   generateSeriesEpisodeViaMastra,
   isMastraSeriesConfigured,
   type GeneratedRuntimeEpisode,
-  type RuntimeEpisodeGenerationEvent,
 } from "@/services/seriesAi";
 import { geocodeAddress } from "@/lib/geocode";
 
@@ -161,7 +160,7 @@ const fallbackSeriesRows = (): SelectableSeries[] =>
 
 const buildGeneratedEpisodeTitle = (purpose: Purpose, stageLocation: string) => {
   const compact = stageLocation.replace(/\s+/g, " ").trim().slice(0, 14);
-  return `${compact || "旅路"}の${purpose}`;
+  return `${compact || "舞台"}の${purpose}`;
 };
 
 const buildGeneratedEpisodeBody = (seriesTitle: string, purpose: Purpose, stageLocation: string) => {
@@ -253,157 +252,6 @@ const parseLocationCoords = (value: string): { lat: number; lng: number } | null
   return { lat, lng };
 };
 
-type EpisodeGenerationUiState = {
-  progressPercent: number;
-  phaseTitle: string;
-  currentTask: string;
-  detailText: string;
-};
-
-const INITIAL_EPISODE_GENERATION_UI_STATE: EpisodeGenerationUiState = {
-  progressPercent: 4,
-  phaseTitle: "生成準備",
-  currentTask: "エピソード生成の準備をしています",
-  detailText: "Mastraへ接続しています",
-};
-
-const clampPercent = (value: number) => Math.max(1, Math.min(100, Math.round(value)));
-
-const resolveSpotProgress = (
-  event: RuntimeEpisodeGenerationEvent,
-  startBase: number,
-  range: number,
-  done: boolean
-) => {
-  const spotCount = Math.max(1, event.spotCount || 1);
-  const spotIndex = Math.max(1, Math.min(spotCount, event.spotIndex || 1));
-  const ratio = done ? spotIndex / spotCount : (spotIndex - 1) / spotCount;
-  return clampPercent(startBase + ratio * range);
-};
-
-const resolveEpisodeGenerationUiState = (event: RuntimeEpisodeGenerationEvent): EpisodeGenerationUiState => {
-  const spotLabel =
-    event.spotIndex && event.spotCount
-      ? `${event.spotIndex}/${event.spotCount}${event.spotName ? ` ${event.spotName}` : ""}`
-      : event.spotName || "";
-
-  switch (event.phase) {
-    case "request_received":
-      return {
-        progressPercent: 8,
-        phaseTitle: "受付",
-        currentTask: "生成リクエストを受け付けています",
-        detailText: event.detail || "入力を確認しています",
-      };
-    case "input_validated":
-      return {
-        progressPercent: 13,
-        phaseTitle: "入力検証",
-        currentTask: "入力内容の整合性を確認しています",
-        detailText: event.detail || "リクエストスキーマを検証中",
-      };
-    case "characters_validated":
-      return {
-        progressPercent: 18,
-        phaseTitle: "事前確認",
-        currentTask: "シリーズの登場人物を確認しています",
-        detailText: event.detail || "キャラクター情報を読み込み中",
-      };
-    case "pipeline_start":
-      return {
-        progressPercent: 24,
-        phaseTitle: "パイプライン開始",
-        currentTask: "Mastraの生成パイプラインを起動しています",
-        detailText: event.detail || "生成エンジンを準備中",
-      };
-    case "fallback_plan_start":
-      return {
-        progressPercent: 42,
-        phaseTitle: "フォールバック構成",
-        currentTask: "フォールバック用の構成を作成しています",
-        detailText: event.detail || "基本構成を準備中",
-      };
-    case "fallback_plan_done":
-      return {
-        progressPercent: 58,
-        phaseTitle: "フォールバック構成",
-        currentTask: "フォールバック構成がまとまりました",
-        detailText: event.detail || "最終組み立てへ進みます",
-      };
-    case "episode_plan_start":
-      return {
-        progressPercent: 32,
-        phaseTitle: "プロット設計",
-        currentTask: "今回のエピソード設計を作成しています",
-        detailText: event.detail || "導線と目的を定義中",
-      };
-    case "episode_plan_done":
-      return {
-        progressPercent: 42,
-        phaseTitle: "プロット設計",
-        currentTask: "エピソード設計が確定しました",
-        detailText: event.detail || "スポット生成へ進みます",
-      };
-    case "spot_chapter_start":
-      return {
-        progressPercent: resolveSpotProgress(event, 45, 25, false),
-        phaseTitle: "情景生成",
-        currentTask: `スポット${spotLabel ? ` ${spotLabel}` : ""}の情景を生成しています`,
-        detailText: event.detail || "チャプター本文を作成中",
-      };
-    case "spot_chapter_done":
-      return {
-        progressPercent: resolveSpotProgress(event, 45, 25, true),
-        phaseTitle: "情景生成",
-        currentTask: `スポット${spotLabel ? ` ${spotLabel}` : ""}の情景生成が完了しました`,
-        detailText: event.detail || "次の処理へ進みます",
-      };
-    case "spot_puzzle_start":
-      return {
-        progressPercent: resolveSpotProgress(event, 70, 18, false),
-        phaseTitle: "謎生成",
-        currentTask: `スポット${spotLabel ? ` ${spotLabel}` : ""}の謎解きを生成しています`,
-        detailText: event.detail || "問題とヒントを作成中",
-      };
-    case "spot_puzzle_done":
-      return {
-        progressPercent: resolveSpotProgress(event, 70, 18, true),
-        phaseTitle: "謎生成",
-        currentTask: `スポット${spotLabel ? ` ${spotLabel}` : ""}の謎解き生成が完了しました`,
-        detailText: event.detail || "全体整形へ進みます",
-      };
-    case "episode_assemble_start":
-      return {
-        progressPercent: 90,
-        phaseTitle: "エピソード統合",
-        currentTask: "生成した素材を1話分に統合しています",
-        detailText: event.detail || "最終整形中",
-      };
-    case "episode_assemble_done":
-      return {
-        progressPercent: 96,
-        phaseTitle: "エピソード統合",
-        currentTask: "最終エピソードの組み立てが完了しました",
-        detailText: event.detail || "レスポンス準備へ進みます",
-      };
-    case "response_preparing":
-      return {
-        progressPercent: 98,
-        phaseTitle: "レスポンス整形",
-        currentTask: "表示用データを整えています",
-        detailText: event.detail || "あと少しで完了です",
-      };
-    case "completed":
-      return {
-        progressPercent: 100,
-        phaseTitle: "完了",
-        currentTask: "エピソード生成が完了しました",
-        detailText: event.detail || "結果画面へ遷移します",
-      };
-    default:
-      return INITIAL_EPISODE_GENERATION_UI_STATE;
-  }
-};
 
 export const AddEpisodeScreen = ({ navigation, route }: Props) => {
   const { userId } = useSessionUserId();
@@ -422,9 +270,6 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
   const [userWishes, setUserWishes] = useState("");
   const [isLocating, setIsLocating] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [generationUiState, setGenerationUiState] = useState<EpisodeGenerationUiState>(
-    INITIAL_EPISODE_GENERATION_UI_STATE
-  );
 
   const isMountedRef = useRef(true);
   const generationAbortRef = useRef<AbortController | null>(null);
@@ -658,7 +503,7 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
       return;
     }
     if (!stageLocation.trim()) {
-      Alert.alert("舞台を入力してください", "どこに旅をするか、場所を指定してください。");
+      Alert.alert("舞台を入力してください", "今回のエピソードで描く場所を指定してください。");
       return;
     }
     setStep(2);
@@ -688,32 +533,6 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
     );
   };
 
-  const updateGenerationUiState = useCallback((next: EpisodeGenerationUiState) => {
-    setGenerationUiState((prev) => ({
-      progressPercent: Math.max(prev.progressPercent, next.progressPercent),
-      phaseTitle: next.phaseTitle,
-      currentTask: next.currentTask,
-      detailText: next.detailText,
-    }));
-  }, []);
-
-  const handleCancelGeneration = useCallback(() => {
-    if (!isGenerating) return;
-    Alert.alert("生成を中止しますか？", "ここまでの生成内容は保存されません。", [
-      { text: "続ける", style: "cancel" },
-      {
-        text: "中止する",
-        style: "destructive",
-        onPress: () => {
-          generationAbortRef.current?.abort();
-          generationAbortRef.current = null;
-          setIsGenerating(false);
-          setGenerationUiState(INITIAL_EPISODE_GENERATION_UI_STATE);
-        },
-      },
-    ]);
-  }, [isGenerating]);
-
   const handleGenerateEpisode = async () => {
     if (!selectedSeries) {
       Alert.alert("シリーズを選択してください", "追加先のシリーズを選択してください。");
@@ -735,29 +554,15 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
       return;
     }
 
-    setGenerationUiState(INITIAL_EPISODE_GENERATION_UI_STATE);
     setIsGenerating(true);
     const generationAbortController = new AbortController();
     generationAbortRef.current = generationAbortController;
 
     try {
-      updateGenerationUiState({
-        progressPercent: 7,
-        phaseTitle: "シリーズ準備",
-        currentTask: "追加先シリーズの状態を確認しています",
-        detailText: "保存先を確定しています",
-      });
-
       let targetSeriesId = selectedSeries.id;
       const targetSeriesTitle = selectedSeries.title;
 
       if (!targetSeriesId) {
-        updateGenerationUiState({
-          progressPercent: 12,
-          phaseTitle: "シリーズ準備",
-          currentTask: "シリーズ下書きを作成しています",
-          detailText: "保存先IDを発行中",
-        });
         const draft = await createQuestDraft({
           creatorId: userId,
           title: targetSeriesTitle,
@@ -774,12 +579,6 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
 
       if (isMastraSeriesConfigured) {
         try {
-          updateGenerationUiState({
-            progressPercent: 16,
-            phaseTitle: "コンテキスト収集",
-            currentTask: "シリーズの進行情報を取得しています",
-            detailText: "Mastra実行に必要な文脈を読み込み中",
-          });
           const runtimeContext = targetSeriesId
             ? await fetchSeriesEpisodeRuntimeContext(targetSeriesId, userId)
             : null;
@@ -791,12 +590,6 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
             );
           }
 
-          updateGenerationUiState({
-            progressPercent: 20,
-            phaseTitle: "Mastra実行",
-            currentTask: "Mastraのエピソード生成ジョブを開始しています",
-            detailText: "旅の軌跡を描き始めます",
-          });
           runtimeEpisode = await generateSeriesEpisodeViaMastra({
             series: {
               title: runtimeContext?.title || targetSeriesTitle,
@@ -833,9 +626,6 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
             language: "ja",
           }, {
             signal: generationAbortController.signal,
-            onProgress: (event) => {
-              updateGenerationUiState(resolveEpisodeGenerationUiState(event));
-            },
           });
 
           if (runtimeEpisode.title.trim()) episodeTitle = runtimeEpisode.title.trim();
@@ -873,13 +663,6 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
               : 0;
           const nextEpisodeNo = lastEpNo + 1;
 
-          updateGenerationUiState({
-            progressPercent: 100,
-            phaseTitle: "完了",
-            currentTask: "エピソード生成が完了しました",
-            detailText: "結果画面へ遷移します",
-          });
-
           if (__DEV__) {
             console.log("[AddEpisodeScreen] Mastra success, scheduling navigation to EpisodeGenerationResult");
           }
@@ -915,12 +698,6 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
         }
       }
 
-      updateGenerationUiState({
-        progressPercent: 85,
-        phaseTitle: "保存処理",
-        currentTask: "エピソードを保存しています",
-        detailText: "Supabaseへ書き込み中",
-      });
       const result = await createEpisodeForSeries({
         userId,
         seriesId: targetSeriesId,
@@ -929,12 +706,6 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
         episodeText: episodeBody,
       });
 
-      updateGenerationUiState({
-        progressPercent: 100,
-        phaseTitle: "完了",
-        currentTask: "エピソード生成と保存が完了しました",
-        detailText: "シリーズ詳細へ移動できます",
-      });
       Alert.alert(
         "エピソードを生成しました",
         `「${result.questTitle}」に新しいエピソードを追加しました。`,
@@ -960,7 +731,6 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
       generationAbortRef.current = null;
       if (isMountedRef.current) {
         setIsGenerating(false);
-        setGenerationUiState(INITIAL_EPISODE_GENERATION_UI_STATE);
       }
     }
   };
@@ -976,7 +746,7 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
             <Ionicons name="arrow-back" size={20} color="#6C5647" />
           </Pressable>
           <Text className="text-base text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
-            {step === 1 ? "どこに旅をする？" : "旅の目的・思い"}
+            {step === 1 ? "次話の舞台を決める" : "今回の狙いを整える"}
           </Text>
           <View className="w-9 h-9" />
         </View>
@@ -1071,7 +841,7 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
                 <View className="flex-row items-center gap-2 mb-3">
                   <Ionicons name="map-outline" size={16} color="#EE8C2B" />
                   <Text className="text-sm text-[#5E554C]" style={{ fontFamily: fonts.displayBold }}>
-                    今回の舞台（どこに旅をする？）
+                    今回の舞台（どこを描く？）
                   </Text>
                 </View>
 
@@ -1153,7 +923,7 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
               <View className="px-5 pt-6 pb-4">
                 <View className="rounded-xl border border-[#ECE6DF] bg-white p-4">
                   <Text className="text-xs text-[#8A7B6C] mb-1" style={{ fontFamily: fonts.bodyRegular }}>
-                    行き先
+                    舞台
                   </Text>
                   <Text className="text-base text-[#221910] mb-3" style={{ fontFamily: fonts.displayBold }}>
                     {stageLocation.trim() || "—"}
@@ -1171,7 +941,7 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
                 <View className="flex-row items-center gap-2 mb-3">
                   <Ionicons name="compass-outline" size={16} color="#EE8C2B" />
                   <Text className="text-sm text-[#5E554C]" style={{ fontFamily: fonts.displayBold }}>
-                    旅の目的
+                    エピソードのテーマ
                   </Text>
                 </View>
 
@@ -1271,7 +1041,7 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
                   <>
                     <Ionicons name="sparkles" size={16} color="#FFFFFF" />
                     <Text className="text-sm text-white" style={{ fontFamily: fonts.displayBold }}>
-                      AIでエピソードを生成
+                      AIで次のエピソードを生成
                     </Text>
                   </>
                 )}
@@ -1344,141 +1114,6 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
           </View>
         </View>
       </Modal>
-
-      <EpisodeGenerationLoadingOverlay
-        visible={isGenerating}
-        state={generationUiState}
-        onClose={handleCancelGeneration}
-      />
     </View>
-  );
-};
-
-type EpisodeGenerationLoadingOverlayProps = {
-  visible: boolean;
-  state: EpisodeGenerationUiState;
-  onClose: () => void;
-};
-
-const EpisodeGenerationLoadingOverlay = ({ visible, state, onClose }: EpisodeGenerationLoadingOverlayProps) => {
-  const clampedProgress = Math.max(1, Math.min(100, state.progressPercent));
-
-  return (
-    <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>
-      <View className="flex-1 bg-[#F8F7F6]">
-        <View className="absolute top-16 left-6 h-28 w-28 rounded-full bg-[#EE8C2B]/10" />
-        <View className="absolute bottom-40 right-5 h-36 w-36 rounded-full bg-[#EE8C2B]/10" />
-        <View className="absolute inset-0">
-          <View className="h-full w-full">
-            <View className="absolute inset-x-0 top-[18%] h-[1px] bg-[#EE8C2B]/10" />
-            <View className="absolute inset-x-0 top-[30%] h-[1px] bg-[#EE8C2B]/10" />
-            <View className="absolute inset-x-0 top-[42%] h-[1px] bg-[#EE8C2B]/10" />
-            <View className="absolute inset-x-0 top-[54%] h-[1px] bg-[#EE8C2B]/10" />
-            <View className="absolute inset-x-0 top-[66%] h-[1px] bg-[#EE8C2B]/10" />
-          </View>
-        </View>
-
-        <SafeAreaView edges={["top"]} className="px-5 pt-2">
-          <View className="flex-row items-center justify-between">
-            <View className="flex-row items-center gap-2">
-              <View className="h-10 w-10 items-center justify-center rounded-full border border-[#EE8C2B]/25 bg-[#EE8C2B]/12">
-                <Ionicons name="compass-outline" size={20} color="#EE8C2B" />
-              </View>
-              <Text className="text-[11px] uppercase tracking-[1.5px] text-[#8A7B6C]" style={{ fontFamily: fonts.displayBold }}>
-                Mapping the Adventure
-              </Text>
-            </View>
-            <Pressable
-              onPress={onClose}
-              className="h-10 w-10 items-center justify-center rounded-full bg-[#FFFFFFAA] border border-[#E8DED3]"
-            >
-              <Ionicons name="close" size={20} color="#6C5647" />
-            </Pressable>
-          </View>
-        </SafeAreaView>
-
-        <View className="flex-1 px-6">
-          <View className="flex-1 items-center justify-center">
-            <View className="w-full max-w-[520px] rounded-2xl border border-[#EE8C2B]/20 bg-white/75 p-4 shadow-xl">
-              <View className="h-44 rounded-xl border border-[#E9D7C5] bg-[#EFE5DA]/60 p-3">
-                <View className="flex-row items-center justify-between">
-                  <View className="rounded-full border border-[#EE8C2B]/25 bg-white/85 px-3 py-1 flex-row items-center gap-2">
-                    <View className="h-2 w-2 rounded-full bg-[#EE8C2B]" />
-                    <Text className="text-[10px] text-[#7A6C5E]" style={{ fontFamily: fonts.displayBold }}>
-                      GEO SYNC ACTIVE
-                    </Text>
-                  </View>
-                  <View className="rounded-full border border-[#EE8C2B]/25 bg-white/85 px-3 py-1 flex-row items-center gap-1.5">
-                    <Ionicons name="analytics-outline" size={11} color="#EE8C2B" />
-                    <Text className="text-[10px] text-[#7A6C5E]" style={{ fontFamily: fonts.displayBold }}>
-                      DATA NODES
-                    </Text>
-                  </View>
-                </View>
-                <View className="mt-5 flex-1 rounded-lg border border-[#EDDFD0] bg-white/60 p-4 justify-center">
-                  <View className="h-[1px] bg-[#EE8C2B]/30" />
-                  <View className="mt-4 h-[1px] bg-[#EE8C2B]/30" />
-                  <View className="mt-4 h-[1px] bg-[#EE8C2B]/30" />
-                  <View className="mt-4 h-[1px] bg-[#EE8C2B]/30" />
-                </View>
-              </View>
-            </View>
-
-            <View className="mt-10 items-center px-2">
-              <Text className="text-center text-[30px] leading-[38px] text-[#221910]" style={{ fontFamily: fonts.displayRegular }}>
-                旅の軌跡を、<Text style={{ fontFamily: fonts.displayBold, color: "#EE8C2B" }}>描き出しています...</Text>
-              </Text>
-              <View className="mt-4 flex-row items-center gap-2">
-                <ActivityIndicator size="small" color="#EE8C2B" />
-                <Text className="text-base text-[#6C5647]" style={{ fontFamily: fonts.bodyMedium }}>
-                  {state.phaseTitle}
-                </Text>
-              </View>
-              <Text className="mt-2 text-center text-sm text-[#8A7B6C]" style={{ fontFamily: fonts.bodyRegular }}>
-                {state.detailText}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        <SafeAreaView edges={["bottom"]} className="px-6 pb-4">
-          <View className="rounded-2xl border border-[#E8DED3] bg-white/85 p-4">
-            <View className="flex-row items-end justify-between">
-              <View className="pr-4 flex-1">
-                <Text className="text-[10px] uppercase tracking-[2px] text-[#EE8C2B]" style={{ fontFamily: fonts.displayBold }}>
-                  Current Task
-                </Text>
-                <Text className="mt-1 text-sm text-[#221910]" numberOfLines={2} style={{ fontFamily: fonts.bodyMedium }}>
-                  {state.currentTask}
-                </Text>
-              </View>
-              <View className="flex-row items-end">
-                <Text className="text-3xl text-[#221910]" style={{ fontFamily: fonts.displayRegular }}>
-                  {clampedProgress}
-                </Text>
-                <Text className="mb-1 text-base text-[#EE8C2B]" style={{ fontFamily: fonts.bodyMedium }}>
-                  %
-                </Text>
-              </View>
-            </View>
-
-            <View className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-[#E9DED2]">
-              <View
-                className="h-full rounded-full bg-[#EE8C2B]"
-                style={{ width: `${clampedProgress}%` }}
-              />
-            </View>
-            <View className="mt-2 flex-row justify-between">
-              <Text className="text-[10px] uppercase tracking-[1.2px] text-[#A99D91]" style={{ fontFamily: fonts.bodyMedium }}>
-                Request Intake
-              </Text>
-              <Text className="text-[10px] uppercase tracking-[1.2px] text-[#A99D91]" style={{ fontFamily: fonts.bodyMedium }}>
-                Finalizing Narrative
-              </Text>
-            </View>
-          </View>
-        </SafeAreaView>
-      </View>
-    </Modal>
   );
 };

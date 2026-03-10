@@ -3,11 +3,12 @@ import { ActivityIndicator, Alert, Image, ImageBackground, Pressable, ScrollView
 import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createQuestDraft, saveSeriesBlueprint } from "@/services/quests";
 import { useSessionUserId } from "@/hooks/useSessionUser";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import type { RootStackParamList } from "@/navigation/types";
-import type { GeneratedSeriesCharacter } from "@/services/seriesAi";
+import type { GeneratedSeriesCharacter, GeneratedSeriesDraft } from "@/services/seriesAi";
 import { fonts } from "@/theme/fonts";
 
 type Props = NativeStackScreenProps<RootStackParamList, "SeriesGenerationResult">;
@@ -22,6 +23,10 @@ type RuleItem = {
 
 const HERO_IMAGE_URI =
   "https://lh3.googleusercontent.com/aida-public/AB6AXuClaK6Cep3ioLM4ETJDiSBSHomcRYBC44vZUU6feXa67oKcHgv0H75jOgYm6ns5DWBqix-Xeu0UGZyMGGUgWBeq3p9qztCn2lpS6NDefOwUrmNFsyyplPmT0yQpjhACOp57nmStss03to0qE8PfSvvJgMV11p-18haW6Gggq1KHkasxWV_yw-qAqF8hDATxrLPFRQ7NE1BOFNw4WDdM1Kyfngzf7m8h8FueIsGtHNt7f-hjlQ6TLEMhG5sFs0wN6IYUG4zxziPvP0ih";
+
+const SERIES_OPTIONS_KEY = "tomoshibi.seriesOptions";
+const SELECTED_SERIES_KEY = "tomoshibi.selectedSeries";
+const SERIES_DRAFTS_KEY = "tomoshibi.seriesDrafts";
 
 const RESULT_TABS: Array<{ key: ResultTabKey; label: string }> = [
   { key: "overview", label: "概要" },
@@ -56,6 +61,61 @@ const stripAlphabetFromName = (name: string) =>
 
 const buildSeedFallbackImageUrl = (seedBase: string, width: number, height: number) =>
   `https://picsum.photos/seed/${encodeURIComponent((seedBase || "tomoshibi").slice(0, 80))}/${Math.max(120, width)}/${Math.max(120, height)}`;
+
+const persistSeriesDraftLocally = async (generated: GeneratedSeriesDraft, sourcePrompt: string) => {
+  const trimmedPrompt = sourcePrompt.trim();
+  const trimmedTitle = generated.title.trim();
+  if (!trimmedPrompt || !trimmedTitle) {
+    throw new Error("シリーズの保存情報が不足しています。");
+  }
+
+  const rawOptions = await AsyncStorage.getItem(SERIES_OPTIONS_KEY);
+  const parsedOptions = rawOptions ? (JSON.parse(rawOptions) as unknown) : [];
+  const options = Array.isArray(parsedOptions)
+    ? parsedOptions.filter((item): item is string => typeof item === "string")
+    : [];
+
+  if (!options.includes(trimmedTitle)) {
+    options.push(trimmedTitle);
+  }
+
+  await AsyncStorage.setItem(SERIES_OPTIONS_KEY, JSON.stringify(options));
+  await AsyncStorage.setItem(SELECTED_SERIES_KEY, trimmedTitle);
+
+  const rawDrafts = await AsyncStorage.getItem(SERIES_DRAFTS_KEY);
+  const parsedDrafts = rawDrafts ? (JSON.parse(rawDrafts) as unknown) : {};
+  const drafts =
+    parsedDrafts && typeof parsedDrafts === "object" && !Array.isArray(parsedDrafts)
+      ? (parsedDrafts as Record<string, unknown>)
+      : {};
+
+  drafts[trimmedTitle] = {
+    title: trimmedTitle,
+    overview: generated.overview,
+    aiRules: generated.aiRules,
+    characters: generated.characters,
+    coverImagePrompt: generated.coverImagePrompt || null,
+    coverImageUrl: generated.coverImageUrl || null,
+    genre: generated.genre || null,
+    tone: generated.tone || null,
+    premise: generated.premise || null,
+    seasonGoal: generated.seasonGoal || null,
+    world: generated.world || null,
+    continuity: generated.continuity || null,
+    coverFocusCharacters: generated.coverFocusCharacters || [],
+    identityPack: generated.identityPack || null,
+    coverConsistencyReport: generated.coverConsistencyReport || null,
+    checkpoints: generated.checkpoints || [],
+    firstEpisodeSeed: generated.firstEpisodeSeed || null,
+    progressState: generated.progressState || null,
+    episodeBlueprints: generated.episodeBlueprints || [],
+    workflowVersion: generated.workflowVersion || null,
+    sourcePrompt: trimmedPrompt,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await AsyncStorage.setItem(SERIES_DRAFTS_KEY, JSON.stringify(drafts));
+};
 
 const pickCharacterEmoji = (character: GeneratedSeriesCharacter, index: number) => {
   const source = `${character.role} ${character.name}`.toLowerCase();
@@ -145,6 +205,37 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
 
   const dateLabel = useMemo(() => formatDateLabel(), []);
   const orderedCharacters = useMemo(() => sortCharactersForDisplay(generated.characters), [generated.characters]);
+  const coverConsistency = generated.coverConsistencyReport;
+  const keyPersonSummary = useMemo(() => {
+    const byId = new Map(generated.characters.map((character) => [character.id || "", character]));
+    if (generated.identityPack?.keyPersonCharacterIds?.length) {
+      return generated.identityPack.keyPersonCharacterIds
+        .map((id) => {
+          const fromPack = generated.identityPack?.characters.find((row) => row.characterId === id);
+          const fromCharacter = byId.get(id);
+          return {
+            id,
+            name: fromPack?.name || fromCharacter?.name || "キーパーソン",
+            role: fromPack?.role || fromCharacter?.role || "主要人物",
+            anchor:
+              fromPack?.identityAnchorTokens?.distinguishingFeature ||
+              fromCharacter?.identityAnchorTokens?.distinguishingFeature ||
+              fromCharacter?.visualDesign?.distinguishingFeature ||
+              "印象的なシルエット",
+          };
+        })
+        .slice(0, 3);
+    }
+
+    return (generated.coverFocusCharacters || [])
+      .slice(0, 3)
+      .map((row) => ({
+        id: row.characterId,
+        name: row.name,
+        role: row.role,
+        anchor: row.visualAnchor || "印象的なシルエット",
+      }));
+  }, [generated.characters, generated.coverFocusCharacters, generated.identityPack]);
 
   const storyParagraphs = useMemo(() => {
     const paragraphs = splitParagraphs(generated.overview, generated.premise);
@@ -265,9 +356,16 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
     if (isSubmitting) return;
 
     setIsSubmitting(true);
-    let createdQuestId: string | null = null;
+    let localSaveError: Error | null = null;
 
     try {
+      try {
+        await persistSeriesDraftLocally(generated, sourcePrompt);
+      } catch (error) {
+        localSaveError = error instanceof Error ? error : new Error(String(error));
+        console.error("SeriesGenerationResultScreen: local series save failed", error);
+      }
+
       if (isSupabaseConfigured && userId) {
         try {
           const draft = await createQuestDraft({
@@ -277,7 +375,6 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
             areaName: generated.world?.setting || null,
             coverImageUrl: generated.coverImageUrl || null,
           });
-          createdQuestId = draft.questId;
           await saveSeriesBlueprint({
             questId: draft.questId,
             seriesId: draft.seriesId,
@@ -289,20 +386,25 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
           const errorMessage = questError instanceof Error ? questError.message : String(questError);
           const errorDetail = (questError as { code?: string; details?: string })?.details || "";
           console.error("SeriesGenerationResultScreen: createQuestDraft/saveSeriesBlueprint failed", questError);
+          const localSaveHint = localSaveError
+            ? "\n\nローカル保存にも失敗しているため、「ローカルのみで続ける」は利用できません。"
+            : "";
           Alert.alert(
             "シリーズの保存に失敗しました",
-            `Supabaseへの保存時にエラーが発生しました。\n\n${errorMessage}${errorDetail ? `\n${errorDetail}` : ""}\n\nSupabase SQL Editorで quests テーブルのINSERTポリシーが設定されているか確認してください。\n\nsupabase/sql/20260301_quests_insert_policy.sql を実行してください。`,
-            [
-              { text: "OK", style: "cancel" },
-              {
-                text: "ローカルのみで続ける",
-                onPress: () => {
-                  navigation.replace("AddEpisode", {
-                    prefillSeriesTitle: generated.title || "新しいシリーズ",
-                  });
-                },
-              },
-            ]
+            `Supabaseへの保存時にエラーが発生しました。\n\n${errorMessage}${errorDetail ? `\n${errorDetail}` : ""}\n\nSupabase SQL Editorで quests テーブルのINSERTポリシーが設定されているか確認してください。\n\nsupabase/sql/20260301_quests_insert_policy.sql を実行してください。${localSaveHint}`,
+            localSaveError
+              ? [{ text: "OK", style: "cancel" }]
+              : [
+                  { text: "OK", style: "cancel" },
+                  {
+                    text: "ローカルのみで続ける",
+                    onPress: () => {
+                      navigation.replace("AddEpisode", {
+                        prefillSeriesTitle: generated.title || "新しいシリーズ",
+                      });
+                    },
+                  },
+                ]
           );
           setIsSubmitting(false);
           return;
@@ -314,6 +416,10 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
           "ログインすると同期できます",
           "今回はローカル下書きとして利用します。ログイン後にクラウド同期できます。"
         );
+      }
+
+      if (localSaveError && (!isSupabaseConfigured || !userId)) {
+        throw localSaveError;
       }
 
       navigation.reset({
@@ -445,6 +551,65 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
               </Text>
             ))}
           </View>
+        </View>
+
+        <View className="rounded-2xl border border-[#EFE6DD] bg-white p-5 overflow-hidden">
+          <View className="absolute -top-8 -right-8 w-24 h-24 rounded-full bg-[#EE8C2B]/10" />
+          <View className="flex-row items-center justify-between mb-3">
+            <View className="flex-row items-center gap-2">
+              <Ionicons name="images-outline" size={18} color="#EE8C2B" />
+              <Text className="text-base text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
+                世界観カバー検証
+              </Text>
+            </View>
+            <View
+              className={`rounded-full px-2.5 py-1 ${coverConsistency?.passed ? "bg-[#DCFCE7]" : "bg-[#FEF3C7]"}`}
+            >
+              <Text
+                className={`text-[10px] ${coverConsistency?.passed ? "text-[#166534]" : "text-[#92400E]"}`}
+                style={{ fontFamily: fonts.displayBold }}
+              >
+                {coverConsistency?.passed ? "世界観一致" : "再調整推奨"}
+              </Text>
+            </View>
+          </View>
+
+          <Text className="text-xs text-[#6B5F53] leading-5 mb-3" style={{ fontFamily: fonts.bodyRegular }}>
+            {normalizeText(
+              coverConsistency?.summary,
+              "カバーは人物なしの世界観ポスターとして、雰囲気と画風の整合を確認しています。"
+            )}
+          </Text>
+
+          {keyPersonSummary.length > 0 ? (
+            <View className="gap-2.5">
+              <Text className="text-[11px] text-[#7C6D5D]" style={{ fontFamily: fonts.bodyRegular }}>
+                キーパーソン（登場人物カード専用）
+              </Text>
+              {keyPersonSummary.map((person, index) => (
+                <View
+                  key={`${person.id}-${index}`}
+                  className="rounded-xl border border-[#EFE6DD] bg-[#FCFBFA] px-3 py-2.5"
+                >
+                  <View className="flex-row items-center justify-between">
+                    <Text className="text-sm text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
+                      {person.name}
+                    </Text>
+                    <Text className="text-[11px] text-[#7C6D5D]" style={{ fontFamily: fonts.bodyMedium }}>
+                      {person.role}
+                    </Text>
+                  </View>
+                  <Text className="mt-1 text-[11px] text-[#62584E]" style={{ fontFamily: fonts.bodyRegular }}>
+                    アンカー: {person.anchor}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <Text className="text-xs text-[#7C6D5D]" style={{ fontFamily: fonts.bodyRegular }}>
+              キーパーソン情報は次回生成時に補完されます（カバーには人物を表示しません）。
+            </Text>
+          )}
         </View>
 
         <View className="gap-4">
@@ -900,8 +1065,8 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
   const loadingProgress = totalImages > 0 ? Math.min(1, loadedCount / totalImages) : 1;
 
   const LOADING_MESSAGES = useMemo(() => [
-    "カバー画像を生成中...",
-    "登場人物の姿を描いています...",
+    "世界観カバー（人物なし）を読み込んでいます...",
+    "登場人物カード用のポートレートを読み込んでいます...",
     "世界観を可視化しています...",
     "仕上げています...",
   ], []);

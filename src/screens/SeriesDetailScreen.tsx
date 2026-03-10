@@ -214,21 +214,43 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
     ]);
   };
 
-  const handleConfirmPrimaryAction = () => {
+  const handleStartGameplay = () => {
     setIsNextActionModalOpen(false);
 
-    if (canManageSeries && series) {
-      navigation.navigate("AddEpisode", {
-        prefillSeriesId: series.id,
-        prefillSeriesTitle: series.title,
-      });
-      return;
-    }
+    if (!nextEpisode) return;
+
+    navigation.navigate("GamePlay", {
+      questId,
+      startEpisodeNo: nextEpisode.episodeNo,
+    });
+  };
+
+  const handleAddEpisode = () => {
+    setIsNextActionModalOpen(false);
+
+    if (!series) return;
+
+    navigation.navigate("AddEpisode", {
+      prefillSeriesId: series.id,
+      prefillSeriesTitle: series.title,
+    });
+  };
+
+  const handleConfirmPrimaryAction = () => {
+    setIsNextActionModalOpen(false);
 
     if (nextEpisode) {
       navigation.navigate("GamePlay", {
         questId,
         startEpisodeNo: nextEpisode.episodeNo,
+      });
+      return;
+    }
+
+    if (canManageSeries && series) {
+      navigation.navigate("AddEpisode", {
+        prefillSeriesId: series.id,
+        prefillSeriesTitle: series.title,
       });
       return;
     }
@@ -631,7 +653,9 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
                     {nextEpisode ? "次のエピソードを開始しますか？" : "次のエピソードを生成しますか？"}
                   </Text>
                   <Text className="text-sm text-[#6B6762] mt-1" style={{ fontFamily: fonts.bodyRegular }}>
-                    {nextEpisode
+                    {canManageSeries && nextEpisode
+                      ? "このエピソードをプレイするか、新しいエピソードを追加できます。"
+                      : nextEpisode
                       ? "現在の進行から続けて、次の物語へ進みます。"
                       : "このシリーズの新しいエピソードを作成します。"}
                   </Text>
@@ -674,25 +698,58 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
                 </View>
               </View>
 
-              <View className="flex-row gap-2 mt-4">
-                <Pressable
-                  className="flex-1 h-11 rounded-xl border border-[#DDD5CC] bg-white items-center justify-center"
-                  onPress={() => setIsNextActionModalOpen(false)}
-                >
-                  <Text className="text-sm text-[#3E332B]" style={{ fontFamily: fonts.displayBold }}>
-                    キャンセル
-                  </Text>
-                </Pressable>
+              {canManageSeries && nextEpisode ? (
+                <View className="gap-2 mt-4">
+                  <View className="flex-row gap-2">
+                    <Pressable
+                      className="flex-1 h-11 rounded-xl border border-[#EE8C2B]/30 bg-[#FFF6EC] items-center justify-center"
+                      onPress={handleStartGameplay}
+                    >
+                      <Text className="text-sm text-[#EE8C2B]" style={{ fontFamily: fonts.displayBold }}>
+                        ゲームプレイ
+                      </Text>
+                    </Pressable>
 
-                <Pressable
-                  className="flex-1 h-11 rounded-xl bg-[#EE8C2B] items-center justify-center"
-                  onPress={handleConfirmPrimaryAction}
-                >
-                  <Text className="text-sm text-white" style={{ fontFamily: fonts.displayBold }}>
-                    {canManageSeries ? "追加する" : nextEpisode ? "進む" : "閉じる"}
-                  </Text>
-                </Pressable>
-              </View>
+                    <Pressable
+                      className="flex-1 h-11 rounded-xl bg-[#EE8C2B] items-center justify-center"
+                      onPress={handleAddEpisode}
+                    >
+                      <Text className="text-sm text-white" style={{ fontFamily: fonts.displayBold }}>
+                        追加する
+                      </Text>
+                    </Pressable>
+                  </View>
+
+                  <Pressable
+                    className="h-11 rounded-xl border border-[#DDD5CC] bg-white items-center justify-center"
+                    onPress={() => setIsNextActionModalOpen(false)}
+                  >
+                    <Text className="text-sm text-[#3E332B]" style={{ fontFamily: fonts.displayBold }}>
+                      キャンセル
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <View className="flex-row gap-2 mt-4">
+                  <Pressable
+                    className="flex-1 h-11 rounded-xl border border-[#DDD5CC] bg-white items-center justify-center"
+                    onPress={() => setIsNextActionModalOpen(false)}
+                  >
+                    <Text className="text-sm text-[#3E332B]" style={{ fontFamily: fonts.displayBold }}>
+                      キャンセル
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    className="flex-1 h-11 rounded-xl bg-[#EE8C2B] items-center justify-center"
+                    onPress={handleConfirmPrimaryAction}
+                  >
+                    <Text className="text-sm text-white" style={{ fontFamily: fonts.displayBold }}>
+                      {canManageSeries ? "追加する" : nextEpisode ? "進む" : "閉じる"}
+                    </Text>
+                  </Pressable>
+                </View>
+              )}
             </View>
           </View>
         </View>

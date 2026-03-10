@@ -1,10 +1,14 @@
 import { createStep, createWorkflow } from "@mastra/core/workflows";
+import { createHash } from "crypto";
 import { z } from "zod";
 import {
   seriesCheckpointSchema,
+  seriesCharacterIdentityAnchorTokensSchema,
   seriesCharacterSchema,
+  seriesCoverConsistencyReportSchema,
   seriesEpisodeSeedSchema,
   seriesGenerationRequestSchema,
+  seriesIdentityPackSchema,
   seriesInterviewSchema,
   seriesWorkflowOutputSchema,
 } from "../schemas/series";
@@ -15,9 +19,1351 @@ import {
 import { generateSeriesCharacters } from "../lib/agents/seriesCharacterAgent";
 import { generateSeriesEpisodePlan } from "../lib/agents/seriesEpisodePlannerAgent";
 import { generateSeriesConsistency } from "../lib/agents/seriesConsistencyAgent";
-import { buildCoverImagePrompt, buildSeriesImageUrl, buildWorldVisualPrompt } from "../lib/seriesVisuals";
+import {
+  buildCharacterPortraitPrompt,
+  buildCoverImagePrompt,
+  buildSeriesImageUrl,
+  buildSeriesVisualStyleGuide,
+  buildWorldVisualPrompt,
+} from "../lib/seriesVisuals";
 
-const clean = (value?: string) => (value || "").replace(/\s+/g, " ").trim();
+const clean = (value?: string | null) => (value || "").replace(/\s+/g, " ").trim();
+const dedupeStrings = (values: Array<string | undefined | null>) => {
+  const seen = new Set<string>();
+  return values
+    .map((value) => clean(value))
+    .filter((value) => {
+      if (!value) return false;
+      if (seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    });
+};
+
+const dedupeIds = (values: Array<string | undefined | null>) => {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const normalized = clean(value);
+    if (!normalized) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+};
+
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+
+const toTitleCaseReason = (bucket: "protagonist" | "partner" | "antagonist" | "support") =>
+  bucket === "protagonist"
+    ? "物語の視点と感情導線を担う主軸人物"
+    : bucket === "partner"
+      ? "主人公と並走し、展開を動かす相棒ポジション"
+      : bucket === "antagonist"
+        ? "シリーズの対立軸を象徴する対抗勢力"
+        : "物語の節目で鍵を握るキーパーソン";
+
+type WorkflowCharacter = z.infer<typeof seriesCharacterSchema>;
+type WorkflowIdentityAnchorTokens = z.infer<typeof seriesCharacterIdentityAnchorTokensSchema>;
+type WorkflowIdentityPack = z.infer<typeof seriesIdentityPackSchema>;
+type WorkflowCoverConsistencyReport = z.infer<typeof seriesCoverConsistencyReportSchema>;
+
+type CoverFocusCharacter = {
+  character_id: string;
+  name: string;
+  role: string;
+  focus_reason: string;
+  visual_anchor: string;
+};
+
+const getGeminiApiKey = () =>
+  clean(process.env.GOOGLE_GENERATIVE_AI_API_KEY) || clean(process.env.GEMINI_API_KEY);
+const getGeminiVisionModel = () => clean(process.env.SERIES_IMAGE_EVAL_MODEL) || "gemini-2.0-flash";
+
+type VisionInlineData = {
+  mimeType: string;
+  data: string;
+};
+
+type VisionImagePayload = {
+  inlineData: VisionInlineData;
+  provider?: string;
+};
+
+type VisionWorldCoverEvaluation = {
+  provider?: string;
+  styleSimilarity: number;
+  worldSimilarity: number;
+  peopleScore: number;
+  summary: string;
+};
+
+type VisionPortraitComparison = {
+  samePersonProbability: number;
+  summary: string;
+};
+
+const normalizeImageMimeType = (value?: string | null) => {
+  const normalized = clean(value).toLowerCase();
+  if (normalized === "image/jpg") return "image/jpeg";
+  if (!normalized) return "image/png";
+  return normalized.startsWith("image/") ? normalized : "image/png";
+};
+
+const guessImageMimeType = (url: string) => {
+  const normalized = clean(url).toLowerCase();
+  if (normalized.includes(".jpg") || normalized.includes(".jpeg")) return "image/jpeg";
+  if (normalized.includes(".webp")) return "image/webp";
+  return "image/png";
+};
+
+const asObject = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
+const toScore = (value: unknown, fallback = 0) => {
+  const num = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
+  if (!Number.isFinite(num)) return fallback;
+  return clamp01(num);
+};
+
+const fetchImageForVision = async (url: string): Promise<VisionImagePayload> => {
+  const normalized = clean(url);
+  if (!normalized) {
+    throw new Error("vision_image_url_missing");
+  }
+
+  const response = await fetch(normalized, {
+    headers: {
+      "User-Agent": "tomoshibi-mastra/cover-identity-eval",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`vision_image_fetch_failed:${response.status}`);
+  }
+  const bytes = await response.arrayBuffer();
+  if (bytes.byteLength === 0) {
+    throw new Error("vision_image_bytes_empty");
+  }
+  const base64 = Buffer.from(bytes).toString("base64");
+  if (!base64) {
+    throw new Error("vision_image_base64_empty");
+  }
+  return {
+    inlineData: {
+      mimeType: normalizeImageMimeType(response.headers.get("content-type")) || guessImageMimeType(normalized),
+      data: base64,
+    },
+    provider: clean(response.headers.get("x-series-image-provider")) || undefined,
+  };
+};
+
+const extractGeminiTextCandidates = (payload: unknown): string[] => {
+  const root = asObject(payload);
+  const candidates = Array.isArray(root.candidates) ? root.candidates : [];
+  const outputs: string[] = [];
+
+  for (const candidate of candidates) {
+    const row = asObject(candidate);
+    const content = asObject(row.content);
+    const parts = Array.isArray(content.parts) ? content.parts : [];
+    for (const part of parts) {
+      const partRow = asObject(part);
+      const text = clean(typeof partRow.text === "string" ? partRow.text : "");
+      if (text) outputs.push(text);
+    }
+  }
+
+  const directText = clean(typeof root.text === "string" ? root.text : "");
+  if (directText) outputs.push(directText);
+  return outputs;
+};
+
+const parseJsonObject = (text: string): Record<string, unknown> | null => {
+  const normalized = clean(text);
+  if (!normalized) return null;
+
+  const fenced = normalized.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = clean(fenced?.[1] || normalized);
+  if (!candidate) return null;
+
+  try {
+    const parsed = JSON.parse(candidate);
+    return asObject(parsed);
+  } catch {
+    const start = candidate.indexOf("{");
+    const end = candidate.lastIndexOf("}");
+    if (start < 0 || end <= start) return null;
+    try {
+      const parsed = JSON.parse(candidate.slice(start, end + 1));
+      return asObject(parsed);
+    } catch {
+      return null;
+    }
+  }
+};
+
+const runVisionJsonEvaluation = async (parts: Array<Record<string, unknown>>) => {
+  const geminiApiKey = getGeminiApiKey();
+  if (!geminiApiKey) {
+    throw new Error("cover_identity_eval_api_key_missing");
+  }
+
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+    getGeminiVisionModel()
+  )}:generateContent?key=${encodeURIComponent(geminiApiKey)}`;
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      contents: [
+        {
+          role: "user",
+          parts,
+        },
+      ],
+      generationConfig: {
+        temperature: 0.1,
+        responseMimeType: "application/json",
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = clean(await response.text()).slice(0, 400);
+    throw new Error(`cover_identity_eval_failed:${response.status}:${errText || "unknown"}`);
+  }
+
+  const payload = await response.json();
+  const jsonCandidates = extractGeminiTextCandidates(payload)
+    .map((item) => parseJsonObject(item))
+    .filter((item): item is Record<string, unknown> => Boolean(item));
+
+  if (jsonCandidates.length === 0) {
+    throw new Error("cover_identity_eval_json_missing");
+  }
+  return jsonCandidates[0];
+};
+
+const buildWorldCoverEvalInstruction = (input: {
+  title: string;
+  genre: string;
+  tone: string;
+  premise: string;
+  setting: string;
+  recurringMotifs: string[];
+  styleGuide: string;
+}) =>
+  [
+    "あなたはシリーズのカバー画像監査者です。",
+    "このカバーは世界観ポスター用途です。人物・キャラクター・人型シルエットを出してはいけません。",
+    "街・建築・小物・空気感のみで世界観を表現できているかを評価してください。",
+    `title: ${clean(input.title)}`,
+    `genre: ${clean(input.genre)}`,
+    `tone: ${clean(input.tone)}`,
+    `premise: ${clean(input.premise)}`,
+    `setting: ${clean(input.setting)}`,
+    input.recurringMotifs.length > 0 ? `motifs: ${input.recurringMotifs.map((m) => clean(m)).filter(Boolean).join(" / ")}` : "",
+    `style_bible: ${clean(input.styleGuide)}`,
+    "厳密なJSONのみ返してください。",
+    "output_json_schema:",
+    "{\"people_score\":0.0,\"world_similarity\":0.0,\"style_similarity\":0.0,\"summary\":\"...\"}",
+  ]
+    .map((line) => clean(line))
+    .filter(Boolean)
+    .join("\n");
+
+const evaluateWorldCoverWithVision = async (input: {
+  coverImageUrl: string;
+  title: string;
+  genre: string;
+  tone: string;
+  premise: string;
+  setting: string;
+  recurringMotifs: string[];
+  styleGuide: string;
+}): Promise<VisionWorldCoverEvaluation> => {
+  const coverImage = await fetchImageForVision(input.coverImageUrl);
+
+  const best = await runVisionJsonEvaluation([
+    {
+      text: buildWorldCoverEvalInstruction(input),
+    },
+    { text: "cover_image" },
+    {
+      inlineData: {
+        mimeType: coverImage.inlineData.mimeType,
+        data: coverImage.inlineData.data,
+      },
+    },
+  ]);
+
+  const peopleScore = toScore(
+    best.people_score ??
+      best.character_presence_score ??
+      best.human_presence_score ??
+      (best.contains_people === true ? 1 : 0),
+    1
+  );
+
+  return {
+    provider: clean(coverImage.provider) || "unknown",
+    styleSimilarity: toScore(best.style_similarity ?? best.style_match ?? best.style_score, 0),
+    worldSimilarity: toScore(best.world_similarity ?? best.setting_similarity ?? best.theme_similarity, 0),
+    peopleScore,
+    summary: clean(typeof best.summary === "string" ? best.summary : "") || "",
+  };
+};
+
+const evaluatePortraitSamePersonProbability = async (input: {
+  leftName: string;
+  leftImageUrl: string;
+  rightName: string;
+  rightImageUrl: string;
+}): Promise<VisionPortraitComparison> => {
+  const left = await fetchImageForVision(input.leftImageUrl);
+  const right = await fetchImageForVision(input.rightImageUrl);
+  const best = await runVisionJsonEvaluation([
+    {
+      text: [
+        "2枚のキャラクターポートレート画像を比較し、同一人物確率を推定してください。",
+        "厳密なJSONのみ返してください。",
+        "output_json_schema:",
+        "{\"same_person_probability\":0.0,\"summary\":\"...\"}",
+      ].join("\n"),
+    },
+    { text: `portrait_left name=${clean(input.leftName)}` },
+    {
+      inlineData: {
+        mimeType: left.inlineData.mimeType,
+        data: left.inlineData.data,
+      },
+    },
+    { text: `portrait_right name=${clean(input.rightName)}` },
+    {
+      inlineData: {
+        mimeType: right.inlineData.mimeType,
+        data: right.inlineData.data,
+      },
+    },
+  ]);
+
+  return {
+    samePersonProbability: toScore(
+      best.same_person_probability ?? best.identity_overlap ?? best.identity_similarity ?? 0,
+      0
+    ),
+    summary: clean(typeof best.summary === "string" ? best.summary : "") || "",
+  };
+};
+
+const detectRoleBucket = (character: WorkflowCharacter): "protagonist" | "partner" | "antagonist" | "support" => {
+  const role = clean(character.role);
+  if (/(主人公|主役|視点|プレイヤー|語り手)/.test(role)) return "protagonist";
+  if (/(相棒|パートナー|バディ|助手|補佐|同行)/.test(role)) return "partner";
+  if (/(ボス|黒幕|敵|対抗|ライバル|宿敵|首領|支配|追跡者)/.test(role)) return "antagonist";
+  return "support";
+};
+
+const extractVisualAnchor = (character: WorkflowCharacter) => {
+  const anchors = dedupeStrings([
+    character.identity_anchor_tokens?.dominant_color,
+    character.identity_anchor_tokens?.distinguishing_feature,
+    character.identity_anchor_tokens?.silhouette,
+    character.visual_design?.dominant_color,
+    character.visual_design?.distinguishing_feature,
+    character.visual_design?.silhouette_keyword,
+    clean(character.appearance).split(/[。.!?]/)[0],
+  ]);
+  return anchors.join(" / ").slice(0, 120) || "印象的なシルエット";
+};
+
+const scoreCharacterForCover = (character: WorkflowCharacter, index: number) => {
+  const bucket = detectRoleBucket(character);
+  const base = Math.max(8, 40 - index * 4);
+  const bucketBonus =
+    bucket === "protagonist" ? 54 : bucket === "partner" ? 48 : bucket === "antagonist" ? 46 : 24;
+  const relationBonus = (character.relationships?.length || 0) > 0 ? 8 : 0;
+  const arcBonus = clean(character.arc_start) && clean(character.arc_end) ? 8 : 0;
+  const keyPersonBonus = character.is_key_person ? 14 : 0;
+  return base + bucketBonus + relationBonus + arcBonus + keyPersonBonus;
+};
+
+const selectCoverFocusCharacters = (characters: WorkflowCharacter[]): CoverFocusCharacter[] => {
+  if (!Array.isArray(characters) || characters.length === 0) return [];
+  const scored = characters
+    .map((character, index) => ({
+      character,
+      bucket: detectRoleBucket(character),
+      score: scoreCharacterForCover(character, index),
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  const selected: CoverFocusCharacter[] = [];
+  const selectedIds = new Set<string>();
+  const trySelect = (bucket: "protagonist" | "partner" | "antagonist" | "support") => {
+    const hit = scored.find((row) => row.bucket === bucket && !selectedIds.has(row.character.id));
+    if (!hit) return;
+    selectedIds.add(hit.character.id);
+    selected.push({
+      character_id: hit.character.id,
+      name: clean(hit.character.name) || `人物${selected.length + 1}`,
+      role: clean(hit.character.role) || "キーパーソン",
+      focus_reason: toTitleCaseReason(bucket),
+      visual_anchor: extractVisualAnchor(hit.character),
+    });
+  };
+
+  trySelect("protagonist");
+  trySelect("partner");
+  trySelect("antagonist");
+  for (const row of scored) {
+    if (selected.length >= 3) break;
+    if (selectedIds.has(row.character.id)) continue;
+    selectedIds.add(row.character.id);
+    selected.push({
+      character_id: row.character.id,
+      name: clean(row.character.name) || `人物${selected.length + 1}`,
+      role: clean(row.character.role) || "キーパーソン",
+      focus_reason: "物語の節目で鍵を握るキーパーソン",
+      visual_anchor: extractVisualAnchor(row.character),
+    });
+  }
+
+  return selected.length > 0
+    ? selected.slice(0, 3)
+    : [
+        {
+          character_id: characters[0].id,
+          name: clean(characters[0].name) || "主人公",
+          role: clean(characters[0].role) || "主役",
+          focus_reason: "物語の中心人物",
+          visual_anchor: extractVisualAnchor(characters[0]),
+        },
+      ];
+};
+
+const collectDominantColors = (characters: WorkflowCharacter[]) =>
+  dedupeStrings(characters.map((character) => clean(character.visual_design?.dominant_color)));
+
+const extractFirstMatchedKeyword = (source: string, candidates: string[]) =>
+  candidates.find((keyword) => source.includes(keyword)) || "";
+
+const buildIdentityAnchorTokens = (character: WorkflowCharacter): WorkflowIdentityAnchorTokens => {
+  const appearance = clean(character.appearance);
+  const hair =
+    clean(character.identity_anchor_tokens?.hair) ||
+    extractFirstMatchedKeyword(appearance, [
+      "黒髪",
+      "金髪",
+      "銀髪",
+      "赤髪",
+      "青髪",
+      "長髪",
+      "短髪",
+      "ツインテール",
+      "ポニーテール",
+      "ウェーブ",
+      "前髪",
+    ]) ||
+    "印象的な髪型";
+  const silhouette =
+    clean(character.identity_anchor_tokens?.silhouette) ||
+    clean(character.visual_design?.silhouette_keyword) ||
+    "印象的なシルエット";
+  const dominantColor =
+    clean(character.identity_anchor_tokens?.dominant_color) ||
+    clean(character.visual_design?.dominant_color) ||
+    "暖色系アクセント";
+  const outfitKeyItem =
+    clean(character.identity_anchor_tokens?.outfit_key_item) ||
+    extractFirstMatchedKeyword(appearance, [
+      "コート",
+      "ジャケット",
+      "マフラー",
+      "手袋",
+      "帽子",
+      "ブーツ",
+      "ピアス",
+      "ネックレス",
+      "腕輪",
+      "制服",
+      "ローブ",
+      "スカーフ",
+    ]) ||
+    "象徴的な衣装アイテム";
+  const distinguishingFeature =
+    clean(character.identity_anchor_tokens?.distinguishing_feature) ||
+    clean(character.visual_design?.distinguishing_feature) ||
+    extractFirstMatchedKeyword(appearance, ["傷", "刺青", "眼帯", "ピアス", "ほくろ", "前髪", "仮面", "手袋"]) ||
+    "顔まわりの特徴";
+
+  return {
+    hair,
+    silhouette,
+    dominant_color: dominantColor,
+    outfit_key_item: outfitKeyItem,
+    distinguishing_feature: distinguishingFeature,
+  };
+};
+
+const DISTINCT_ANCHOR_COLORS = [
+  "深紅",
+  "群青",
+  "翡翠",
+  "琥珀",
+  "銀灰",
+  "墨黒",
+  "紫紺",
+  "珊瑚",
+];
+
+const DISTINCT_ANCHOR_HAIR = [
+  "黒髪ショート",
+  "銀髪ロング",
+  "赤髪ウェーブ",
+  "金髪ボブ",
+  "青髪ポニーテール",
+  "茶髪ツーブロック",
+  "白髪ショート",
+  "紫髪ツインテール",
+];
+
+const DISTINCT_ANCHOR_SILHOUETTES = [
+  "鋭角的シルエット",
+  "流線型シルエット",
+  "角張ったシルエット",
+  "丸みのあるシルエット",
+  "縦長シルエット",
+  "重心の低いシルエット",
+  "肩幅が広いシルエット",
+  "細身のシルエット",
+];
+
+const DISTINCT_ANCHOR_OUTFITS = [
+  "長いコート",
+  "短丈ジャケット",
+  "大ぶりのマフラー",
+  "フード付き外套",
+  "片手手袋",
+  "装飾ベルト",
+  "肩章付き上着",
+  "胸元のペンダント",
+];
+
+const DISTINCT_ANCHOR_FEATURES = [
+  "右頬の小さな傷",
+  "左耳の3連ピアス",
+  "白いメッシュ前髪",
+  "片眉の切れ込み",
+  "右手甲の刺青",
+  "目元のほくろ",
+  "首元の印象的なアクセサリー",
+  "片手だけの革手袋",
+];
+
+const pickUniqueAnchorValue = (
+  current: string,
+  seen: Set<string>,
+  pool: string[],
+  fallbackPrefix: string,
+  index: number
+) => {
+  const normalized = clean(current);
+  if (normalized && !seen.has(normalized)) {
+    seen.add(normalized);
+    return normalized;
+  }
+  const fromPool = pool.find((candidate) => !seen.has(candidate));
+  if (fromPool) {
+    seen.add(fromPool);
+    return fromPool;
+  }
+  const base = `${fallbackPrefix}${index + 1}`;
+  if (!seen.has(base)) {
+    seen.add(base);
+    return base;
+  }
+  let suffix = 2;
+  while (seen.has(`${base}-${suffix}`)) suffix += 1;
+  const resolved = `${base}-${suffix}`;
+  seen.add(resolved);
+  return resolved;
+};
+
+const enforceDistinctIdentityAnchors = (characters: WorkflowCharacter[]): WorkflowCharacter[] => {
+  const colorSeen = new Set<string>();
+  const hairSeen = new Set<string>();
+  const silhouetteSeen = new Set<string>();
+  const outfitSeen = new Set<string>();
+  const featureSeen = new Set<string>();
+
+  return characters.map((character, index) => {
+    const base = buildIdentityAnchorTokens(character);
+    const hair = pickUniqueAnchorValue(base.hair, hairSeen, DISTINCT_ANCHOR_HAIR, "髪型", index);
+    const silhouette = pickUniqueAnchorValue(
+      base.silhouette,
+      silhouetteSeen,
+      DISTINCT_ANCHOR_SILHOUETTES,
+      "シルエット",
+      index
+    );
+    const dominantColor = pickUniqueAnchorValue(
+      base.dominant_color,
+      colorSeen,
+      DISTINCT_ANCHOR_COLORS,
+      "アクセントカラー",
+      index
+    );
+    const outfitKeyItem = pickUniqueAnchorValue(
+      base.outfit_key_item,
+      outfitSeen,
+      DISTINCT_ANCHOR_OUTFITS,
+      "衣装アイテム",
+      index
+    );
+    const distinguishingFeature = pickUniqueAnchorValue(
+      base.distinguishing_feature,
+      featureSeen,
+      DISTINCT_ANCHOR_FEATURES,
+      "識別特徴",
+      index
+    );
+
+    return {
+      ...character,
+      visual_design: {
+        ...(character.visual_design || {
+          dominant_color: "",
+          body_type: "",
+          silhouette_keyword: "",
+          distinguishing_feature: "",
+        }),
+        dominant_color: dominantColor,
+        silhouette_keyword: silhouette,
+        distinguishing_feature: distinguishingFeature,
+      },
+      identity_anchor_tokens: {
+        hair,
+        silhouette,
+        dominant_color: dominantColor,
+        outfit_key_item: outfitKeyItem,
+        distinguishing_feature: distinguishingFeature,
+      },
+    };
+  });
+};
+
+const asIdentityPackCharacter = (character: WorkflowCharacter, isKeyPerson: boolean) => ({
+  character_id: character.id,
+  name: clean(character.name) || "人物",
+  role: clean(character.role) || "キーパーソン",
+  is_key_person: isKeyPerson,
+  identity_anchor_tokens: buildIdentityAnchorTokens(character),
+  portrait_prompt: clean(character.portrait_prompt),
+  portrait_image_url: clean(character.portrait_image_url),
+});
+
+const buildSeriesIdentityPack = (input: {
+  characters: WorkflowCharacter[];
+  styleGuide: string;
+  existingIdentityPack?: WorkflowIdentityPack;
+  identityRetcon?: boolean;
+}): { identityPack: WorkflowIdentityPack; characters: WorkflowCharacter[] } => {
+  const baseCharacters = (input.characters || []).slice(0, 8);
+  if (baseCharacters.length === 0) {
+    throw new Error("buildSeriesIdentityPack requires at least one character");
+  }
+
+  const shouldReuse = Boolean(input.existingIdentityPack && !input.identityRetcon);
+  if (shouldReuse && input.existingIdentityPack) {
+    const existing = input.existingIdentityPack;
+    const existingById = new Map(existing.characters.map((row) => [row.character_id, row]));
+    const existingByName = new Map(existing.characters.map((row) => [clean(row.name).toLowerCase(), row]));
+
+    const existingKeyRows = existing.key_person_character_ids
+      .map((id) => existingById.get(id))
+      .filter((row): row is NonNullable<typeof row> => Boolean(row));
+    const keyIdsById = existing.key_person_character_ids.filter((id) =>
+      baseCharacters.some((character) => character.id === id)
+    );
+    const keyIdsByName = existingKeyRows
+      .map((row) =>
+        baseCharacters.find(
+          (character) => clean(character.name).toLowerCase() === clean(row.name).toLowerCase()
+        )?.id
+      )
+      .filter((id): id is string => Boolean(clean(id)));
+
+    let keyIds = dedupeIds([...keyIdsById, ...keyIdsByName]).slice(0, 3);
+    if (keyIds.length === 0) {
+      keyIds = selectCoverFocusCharacters(baseCharacters)
+        .map((row) => row.character_id)
+        .slice(0, 3);
+    }
+    if (keyIds.length === 0) {
+      keyIds = [baseCharacters[0].id];
+    }
+
+    const keyIdSet = new Set(keyIds);
+    const mergedCharacters = baseCharacters.map((character) => {
+      const byId = existingById.get(character.id);
+      const byName = existingByName.get(clean(character.name).toLowerCase());
+      const existingHit = byId || byName;
+      const tokens =
+        existingHit?.identity_anchor_tokens &&
+        Object.values(existingHit.identity_anchor_tokens).some((value) => clean(value).length > 0)
+          ? existingHit.identity_anchor_tokens
+          : buildIdentityAnchorTokens(character);
+      const isKeyPerson = keyIdSet.has(character.id);
+      return {
+        ...character,
+        is_key_person: isKeyPerson,
+        identity_anchor_tokens: tokens,
+      };
+    });
+    const anchoredCharacters = enforceDistinctIdentityAnchors(mergedCharacters);
+
+    return {
+      characters: anchoredCharacters,
+      identityPack: {
+        version: Math.max(1, existing.version || 1),
+        source: "reused",
+        style_bible: clean(existing.style_bible) || clean(input.styleGuide),
+        key_person_character_ids: keyIds.slice(0, 3),
+        characters: anchoredCharacters.map((character) =>
+          asIdentityPackCharacter(character, keyIdSet.has(character.id))
+        ),
+        locked_at: new Date().toISOString(),
+      },
+    };
+  }
+
+  const focusCharacters = selectCoverFocusCharacters(baseCharacters);
+  const keyIds = focusCharacters.map((row) => row.character_id).slice(0, 3);
+  const keyIdSet = new Set(keyIds.length > 0 ? keyIds : [baseCharacters[0].id]);
+  const nextVersion =
+    input.identityRetcon && input.existingIdentityPack
+      ? Math.max(1, (input.existingIdentityPack.version || 1) + 1)
+      : 1;
+
+  const normalizedCharacters = baseCharacters.map((character) => ({
+    ...character,
+    is_key_person: keyIdSet.has(character.id),
+    identity_anchor_tokens: buildIdentityAnchorTokens(character),
+  }));
+  const anchoredCharacters = enforceDistinctIdentityAnchors(normalizedCharacters);
+
+  return {
+    characters: anchoredCharacters,
+    identityPack: {
+      version: nextVersion,
+      source: "generated",
+      style_bible: clean(input.styleGuide),
+      key_person_character_ids: [...keyIdSet].slice(0, 3),
+      characters: anchoredCharacters.map((character) =>
+        asIdentityPackCharacter(character, keyIdSet.has(character.id))
+      ),
+      locked_at: new Date().toISOString(),
+    },
+  };
+};
+
+const syncIdentityPackWithCharacters = (
+  identityPack: WorkflowIdentityPack,
+  characters: WorkflowCharacter[]
+): { identityPack: WorkflowIdentityPack; characters: WorkflowCharacter[] } => {
+  const anchoredCharacters = enforceDistinctIdentityAnchors(characters);
+  const keyIds = identityPack.key_person_character_ids.filter((id) =>
+    anchoredCharacters.some((character) => character.id === id)
+  );
+  const keyIdSet = new Set(keyIds.length > 0 ? keyIds : [anchoredCharacters[0]?.id].filter(Boolean));
+
+  const normalizedCharacters = anchoredCharacters.map((character) => ({
+    ...character,
+    is_key_person: keyIdSet.has(character.id),
+    identity_anchor_tokens: buildIdentityAnchorTokens(character),
+  }));
+
+  return {
+    characters: normalizedCharacters,
+    identityPack: {
+      ...identityPack,
+      key_person_character_ids: [...keyIdSet].slice(0, 3),
+      characters: normalizedCharacters.map((character) =>
+        asIdentityPackCharacter(character, keyIdSet.has(character.id))
+      ),
+      locked_at: new Date().toISOString(),
+    },
+  };
+};
+
+const harmonizeCharacterPortraits = (input: {
+  title: string;
+  genre: string;
+  tone: string;
+  setting: string;
+  styleGuide: string;
+  characters: WorkflowCharacter[];
+}): WorkflowCharacter[] =>
+  enforceDistinctIdentityAnchors(input.characters).map((character, index) => {
+    const portraitPrompt = buildCharacterPortraitPrompt({
+      seriesTitle: input.title,
+      genre: input.genre,
+      tone: input.tone,
+      name: character.name,
+      role: character.role,
+      personality: character.personality,
+      appearance: character.appearance,
+      setting: input.setting,
+      dominantColor: character.visual_design?.dominant_color || character.identity_anchor_tokens?.dominant_color,
+      bodyType: character.visual_design?.body_type,
+      distinguishingFeature:
+        character.visual_design?.distinguishing_feature || character.identity_anchor_tokens?.distinguishing_feature,
+      anchorHair: character.identity_anchor_tokens?.hair,
+      anchorSilhouette: character.identity_anchor_tokens?.silhouette,
+      anchorOutfitKeyItem: character.identity_anchor_tokens?.outfit_key_item,
+      styleGuide: input.styleGuide,
+    });
+    return {
+      ...character,
+      portrait_prompt: portraitPrompt,
+      portrait_image_url: buildSeriesImageUrl({
+        prompt: portraitPrompt,
+        seedKey: `${input.title}:char:${index + 1}:${character.name}`,
+        width: 768,
+        height: 1024,
+        purpose: "character_portrait",
+        styleReference: input.styleGuide,
+      }),
+    };
+  });
+
+const ensureUniquePortraitUrls = (input: {
+  title: string;
+  characters: WorkflowCharacter[];
+  styleGuide?: string;
+}): WorkflowCharacter[] => {
+  const seen = new Set<string>();
+
+  return input.characters.map((character, index) => {
+    let portraitPrompt = clean(character.portrait_prompt);
+    let portraitImageUrl = clean(character.portrait_image_url);
+
+    if (!portraitPrompt) {
+      portraitPrompt = `character portrait, ${clean(character.name) || `char_${index + 1}`}`;
+    }
+    if (!portraitImageUrl) {
+      portraitImageUrl = buildSeriesImageUrl({
+        prompt: portraitPrompt,
+        seedKey: `${input.title}:char:${index + 1}:${character.name}:initial`,
+        width: 768,
+        height: 1024,
+        purpose: "character_portrait",
+        styleReference: input.styleGuide,
+      });
+    }
+
+    let retry = 0;
+    while (portraitImageUrl && seen.has(portraitImageUrl) && retry < 3) {
+      retry += 1;
+      portraitPrompt = `${clean(character.portrait_prompt)}, identity variant token: ${character.id || `char_${index + 1}`}-${retry}`;
+      portraitImageUrl = buildSeriesImageUrl({
+        prompt: portraitPrompt,
+        seedKey: `${input.title}:char:${index + 1}:${character.name}:url-unique:${retry}`,
+        width: 768,
+        height: 1024,
+        purpose: "character_portrait",
+        styleReference: input.styleGuide,
+      });
+    }
+
+    if (portraitImageUrl) {
+      seen.add(portraitImageUrl);
+    }
+
+    return {
+      ...character,
+      portrait_prompt: portraitPrompt,
+      portrait_image_url: portraitImageUrl || character.portrait_image_url,
+    };
+  });
+};
+
+const PORTRAIT_BINARY_DUPLICATE_RETRY_MAX = 2;
+const PORTRAIT_HASH_FETCH_TIMEOUT_MS = 90_000;
+
+const fetchPortraitBinaryHash = async (url?: string | null): Promise<string | null> => {
+  const normalized = clean(url);
+  if (!normalized) return null;
+  try {
+    const response = await fetch(normalized, {
+      headers: {
+        "User-Agent": "tomoshibi-mastra/portrait-hash",
+      },
+      signal: AbortSignal.timeout(PORTRAIT_HASH_FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength === 0) return null;
+    return createHash("sha256").update(Buffer.from(bytes)).digest("hex");
+  } catch {
+    return null;
+  }
+};
+
+const enforceUniquePortraitBinaryHashes = async (input: {
+  title: string;
+  styleGuide: string;
+  characters: WorkflowCharacter[];
+}) => {
+  const warnings: string[] = [];
+  const next = input.characters.slice();
+  const hashToIndex = new Map<string, number>();
+
+  for (let index = 0; index < next.length; index += 1) {
+    let current = next[index];
+    let resolved = false;
+
+    for (let attempt = 0; attempt <= PORTRAIT_BINARY_DUPLICATE_RETRY_MAX; attempt += 1) {
+      const hash = await fetchPortraitBinaryHash(current.portrait_image_url);
+      if (!hash) {
+        if (attempt === 0) {
+          warnings.push(`portrait_hash_unavailable:${clean(current.name)}`);
+        }
+        resolved = true;
+        break;
+      }
+
+      const existing = hashToIndex.get(hash);
+      if (existing === undefined || existing === index) {
+        hashToIndex.set(hash, index);
+        resolved = true;
+        break;
+      }
+
+      const conflict = next[existing];
+      if (attempt >= PORTRAIT_BINARY_DUPLICATE_RETRY_MAX) {
+        warnings.push(
+          `portrait_binary_collision:${clean(current.name)} vs ${clean(conflict?.name)}`
+        );
+        resolved = true;
+        break;
+      }
+
+      const prompt = [
+        clean(current.portrait_prompt),
+        `identity split: visually distinct from ${clean(conflict?.name) || "another cast member"}`,
+        "hard constraint: different face geometry, different hairstyle structure, different silhouette",
+        `binary uniqueness token ${clean(current.id) || `char_${index + 1}`}-${attempt + 1}`,
+        `style lock: ${clean(input.styleGuide)}`,
+      ]
+        .map((item) => clean(item))
+        .filter(Boolean)
+        .join(", ");
+
+      current = {
+        ...current,
+        portrait_prompt: prompt,
+        portrait_image_url: buildSeriesImageUrl({
+          prompt,
+          seedKey: `${input.title}:char:${index + 1}:${current.name}:binary-distinct:${attempt + 1}:${conflict?.id || existing}`,
+          width: 768,
+          height: 1024,
+          purpose: "character_portrait",
+          styleReference: input.styleGuide,
+        }),
+      };
+      next[index] = current;
+    }
+
+    if (!resolved) {
+      warnings.push(`portrait_binary_unresolved:${clean(current.name)}`);
+    }
+  }
+
+  return {
+    characters: next,
+    warnings,
+  };
+};
+
+const PORTRAIT_DUPLICATE_THRESHOLD = 0.82;
+const PORTRAIT_DUPLICATE_RETRY_MAX = 2;
+
+const buildPortraitDistinctPrompt = (input: {
+  current: WorkflowCharacter;
+  conflict: WorkflowCharacter;
+  styleGuide: string;
+  seriesTitle: string;
+}) => {
+  const currentTokens = input.current.identity_anchor_tokens;
+  const conflictTokens = input.conflict.identity_anchor_tokens;
+  const distinctAnchors = dedupeStrings([
+    clean(currentTokens?.hair),
+    clean(currentTokens?.silhouette),
+    clean(currentTokens?.dominant_color),
+    clean(currentTokens?.outfit_key_item),
+    clean(currentTokens?.distinguishing_feature),
+  ]);
+  const conflictAnchors = dedupeStrings([
+    clean(conflictTokens?.hair),
+    clean(conflictTokens?.silhouette),
+    clean(conflictTokens?.dominant_color),
+    clean(conflictTokens?.outfit_key_item),
+    clean(conflictTokens?.distinguishing_feature),
+  ]);
+  const parts = [
+    clean(input.current.portrait_prompt),
+    `identity separation constraint: this character must be visually different from ${clean(input.conflict.name)}.`,
+    distinctAnchors.length > 0 ? `preserve unique anchors: ${distinctAnchors.join(" / ")}` : "",
+    conflictAnchors.length > 0 ? `avoid conflict anchors from ${clean(input.conflict.name)}: ${conflictAnchors.join(" / ")}` : "",
+    "hard constraint: different face geometry, different hairstyle structure, different silhouette",
+    `style lock: ${clean(input.styleGuide)}`,
+    `from series ${clean(input.seriesTitle)}`,
+  ]
+    .map((item) => clean(item))
+    .filter(Boolean);
+  return parts.join(", ");
+};
+
+const enforceDistinctCharacterPortraits = async (input: {
+  title: string;
+  styleGuide: string;
+  characters: WorkflowCharacter[];
+}) => {
+  const warnings: string[] = [];
+  const next = input.characters.slice();
+
+  for (let index = 0; index < next.length; index += 1) {
+    let resolved = false;
+    for (let attempt = 0; attempt <= PORTRAIT_DUPLICATE_RETRY_MAX; attempt += 1) {
+      const current = next[index];
+      if (!clean(current.portrait_image_url)) {
+        resolved = true;
+        break;
+      }
+      let conflictIndex = -1;
+      let conflictScore = 0;
+      for (let prev = 0; prev < index; prev += 1) {
+        const previous = next[prev];
+        if (!clean(previous.portrait_image_url)) continue;
+        try {
+          const comparison = await evaluatePortraitSamePersonProbability({
+            leftName: previous.name,
+            leftImageUrl: previous.portrait_image_url || "",
+            rightName: current.name,
+            rightImageUrl: current.portrait_image_url || "",
+          });
+          if (comparison.samePersonProbability >= PORTRAIT_DUPLICATE_THRESHOLD) {
+            conflictIndex = prev;
+            conflictScore = comparison.samePersonProbability;
+            break;
+          }
+        } catch {
+          // If vision comparison fails, keep current portrait and continue generation.
+          conflictIndex = -1;
+          break;
+        }
+      }
+
+      if (conflictIndex < 0) {
+        resolved = true;
+        break;
+      }
+
+      const conflict = next[conflictIndex];
+      if (attempt >= PORTRAIT_DUPLICATE_RETRY_MAX) {
+        warnings.push(
+          `portrait_identity_collision:${clean(current.name)} vs ${clean(conflict.name)} score=${conflictScore.toFixed(2)}`
+        );
+        break;
+      }
+
+      const distinctPrompt = buildPortraitDistinctPrompt({
+        current,
+        conflict,
+        styleGuide: input.styleGuide,
+        seriesTitle: input.title,
+      });
+      const regenerated = {
+        ...current,
+        portrait_prompt: distinctPrompt,
+        portrait_image_url: buildSeriesImageUrl({
+          prompt: distinctPrompt,
+          seedKey: `${input.title}:char:${index + 1}:${current.name}:distinct:${attempt + 1}:${conflict.id}`,
+          width: 768,
+          height: 1024,
+          purpose: "character_portrait",
+          styleReference: input.styleGuide,
+        }),
+      };
+      next[index] = regenerated;
+    }
+
+    if (!resolved) {
+      warnings.push(`portrait_identity_unresolved:${clean(next[index]?.name)}`);
+    }
+  }
+
+  return {
+    characters: next,
+    warnings,
+  };
+};
+
+const buildCoverFocusFromIdentityPack = (
+  characters: WorkflowCharacter[],
+  identityPack: WorkflowIdentityPack
+): CoverFocusCharacter[] => {
+  const byId = new Map(characters.map((character) => [character.id, character]));
+  const focused: CoverFocusCharacter[] = [];
+
+  for (const keyId of identityPack.key_person_character_ids.slice(0, 3)) {
+    const character = byId.get(keyId);
+    if (!character) continue;
+    const bucket = detectRoleBucket(character);
+    focused.push({
+      character_id: character.id,
+      name: clean(character.name) || `人物${focused.length + 1}`,
+      role: clean(character.role) || "キーパーソン",
+      focus_reason: toTitleCaseReason(bucket),
+      visual_anchor: extractVisualAnchor(character),
+    });
+  }
+
+  if (focused.length > 0) return focused;
+  return selectCoverFocusCharacters(characters);
+};
+
+const COVER_REQUIRED_AXES = 3;
+const COVER_MIN_PASS_RATE = 0.75;
+const COVER_MIN_STYLE_SIMILARITY = 0.45;
+const COVER_MIN_WORLD_SIMILARITY = 0.55;
+const COVER_MAX_PEOPLE_SCORE = 0.18;
+
+type CoverCandidateReport = z.infer<typeof seriesCoverConsistencyReportSchema>["candidate_reports"][number];
+
+const buildCandidatePrompt = (basePrompt: string, roundIndex: number, slotIndex: number, feedback?: string) => {
+  const parts = [
+    basePrompt,
+    roundIndex > 1 ? clean(feedback) : "",
+    `variant round ${roundIndex} slot ${slotIndex}`,
+  ]
+    .map((item) => clean(item))
+    .filter(Boolean);
+  return parts.join(", ");
+};
+
+const evaluateCoverCandidate = async (input: {
+  candidateIndex: number;
+  roundIndex: number;
+  imageUrl: string;
+  prompt: string;
+  title: string;
+  genre: string;
+  tone: string;
+  premise: string;
+  setting: string;
+  recurringMotifs: string[];
+  styleGuide: string;
+}): Promise<CoverCandidateReport> => {
+  let evaluation: VisionWorldCoverEvaluation | null = null;
+  let lastEvalError: unknown = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      evaluation = await evaluateWorldCoverWithVision({
+        coverImageUrl: input.imageUrl,
+        title: input.title,
+        genre: input.genre,
+        tone: input.tone,
+        premise: input.premise,
+        setting: input.setting,
+        recurringMotifs: input.recurringMotifs,
+        styleGuide: input.styleGuide,
+      });
+      break;
+    } catch (error) {
+      lastEvalError = error;
+    }
+  }
+  if (!evaluation) {
+    throw lastEvalError instanceof Error ? lastEvalError : new Error("cover_identity_eval_failed");
+  }
+
+  const noPeopleScore = clamp01(1 - evaluation.peopleScore);
+  const worldSimilarity = clamp01(evaluation.worldSimilarity);
+  const styleSimilarity = clamp01(evaluation.styleSimilarity);
+  const passedAxes =
+    (evaluation.peopleScore <= COVER_MAX_PEOPLE_SCORE ? 1 : 0) +
+    (worldSimilarity >= COVER_MIN_WORLD_SIMILARITY ? 1 : 0) +
+    (styleSimilarity >= COVER_MIN_STYLE_SIMILARITY ? 1 : 0);
+  const passRate = clamp01(passedAxes / 3);
+  const passed = passedAxes >= COVER_REQUIRED_AXES;
+
+  return {
+    candidate_index: input.candidateIndex,
+    round_index: input.roundIndex,
+    image_url: input.imageUrl,
+    provider: clean(evaluation.provider) || "unknown",
+    prompt: input.prompt,
+    arcface_avg: noPeopleScore,
+    clip_avg: worldSimilarity,
+    vision_anchor_avg: styleSimilarity,
+    style_similarity: styleSimilarity,
+    pass_rate: passRate,
+    passed,
+    character_scores: [],
+  };
+};
+
+const buildRetryFeedback = (report: CoverCandidateReport) => {
+  const needsNoPeople = report.arcface_avg < clamp01(1 - COVER_MAX_PEOPLE_SCORE);
+  const needsWorld = report.clip_avg < COVER_MIN_WORLD_SIMILARITY;
+  const needsStyle = report.style_similarity < COVER_MIN_STYLE_SIMILARITY;
+  if (!needsNoPeople && !needsWorld && !needsStyle) return "";
+  const issues = [
+    needsNoPeople ? "remove people/characters/human silhouettes from the cover entirely" : "",
+    needsWorld ? "strengthen worldbuilding cues: architecture, street objects, terrain, atmosphere" : "",
+    needsStyle ? "align more strictly with the style bible" : "",
+  ]
+    .map((item) => clean(item))
+    .filter(Boolean);
+  return `retry guidance: ${issues.join("; ")}, world poster only, no humans`;
+};
+
+const resolveBestCandidate = (reports: CoverCandidateReport[]) => {
+  const sorted = reports.slice().sort((a, b) => {
+    const aScore = Number(a.passed) * 100 + a.pass_rate * 10 + a.style_similarity;
+    const bScore = Number(b.passed) * 100 + b.pass_rate * 10 + b.style_similarity;
+    return bScore - aScore;
+  });
+  return sorted[0] || reports[0];
+};
+
+const buildCoverWithConsistency = async (input: {
+  title: string;
+  genre: string;
+  tone: string;
+  premise: string;
+  setting: string;
+  styleGuide: string;
+  dominantColors: string[];
+  recurringMotifs: string[];
+  additionalDirection?: string;
+}) => {
+  const worldPosterDirection = dedupeStrings([
+    clean(input.additionalDirection),
+    "world concept poster only",
+    "no people",
+    "no human silhouettes",
+    "no character portraits",
+  ]).join(", ");
+
+  const basePrompt = buildCoverImagePrompt({
+    title: input.title,
+    genre: input.genre,
+    tone: input.tone,
+    premise: input.premise,
+    setting: input.setting,
+    styleGuide: input.styleGuide,
+    dominantColors: input.dominantColors,
+    recurringMotifs: input.recurringMotifs,
+    focusCharacters: [],
+    additionalDirection: worldPosterDirection,
+    excludeCharacters: true,
+  });
+
+  const candidateReports: CoverCandidateReport[] = [];
+  let retryFeedback = "";
+
+  for (let round = 1; round <= 3; round += 1) {
+    const roundReports: CoverCandidateReport[] = [];
+    for (let slot = 1; slot <= 4; slot += 1) {
+      const candidateIndex = (round - 1) * 4 + slot;
+      const prompt = buildCandidatePrompt(basePrompt, round, slot, retryFeedback);
+      const imageUrl = buildSeriesImageUrl({
+        prompt,
+        seedKey: `${input.title}:cover:r${round}:s${slot}`,
+        width: 1024,
+        height: 1365,
+        purpose: "cover",
+        styleReference: input.styleGuide,
+      });
+
+      const report = await evaluateCoverCandidate({
+        candidateIndex,
+        roundIndex: round,
+        imageUrl,
+        prompt,
+        title: input.title,
+        genre: input.genre,
+        tone: input.tone,
+        premise: input.premise,
+        setting: input.setting,
+        recurringMotifs: input.recurringMotifs,
+        styleGuide: input.styleGuide,
+      });
+      roundReports.push(report);
+      candidateReports.push(report);
+    }
+
+    const passed = roundReports.find((row) => row.passed);
+    if (passed) {
+      const summary = `round ${round} で世界観ポスター条件を通過（pass_rate=${passed.pass_rate.toFixed(2)}, style=${passed.style_similarity.toFixed(2)})`;
+      return {
+        coverImagePrompt: passed.prompt,
+        coverImageUrl: passed.image_url,
+        coverConsistencyReport: {
+          mode: "quality_first",
+          thresholds: {
+            required_axes_per_character: COVER_REQUIRED_AXES,
+            min_average_pass_rate: COVER_MIN_PASS_RATE,
+            min_style_similarity: COVER_MIN_STYLE_SIMILARITY,
+          },
+          validation_rounds: round,
+          selected_candidate_index: passed.candidate_index,
+          selected_cover_image_url: passed.image_url,
+          selected_cover_image_prompt: passed.prompt,
+          selected_provider: clean(passed.provider) || "unknown",
+          passed: true,
+          summary,
+          candidate_reports: candidateReports,
+        } satisfies WorkflowCoverConsistencyReport,
+      };
+    }
+
+    const roundBest = resolveBestCandidate(roundReports);
+    retryFeedback = buildRetryFeedback(roundBest);
+  }
+
+  const best = resolveBestCandidate(candidateReports);
+  const summary =
+    `全ラウンドで世界観ポスター閾値未達のため最良候補を採用（pass_rate=${best.pass_rate.toFixed(2)}, style=${best.style_similarity.toFixed(2)}）`;
+  return {
+    coverImagePrompt: best.prompt,
+    coverImageUrl: best.image_url,
+    coverConsistencyReport: {
+      mode: "quality_first",
+      thresholds: {
+        required_axes_per_character: COVER_REQUIRED_AXES,
+        min_average_pass_rate: COVER_MIN_PASS_RATE,
+        min_style_similarity: COVER_MIN_STYLE_SIMILARITY,
+      },
+      validation_rounds: 3,
+      selected_candidate_index: best.candidate_index,
+      selected_cover_image_url: best.image_url,
+      selected_cover_image_prompt: best.prompt,
+      selected_provider: clean(best.provider) || "unknown",
+      passed: false,
+      summary,
+      candidate_reports: candidateReports,
+    } satisfies WorkflowCoverConsistencyReport,
+  };
+};
 
 const resolvedSeriesRequestSchema = z.object({
   interview: seriesInterviewSchema,
@@ -25,38 +1371,59 @@ const resolvedSeriesRequestSchema = z.object({
   prompt: z.string().optional(),
   creator_id: z.string().uuid().optional(),
   language: z.string(),
+  existing_identity_pack: seriesIdentityPackSchema.optional(),
+  identity_retcon: z.boolean().optional(),
+});
+
+const sanitizeSeriesRequestInputSchema = z.object({
+  interview: seriesInterviewSchema.extend({
+    avoidance_preferences: z.string().optional(),
+  }),
+  desired_episode_count: z.number().int().min(3).max(24).optional(),
+  prompt: z.string().optional(),
+  creator_id: z.string().uuid().optional(),
+  language: z.string().optional(),
+  existing_identity_pack: z.unknown().optional(),
+  identity_retcon: z.boolean().optional(),
 });
 
 const LOG_PREFIX = "[series-workflow]";
 
 const sanitizeRequestStep = createStep({
   id: "sanitize-series-request",
-  inputSchema: seriesGenerationRequestSchema,
+  inputSchema: sanitizeSeriesRequestInputSchema,
   outputSchema: resolvedSeriesRequestSchema,
   execute: async ({ inputData }) => {
-    console.log(`${LOG_PREFIX} step 1/5: sanitize-series-request 開始`);
+    console.log(`${LOG_PREFIX} step 1/6: sanitize-series-request 開始`);
     try {
+      const parsedIdentityPack = inputData.existing_identity_pack
+        ? seriesIdentityPackSchema.safeParse(inputData.existing_identity_pack)
+        : null;
       const resolved: z.infer<typeof resolvedSeriesRequestSchema> = {
-      desired_episode_count: inputData.desired_episode_count ?? 8,
-      prompt: clean(inputData.prompt),
-      language: clean(inputData.language) || "ja",
-      creator_id: inputData.creator_id,
-      interview: {
-        genre_world: clean(inputData.interview.genre_world),
-        desired_emotion: clean(inputData.interview.desired_emotion),
-        companion_preference: clean(inputData.interview.companion_preference),
-        continuation_trigger: clean(inputData.interview.continuation_trigger),
-        avoidance_preferences: clean(inputData.interview.avoidance_preferences),
-        additional_notes: clean(inputData.interview.additional_notes),
-        main_objective: clean(inputData.interview.main_objective),
-        protagonist_position: clean(inputData.interview.protagonist_position),
-        partner_description: clean(inputData.interview.partner_description),
-      },
-    };
-      console.log(`${LOG_PREFIX} step 1/5: sanitize-series-request 完了`);
+        desired_episode_count: inputData.desired_episode_count ?? 8,
+        prompt: clean(inputData.prompt),
+        language: clean(inputData.language) || "ja",
+        creator_id: inputData.creator_id,
+        existing_identity_pack: parsedIdentityPack?.success ? parsedIdentityPack.data : undefined,
+        identity_retcon: Boolean(inputData.identity_retcon),
+        interview: {
+          genre_world: clean(inputData.interview.genre_world),
+          desired_emotion: clean(inputData.interview.desired_emotion),
+          companion_preference: clean(inputData.interview.companion_preference),
+          continuation_trigger: clean(inputData.interview.continuation_trigger),
+          avoidance_preferences: clean(inputData.interview.avoidance_preferences),
+          additional_notes: clean(inputData.interview.additional_notes),
+          visual_style_preset: clean(inputData.interview.visual_style_preset),
+          visual_style_notes: clean(inputData.interview.visual_style_notes),
+          main_objective: clean(inputData.interview.main_objective),
+          protagonist_position: clean(inputData.interview.protagonist_position),
+          partner_description: clean(inputData.interview.partner_description),
+        },
+      };
+      console.log(`${LOG_PREFIX} step 1/6: sanitize-series-request 完了`);
       return resolved;
     } catch (e: any) {
-      console.error(`${LOG_PREFIX} step 1/5: sanitize-series-request 失敗`, e?.message ?? e);
+      console.error(`${LOG_PREFIX} step 1/6: sanitize-series-request 失敗`, e?.message ?? e);
       throw e;
     }
   },
@@ -72,7 +1439,7 @@ const generateConceptStep = createStep({
   inputSchema: resolvedSeriesRequestSchema,
   outputSchema: conceptStepOutputSchema,
   execute: async ({ inputData }) => {
-    console.log(`${LOG_PREFIX} step 2/5: generate-series-concept 開始`);
+    console.log(`${LOG_PREFIX} step 2/6: generate-series-concept 開始`);
     try {
       const concept = await generateSeriesConcept({
         interview: inputData.interview,
@@ -80,13 +1447,13 @@ const generateConceptStep = createStep({
         desiredEpisodeCount: inputData.desired_episode_count,
         language: inputData.language,
       });
-      console.log(`${LOG_PREFIX} step 2/5: generate-series-concept 完了 (title: ${concept?.title ?? "—"})`);
+      console.log(`${LOG_PREFIX} step 2/6: generate-series-concept 完了 (title: ${concept?.title ?? "—"})`);
       return {
         request: inputData,
         concept,
       };
     } catch (e: any) {
-      console.error(`${LOG_PREFIX} step 2/5: generate-series-concept 失敗`, e?.message ?? e);
+      console.error(`${LOG_PREFIX} step 2/6: generate-series-concept 失敗`, e?.message ?? e);
       throw e;
     }
   },
@@ -101,46 +1468,99 @@ const generateCharactersStep = createStep({
   inputSchema: conceptStepOutputSchema,
   outputSchema: charactersStepOutputSchema,
   execute: async ({ inputData }) => {
-    console.log(`${LOG_PREFIX} step 3/5: generate-series-characters 開始`);
+    console.log(`${LOG_PREFIX} step 3/6: generate-series-characters 開始`);
     try {
       const targetCount = Math.max(3, Math.min(8, Math.ceil(inputData.request.desired_episode_count / 2)));
+      const styleGuide = buildSeriesVisualStyleGuide({
+        seriesTitle: inputData.concept.title,
+        genre: inputData.concept.genre,
+        tone: inputData.concept.tone,
+        setting: inputData.concept.world.setting,
+        recurringMotifs: inputData.concept.world.recurring_motifs,
+        stylePreset: inputData.request.interview.visual_style_preset,
+        styleDirection: inputData.request.interview.visual_style_notes,
+      });
       const characterResult = await generateSeriesCharacters({
         title: inputData.concept.title,
         genre: inputData.concept.genre,
         tone: inputData.concept.tone,
         premise: inputData.concept.premise,
         season_goal: inputData.concept.season_goal,
-        protagonist_position: "プレイヤー本人（旅を続ける視点人物）",
+        protagonist_position: "シリーズ内で独立して行動する主人公（ユーザー本人ではない）",
         partner_description:
           clean(inputData.request.interview.companion_preference) ||
           clean(inputData.request.interview.partner_description) ||
           "信頼できる相棒",
+        style_guide: styleGuide,
         target_count: targetCount,
       });
       const count = characterResult?.characters?.length ?? 0;
-      console.log(`${LOG_PREFIX} step 3/5: generate-series-characters 完了 (${count}人)`);
+      console.log(`${LOG_PREFIX} step 3/6: generate-series-characters 完了 (${count}人)`);
       return {
         ...inputData,
         characters: characterResult.characters,
       };
     } catch (e: any) {
-      console.error(`${LOG_PREFIX} step 3/5: generate-series-characters 失敗`, e?.message ?? e);
+      console.error(`${LOG_PREFIX} step 3/6: generate-series-characters 失敗`, e?.message ?? e);
       throw e;
     }
   },
 });
 
-const episodeStepOutputSchema = charactersStepOutputSchema.extend({
+const identityStepOutputSchema = charactersStepOutputSchema.extend({
+  characters: z.array(seriesCharacterSchema).min(3).max(8),
+  identity_pack: seriesIdentityPackSchema,
+});
+
+const buildIdentityPackStep = createStep({
+  id: "build-series-identity-pack",
+  inputSchema: charactersStepOutputSchema,
+  outputSchema: identityStepOutputSchema,
+  execute: async ({ inputData }) => {
+    console.log(`${LOG_PREFIX} step 4/6: build-series-identity-pack 開始`);
+    try {
+      const styleGuide =
+        clean(inputData.request.existing_identity_pack?.style_bible) ||
+        buildSeriesVisualStyleGuide({
+          seriesTitle: inputData.concept.title,
+          genre: inputData.concept.genre,
+          tone: inputData.concept.tone,
+          setting: inputData.concept.world.setting,
+          recurringMotifs: inputData.concept.world.recurring_motifs,
+          dominantColors: collectDominantColors(inputData.characters),
+          stylePreset: inputData.request.interview.visual_style_preset,
+          styleDirection: inputData.request.interview.visual_style_notes,
+        });
+      const identity = buildSeriesIdentityPack({
+        characters: inputData.characters,
+        styleGuide,
+        existingIdentityPack: inputData.request.existing_identity_pack,
+        identityRetcon: inputData.request.identity_retcon,
+      });
+      console.log(`${LOG_PREFIX} step 4/6: build-series-identity-pack 完了 (key: ${identity.identityPack.key_person_character_ids.join(",")})`);
+      return {
+        ...inputData,
+        characters: identity.characters,
+        identity_pack: identity.identityPack,
+      };
+    } catch (e: any) {
+      console.error(`${LOG_PREFIX} step 4/6: build-series-identity-pack 失敗`, e?.message ?? e);
+      throw e;
+    }
+  },
+});
+
+const episodeStepOutputSchema = identityStepOutputSchema.extend({
   checkpoints: z.array(seriesCheckpointSchema).min(4).max(8),
   first_episode_seed: seriesEpisodeSeedSchema,
 });
 
 const generateEpisodesStep = createStep({
   id: "generate-series-checkpoints",
-  inputSchema: charactersStepOutputSchema,
+  inputSchema: identityStepOutputSchema,
   outputSchema: episodeStepOutputSchema,
   execute: async ({ inputData }) => {
-    console.log(`${LOG_PREFIX} step 4/5: generate-series-checkpoints 開始`);
+    console.log(`${LOG_PREFIX} step 5/6: generate-series-checkpoints 開始`);
     try {
       const plan = await generateSeriesEpisodePlan({
         title: inputData.concept.title,
@@ -153,142 +1573,259 @@ const generateEpisodesStep = createStep({
         desired_episode_count: inputData.request.desired_episode_count,
       });
       const cpCount = plan?.checkpoints?.length ?? 0;
-      console.log(`${LOG_PREFIX} step 4/5: generate-series-checkpoints 完了 (checkpoints: ${cpCount})`);
+      console.log(`${LOG_PREFIX} step 5/6: generate-series-checkpoints 完了 (checkpoints: ${cpCount})`);
       return {
         ...inputData,
         checkpoints: plan.checkpoints,
         first_episode_seed: plan.first_episode_seed,
       };
     } catch (e: any) {
-      console.error(`${LOG_PREFIX} step 4/5: generate-series-checkpoints 失敗`, e?.message ?? e);
+      console.error(`${LOG_PREFIX} step 5/6: generate-series-checkpoints 失敗`, e?.message ?? e);
       throw e;
     }
   },
 });
 
-const finalizeSeriesStep = createStep({
-  id: "finalize-series-blueprint",
-  inputSchema: episodeStepOutputSchema,
-  outputSchema: seriesWorkflowOutputSchema,
-  execute: async ({ inputData }) => {
-    console.log(`${LOG_PREFIX} step 5/5: finalize-series-blueprint 開始`);
-    try {
-      const consistency = await generateSeriesConsistency({
-      title: inputData.concept.title,
-      overview: inputData.concept.overview,
-      premise: inputData.concept.premise,
-      season_goal: inputData.concept.season_goal,
-      ai_rule_points: inputData.concept.ai_rule_points,
-      characters: inputData.characters,
-      checkpoints: inputData.checkpoints,
-      first_episode_seed: inputData.first_episode_seed,
+const assembleSeriesBlueprint = async (input: {
+  request: z.infer<typeof resolvedSeriesRequestSchema>;
+  concept: z.infer<typeof seriesConceptAgentOutputSchema>;
+  characters: WorkflowCharacter[];
+  identityPack: WorkflowIdentityPack;
+  checkpoints: z.infer<typeof seriesCheckpointSchema>[];
+  firstEpisodeSeed: z.infer<typeof seriesEpisodeSeedSchema>;
+  onProgress?: SeriesGenerationProgressReporter;
+}) => {
+  const consistency = await generateSeriesConsistency({
+    title: input.concept.title,
+    overview: input.concept.overview,
+    premise: input.concept.premise,
+    season_goal: input.concept.season_goal,
+    ai_rule_points: input.concept.ai_rule_points,
+    characters: input.characters,
+    checkpoints: input.checkpoints,
+    first_episode_seed: input.firstEpisodeSeed,
+  });
+
+  const aiRulePoints = consistency.ai_rule_points.slice(0, 12);
+  const warnings: string[] = [];
+  if (consistency.warnings && consistency.warnings.length > 0) {
+    warnings.push(...consistency.warnings);
+  }
+
+  const dominantColors = collectDominantColors(input.characters);
+  const visualStyleGuide =
+    clean(input.identityPack.style_bible) ||
+    buildSeriesVisualStyleGuide({
+      seriesTitle: input.concept.title,
+      genre: input.concept.genre,
+      tone: input.concept.tone,
+      setting: input.concept.world.setting,
+      recurringMotifs: input.concept.world.recurring_motifs,
+      dominantColors,
+      stylePreset: input.request.interview.visual_style_preset,
+      styleDirection: input.request.interview.visual_style_notes,
     });
 
-    const aiRulePoints = consistency.ai_rule_points.slice(0, 12);
-    const warnings: string[] = [];
-    if (consistency.warnings && consistency.warnings.length > 0) {
-      warnings.push(...consistency.warnings);
-    }
+  const harmonizedCharacters = ensureUniquePortraitUrls({
+    title: input.concept.title,
+    styleGuide: visualStyleGuide,
+    characters: harmonizeCharacterPortraits({
+      title: input.concept.title,
+      genre: input.concept.genre,
+      tone: input.concept.tone,
+      setting: input.concept.world.setting || input.concept.premise,
+      styleGuide: visualStyleGuide,
+      characters: input.characters,
+    }),
+  });
+  const binaryUniqueInitial = await enforceUniquePortraitBinaryHashes({
+    title: input.concept.title,
+    styleGuide: visualStyleGuide,
+    characters: harmonizedCharacters,
+  });
+  if (binaryUniqueInitial.warnings.length > 0) {
+    warnings.push(...binaryUniqueInitial.warnings);
+  }
+  const distinctPortraitResult = await enforceDistinctCharacterPortraits({
+    title: input.concept.title,
+    styleGuide: visualStyleGuide,
+    characters: binaryUniqueInitial.characters,
+  });
+  if (distinctPortraitResult.warnings.length > 0) {
+    warnings.push(...distinctPortraitResult.warnings);
+  }
 
-    const coverImagePrompt =
-      clean(inputData.concept.cover_image_prompt) ||
-      buildCoverImagePrompt({
-        title: inputData.concept.title,
-        genre: inputData.concept.genre,
-        tone: inputData.concept.tone,
-        premise: inputData.concept.premise,
-        setting: inputData.concept.world.setting,
-      });
+  const uniquePortraitCharacters = ensureUniquePortraitUrls({
+    title: input.concept.title,
+    styleGuide: visualStyleGuide,
+    characters: distinctPortraitResult.characters,
+  });
+  const binaryUniqueFinal = await enforceUniquePortraitBinaryHashes({
+    title: input.concept.title,
+    styleGuide: visualStyleGuide,
+    characters: uniquePortraitCharacters,
+  });
+  if (binaryUniqueFinal.warnings.length > 0) {
+    warnings.push(...binaryUniqueFinal.warnings);
+  }
+  const finalizedPortraitCharacters = ensureUniquePortraitUrls({
+    title: input.concept.title,
+    styleGuide: visualStyleGuide,
+    characters: binaryUniqueFinal.characters,
+  });
 
-    const worldVisualSeeds = [
-      {
-        id: "upper_area",
-        title: "上層エリア",
-        description:
-          clean(inputData.concept.world.social_structure) || "光と秩序に包まれた都市中枢。徒歩で巡れる主要動線が整う。",
-        atmosphere: clean(inputData.concept.tone) || "高密度で緊張感のある空気",
-      },
-      {
-        id: "lower_area",
-        title: "下層エリア",
-        description:
-          clean(inputData.concept.world.core_conflict) ||
-          clean(consistency.continuity.global_mystery) ||
-          "生活圏と秘密が交差する街路。歩くほど手がかりが増える。",
-        atmosphere: clean(consistency.continuity.mid_season_twist) || "少し不穏な余韻",
-      },
-    ] as const;
+  const synced = syncIdentityPackWithCharacters(
+    {
+      ...input.identityPack,
+      style_bible: visualStyleGuide,
+    },
+    finalizedPortraitCharacters
+  );
 
-    const worldVisualAssets = worldVisualSeeds.map((seed, index) => {
-      const prompt = buildWorldVisualPrompt({
-        seriesTitle: inputData.concept.title,
-        genre: inputData.concept.genre,
-        tone: inputData.concept.tone,
-        setting: inputData.concept.world.setting,
-        focusTitle: seed.title,
-        focusDescription: seed.description,
-        atmosphere: seed.atmosphere,
-      });
+  const coverFocusCharacters = buildCoverFocusFromIdentityPack(synced.characters, synced.identityPack);
 
-      return {
-        id: seed.id,
-        title: seed.title,
-        description: seed.description,
+  await emitSeriesGenerationProgress(input.onProgress, {
+    phase: "generate_series_cover_candidates_start",
+    detail: "カバー候補を複数パターン生成しています",
+  });
+
+  const coverBundle = await buildCoverWithConsistency({
+    title: input.concept.title,
+    genre: input.concept.genre,
+    tone: input.concept.tone,
+    premise: input.concept.premise,
+    setting: input.concept.world.setting,
+    styleGuide: visualStyleGuide,
+    dominantColors,
+    recurringMotifs: input.concept.world.recurring_motifs,
+  });
+
+  await emitSeriesGenerationProgress(input.onProgress, {
+    phase: "generate_series_cover_candidates_done",
+    detail: "カバー候補の生成が完了しました",
+  });
+
+  await emitSeriesGenerationProgress(input.onProgress, {
+    phase: "validate_cover_identity_start",
+    detail: "カバーが世界観ポスターとして成立しているかを検証しています",
+  });
+  await emitSeriesGenerationProgress(input.onProgress, {
+    phase: "validate_cover_identity_done",
+    detail: coverBundle.coverConsistencyReport.summary,
+  });
+
+  const worldVisualSeeds = [
+    {
+      id: "upper_area",
+      title: "上層エリア",
+      description:
+        clean(input.concept.world.social_structure) || "光と秩序に包まれた都市中枢。徒歩で巡れる主要動線が整う。",
+      atmosphere: clean(input.concept.tone) || "高密度で緊張感のある空気",
+    },
+    {
+      id: "lower_area",
+      title: "下層エリア",
+      description:
+        clean(input.concept.world.core_conflict) ||
+        clean(consistency.continuity.global_mystery) ||
+        "生活圏と秘密が交差する街路。歩くほど手がかりが増える。",
+      atmosphere: clean(consistency.continuity.mid_season_twist) || "少し不穏な余韻",
+    },
+  ] as const;
+
+  const worldVisualAssets = worldVisualSeeds.map((seed, index) => {
+    const prompt = buildWorldVisualPrompt({
+      seriesTitle: input.concept.title,
+      genre: input.concept.genre,
+      tone: input.concept.tone,
+      setting: input.concept.world.setting,
+      focusTitle: seed.title,
+      focusDescription: seed.description,
+      atmosphere: seed.atmosphere,
+      styleGuide: visualStyleGuide,
+    });
+
+    return {
+      id: seed.id,
+      title: seed.title,
+      description: seed.description,
+      prompt,
+      image_url: buildSeriesImageUrl({
         prompt,
-        image_url: buildSeriesImageUrl({
-          prompt,
-          seedKey: `${inputData.concept.title}:world:${seed.id}:${index + 1}`,
-          width: 960,
-          height: 640,
-        }),
-      };
-    });
+        seedKey: `${input.concept.title}:world:${seed.id}:${index + 1}`,
+        width: 960,
+        height: 640,
+        purpose: "world_visual",
+        styleReference: visualStyleGuide,
+      }),
+    };
+  });
 
-    const output = {
+  return {
+    output: {
       series: {
-        title: inputData.concept.title,
-        overview: consistency.overview_refined || inputData.concept.overview,
+        title: input.concept.title,
+        overview: consistency.overview_refined || input.concept.overview,
         ai_rules: aiRulePoints.map((rule) => `- ${rule}`).join("\n"),
-        genre: inputData.concept.genre,
-        tone: inputData.concept.tone,
-        premise: inputData.concept.premise,
-        season_goal: inputData.concept.season_goal,
-        cover_image_prompt: coverImagePrompt,
-        cover_image_url: buildSeriesImageUrl({
-          prompt: coverImagePrompt,
-          seedKey: `${inputData.concept.title}:cover`,
-          width: 1024,
-          height: 1365,
-        }),
+        genre: input.concept.genre,
+        tone: input.concept.tone,
+        premise: input.concept.premise,
+        season_goal: input.concept.season_goal,
+        visual_style_preset: clean(input.request.interview.visual_style_preset) || undefined,
+        visual_style_notes: clean(input.request.interview.visual_style_notes) || undefined,
+        cover_image_prompt: coverBundle.coverImagePrompt,
+        cover_image_url: coverBundle.coverImageUrl,
         world: {
-          ...inputData.concept.world,
+          ...input.concept.world,
           visual_assets: worldVisualAssets,
         },
-        characters: inputData.characters,
-        checkpoints: inputData.checkpoints,
-        first_episode_seed: inputData.first_episode_seed,
+        characters: synced.characters,
+        cover_focus_characters: coverFocusCharacters,
+        identity_pack: synced.identityPack,
+        cover_consistency_report: coverBundle.coverConsistencyReport,
+        checkpoints: input.checkpoints,
+        first_episode_seed: input.firstEpisodeSeed,
         progress_state: {
           last_completed_episode_no: 0,
           unresolved_threads: [consistency.continuity.global_mystery].filter((item) => clean(item).length > 0),
           revealed_facts: [],
           companion_trust_level: 40,
-          next_hook: clean(inputData.first_episode_seed.carry_over_hint) || "次回につながる問いが残る。",
+          next_hook: clean(input.firstEpisodeSeed.carry_over_hint) || "次回につながる問いが残る。",
         },
         // Keep legacy field for backward compatibility with old clients.
         episode_blueprints: [],
         continuity: consistency.continuity,
       },
       meta: {
-        desired_episode_count: inputData.request.desired_episode_count,
-        generated_checkpoint_count: inputData.checkpoints.length,
-        workflow_version: "series-workflow-v3",
+        desired_episode_count: input.request.desired_episode_count,
+        generated_checkpoint_count: input.checkpoints.length,
+        workflow_version: "series-workflow-v6-style-lock",
         warnings,
       },
-    };
-      console.log(`${LOG_PREFIX} step 5/5: finalize-series-blueprint 完了`);
-      return output;
+    } satisfies z.infer<typeof seriesWorkflowOutputSchema>,
+    warnings,
+  };
+};
+
+const finalizeSeriesStep = createStep({
+  id: "finalize-series-blueprint",
+  inputSchema: episodeStepOutputSchema,
+  outputSchema: seriesWorkflowOutputSchema,
+  execute: async ({ inputData }) => {
+    console.log(`${LOG_PREFIX} step 6/6: finalize-series-blueprint 開始`);
+    try {
+      const result = await assembleSeriesBlueprint({
+        request: inputData.request,
+        concept: inputData.concept,
+        characters: inputData.characters,
+        identityPack: inputData.identity_pack,
+        checkpoints: inputData.checkpoints,
+        firstEpisodeSeed: inputData.first_episode_seed,
+      });
+      console.log(`${LOG_PREFIX} step 6/6: finalize-series-blueprint 完了`);
+      return result.output;
     } catch (e: any) {
-      console.error(`${LOG_PREFIX} step 5/5: finalize-series-blueprint 失敗`, e?.message ?? e);
+      console.error(`${LOG_PREFIX} step 6/6: finalize-series-blueprint 失敗`, e?.message ?? e);
       throw e;
     }
   },
@@ -302,6 +1839,7 @@ export const seriesWorkflow = createWorkflow({
   .then(sanitizeRequestStep)
   .then(generateConceptStep)
   .then(generateCharactersStep)
+  .then(buildIdentityPackStep)
   .then(generateEpisodesStep)
   .then(finalizeSeriesStep)
   .commit();
@@ -313,9 +1851,15 @@ export type SeriesGenerationProgressPhase =
   | "generate_series_concept_done"
   | "generate_series_characters_start"
   | "generate_series_characters_done"
+  | "build_series_identity_pack_start"
+  | "build_series_identity_pack_done"
   | "generate_series_checkpoints_start"
   | "generate_series_checkpoints_done"
   | "finalize_series_blueprint_start"
+  | "generate_series_cover_candidates_start"
+  | "generate_series_cover_candidates_done"
+  | "validate_cover_identity_start"
+  | "validate_cover_identity_done"
   | "finalize_series_blueprint_done";
 
 export type SeriesGenerationProgressEvent = {
@@ -351,11 +1895,16 @@ export const generateSeriesWorkflowWithProgress = async (
     phase: "sanitize_series_request_start",
     detail: "入力情報を正規化しています",
   });
+  const parsedIdentityPack = rawInput.existing_identity_pack
+    ? seriesIdentityPackSchema.safeParse(rawInput.existing_identity_pack)
+    : null;
   const request: z.infer<typeof resolvedSeriesRequestSchema> = {
     desired_episode_count: rawInput.desired_episode_count ?? 8,
     prompt: clean(rawInput.prompt),
     language: clean(rawInput.language) || "ja",
     creator_id: rawInput.creator_id,
+    existing_identity_pack: parsedIdentityPack?.success ? parsedIdentityPack.data : undefined,
+    identity_retcon: Boolean(rawInput.identity_retcon),
     interview: {
       genre_world: clean(rawInput.interview.genre_world),
       desired_emotion: clean(rawInput.interview.desired_emotion),
@@ -363,6 +1912,8 @@ export const generateSeriesWorkflowWithProgress = async (
       continuation_trigger: clean(rawInput.interview.continuation_trigger),
       avoidance_preferences: clean(rawInput.interview.avoidance_preferences),
       additional_notes: clean(rawInput.interview.additional_notes),
+      visual_style_preset: clean(rawInput.interview.visual_style_preset),
+      visual_style_notes: clean(rawInput.interview.visual_style_notes),
       main_objective: clean(rawInput.interview.main_objective),
       protagonist_position: clean(rawInput.interview.protagonist_position),
       partner_description: clean(rawInput.interview.partner_description),
@@ -393,23 +1944,60 @@ export const generateSeriesWorkflowWithProgress = async (
     detail: "主要キャラクターを設計しています",
   });
   const targetCount = Math.max(3, Math.min(8, Math.ceil(request.desired_episode_count / 2)));
+  const styleGuideForCharacters = buildSeriesVisualStyleGuide({
+    seriesTitle: concept.title,
+    genre: concept.genre,
+    tone: concept.tone,
+    setting: concept.world.setting,
+    recurringMotifs: concept.world.recurring_motifs,
+    stylePreset: request.interview.visual_style_preset,
+    styleDirection: request.interview.visual_style_notes,
+  });
   const characterResult = await generateSeriesCharacters({
     title: concept.title,
     genre: concept.genre,
     tone: concept.tone,
     premise: concept.premise,
     season_goal: concept.season_goal,
-    protagonist_position: "プレイヤー本人（旅を続ける視点人物）",
+    protagonist_position: "シリーズ内で独立して行動する主人公（ユーザー本人ではない）",
     partner_description:
       clean(request.interview.companion_preference) ||
       clean(request.interview.partner_description) ||
       "信頼できる相棒",
+    style_guide: styleGuideForCharacters,
     target_count: targetCount,
   });
   const characters = characterResult.characters;
   await emitSeriesGenerationProgress(onProgress, {
     phase: "generate_series_characters_done",
     detail: `キャラクター生成が完了しました（${characters.length}人）`,
+  });
+
+  await emitSeriesGenerationProgress(onProgress, {
+    phase: "build_series_identity_pack_start",
+    detail: "キーパーソン定義と同一性アンカーを固定しています",
+  });
+  const styleGuideForIdentity =
+    clean(request.existing_identity_pack?.style_bible) ||
+    buildSeriesVisualStyleGuide({
+      seriesTitle: concept.title,
+      genre: concept.genre,
+      tone: concept.tone,
+      setting: concept.world.setting,
+      recurringMotifs: concept.world.recurring_motifs,
+      dominantColors: collectDominantColors(characters),
+      stylePreset: request.interview.visual_style_preset,
+      styleDirection: request.interview.visual_style_notes,
+    });
+  const identity = buildSeriesIdentityPack({
+    characters,
+    styleGuide: styleGuideForIdentity,
+    existingIdentityPack: request.existing_identity_pack,
+    identityRetcon: request.identity_retcon,
+  });
+  await emitSeriesGenerationProgress(onProgress, {
+    phase: "build_series_identity_pack_done",
+    detail: `同一性アンカーの固定が完了しました（key: ${identity.identityPack.key_person_character_ids.join(",")})`,
   });
 
   await emitSeriesGenerationProgress(onProgress, {
@@ -423,7 +2011,7 @@ export const generateSeriesWorkflowWithProgress = async (
     genre: concept.genre,
     tone: concept.tone,
     world: concept.world,
-    characters,
+    characters: identity.characters,
     desired_episode_count: request.desired_episode_count,
   });
   const checkpoints = plan.checkpoints;
@@ -437,123 +2025,23 @@ export const generateSeriesWorkflowWithProgress = async (
     phase: "finalize_series_blueprint_start",
     detail: "整合性チェックと最終統合を実施しています",
   });
-  const consistency = await generateSeriesConsistency({
-    title: concept.title,
-    overview: concept.overview,
-    premise: concept.premise,
-    season_goal: concept.season_goal,
-    ai_rule_points: concept.ai_rule_points,
-    characters,
+
+  const result = await assembleSeriesBlueprint({
+    request,
+    concept,
+    characters: identity.characters,
+    identityPack: identity.identityPack,
     checkpoints,
-    first_episode_seed: firstEpisodeSeed,
+    firstEpisodeSeed,
+    onProgress,
   });
-
-  const aiRulePoints = consistency.ai_rule_points.slice(0, 12);
-  const warnings: string[] = [];
-  if (consistency.warnings && consistency.warnings.length > 0) {
-    warnings.push(...consistency.warnings);
-  }
-
-  const coverImagePrompt =
-    clean(concept.cover_image_prompt) ||
-    buildCoverImagePrompt({
-      title: concept.title,
-      genre: concept.genre,
-      tone: concept.tone,
-      premise: concept.premise,
-      setting: concept.world.setting,
-    });
-
-  const worldVisualSeeds = [
-    {
-      id: "upper_area",
-      title: "上層エリア",
-      description:
-        clean(concept.world.social_structure) || "光と秩序に包まれた都市中枢。徒歩で巡れる主要動線が整う。",
-      atmosphere: clean(concept.tone) || "高密度で緊張感のある空気",
-    },
-    {
-      id: "lower_area",
-      title: "下層エリア",
-      description:
-        clean(concept.world.core_conflict) ||
-        clean(consistency.continuity.global_mystery) ||
-        "生活圏と秘密が交差する街路。歩くほど手がかりが増える。",
-      atmosphere: clean(consistency.continuity.mid_season_twist) || "少し不穏な余韻",
-    },
-  ] as const;
-
-  const worldVisualAssets = worldVisualSeeds.map((seed, index) => {
-    const prompt = buildWorldVisualPrompt({
-      seriesTitle: concept.title,
-      genre: concept.genre,
-      tone: concept.tone,
-      setting: concept.world.setting,
-      focusTitle: seed.title,
-      focusDescription: seed.description,
-      atmosphere: seed.atmosphere,
-    });
-
-    return {
-      id: seed.id,
-      title: seed.title,
-      description: seed.description,
-      prompt,
-      image_url: buildSeriesImageUrl({
-        prompt,
-        seedKey: `${concept.title}:world:${seed.id}:${index + 1}`,
-        width: 960,
-        height: 640,
-      }),
-    };
-  });
-
-  const output = {
-    series: {
-      title: concept.title,
-      overview: consistency.overview_refined || concept.overview,
-      ai_rules: aiRulePoints.map((rule) => `- ${rule}`).join("\n"),
-      genre: concept.genre,
-      tone: concept.tone,
-      premise: concept.premise,
-      season_goal: concept.season_goal,
-      cover_image_prompt: coverImagePrompt,
-      cover_image_url: buildSeriesImageUrl({
-        prompt: coverImagePrompt,
-        seedKey: `${concept.title}:cover`,
-        width: 1024,
-        height: 1365,
-      }),
-      world: {
-        ...concept.world,
-        visual_assets: worldVisualAssets,
-      },
-      characters,
-      checkpoints,
-      first_episode_seed: firstEpisodeSeed,
-      progress_state: {
-        last_completed_episode_no: 0,
-        unresolved_threads: [consistency.continuity.global_mystery].filter((item) => clean(item).length > 0),
-        revealed_facts: [],
-        companion_trust_level: 40,
-        next_hook: clean(firstEpisodeSeed.carry_over_hint) || "次回につながる問いが残る。",
-      },
-      episode_blueprints: [],
-      continuity: consistency.continuity,
-    },
-    meta: {
-      desired_episode_count: request.desired_episode_count,
-      generated_checkpoint_count: checkpoints.length,
-      workflow_version: "series-workflow-v3",
-      warnings,
-    },
-  } satisfies z.infer<typeof seriesWorkflowOutputSchema>;
 
   await emitSeriesGenerationProgress(onProgress, {
     phase: "finalize_series_blueprint_done",
     detail: "シリーズ設計の最終統合が完了しました",
   });
-  return output;
+
+  return result.output;
 };
 
 export type SeriesWorkflowInput = z.infer<typeof seriesGenerationRequestSchema>;

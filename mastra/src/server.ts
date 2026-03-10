@@ -24,7 +24,6 @@ import {
 import {
   buildSeriesImageProviderUrl,
   resolveSeriesImageAspectRatio,
-  resolveSeriesImageProvider,
   resolveSeriesImageRequest,
   SeriesImageRequest,
 } from "./lib/seriesVisuals";
@@ -42,6 +41,11 @@ const GEMINI_IMAGE_MODEL = clean(process.env.SERIES_IMAGE_GEMINI_MODEL) || "gemi
 const GEMINI_API_KEY =
   clean(process.env.GOOGLE_GENERATIVE_AI_API_KEY) || clean(process.env.GEMINI_API_KEY);
 const GEMINI_POLLINATIONS_FALLBACK = clean(process.env.SERIES_IMAGE_GEMINI_FALLBACK).toLowerCase() !== "off";
+const SERIES_IMAGE_VERTEX_ENDPOINT = clean(process.env.SERIES_IMAGE_VERTEX_ENDPOINT);
+const SERIES_IMAGE_DIFFUSERS_ENDPOINT = clean(process.env.SERIES_IMAGE_DIFFUSERS_ENDPOINT);
+const SERIES_IMAGE_VERTEX_TOKEN = clean(process.env.SERIES_IMAGE_VERTEX_TOKEN);
+const SERIES_IMAGE_DIFFUSERS_TOKEN = clean(process.env.SERIES_IMAGE_DIFFUSERS_TOKEN);
+const SERIES_IMAGE_HYBRID_ORDER = clean(process.env.SERIES_IMAGE_HYBRID_ORDER) || "vertex,diffusers,gemini,pollinations";
 const IMAGE_CACHE_TTL_SECONDS = Math.max(
   60,
   Number.parseInt(clean(process.env.SERIES_IMAGE_CACHE_TTL_SEC) || "21600", 10) || 21600
@@ -67,6 +71,9 @@ const buildSeriesImageCacheKey = (provider: string, request: SeriesImageRequest)
         String(request.seed),
         String(request.width),
         String(request.height),
+        String(request.purpose),
+        clean(request.styleReference),
+        JSON.stringify(request.references || []),
         clean(request.prompt),
       ].join("|")
     )
@@ -178,16 +185,81 @@ const extractGeminiImages = (payload: any): GeminiExtractedImage[] => {
 
 const buildGeminiImagePrompt = (request: SeriesImageRequest) => {
   const aspectRatio = resolveSeriesImageAspectRatio(request.width, request.height);
+  const isWorldCover = request.purpose === "cover";
+  const isCharacterPortrait = request.purpose === "character_portrait";
+  const referenceMap = request.references
+    .map((ref, index) => {
+      const id = clean(ref.characterId) || `ref_${index + 1}`;
+      const note = clean(ref.note) || "subject";
+      return `${id}: ${note}`;
+    })
+    .join(" | ");
   return [
     "Generate a single illustration for a mobile story app.",
     `Aspect ratio: ${aspectRatio}.`,
+    `Purpose: ${request.purpose}.`,
     "Art style: soft anime illustration, cel-shaded coloring, warm cinematic lighting, studio quality digital painting.",
     "IMPORTANT: Maintain a consistent anime illustration style. Do NOT mix photorealistic and anime styles.",
     "No text, no letters, no logos, no watermark.",
     "Keep composition cinematic and clear.",
+    isWorldCover
+      ? "HARD CONSTRAINT: This cover is a world concept poster."
+      : "",
+    isWorldCover
+      ? "HARD CONSTRAINT: Do NOT depict people, characters, faces, bodies, or human silhouettes."
+      : "",
+    isWorldCover
+      ? "HARD CONSTRAINT: Express the series only through environment, architecture, objects, weather, and atmosphere."
+      : "",
+    isCharacterPortrait
+      ? "HARD CONSTRAINT: Render exactly one unique character and keep this identity distinct from other cast members."
+      : "",
+    request.references.length > 0
+      ? `Reference subjects map: ${referenceMap}.`
+      : "",
     `Style seed hint: ${request.seed}.`,
     `Scene prompt: ${request.prompt}`,
   ].join("\n");
+};
+
+type GeminiInlineData = {
+  mimeType: string;
+  data: string;
+};
+
+const guessImageMimeTypeFromUrl = (url: string) => {
+  const normalized = clean(url).toLowerCase();
+  if (normalized.includes(".jpg") || normalized.includes(".jpeg")) return "image/jpeg";
+  if (normalized.includes(".webp")) return "image/webp";
+  return "image/png";
+};
+
+const fetchImageAsInlineData = async (url: string): Promise<GeminiInlineData | null> => {
+  const normalized = clean(url);
+  if (!normalized) return null;
+
+  try {
+    const response = await fetch(normalized, {
+      headers: {
+        "User-Agent": "tomoshibi-mastra/series-image-proxy",
+      },
+    });
+    if (!response.ok) return null;
+
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength === 0) return null;
+
+    const contentType =
+      normalizeGeminiImageMime(response.headers.get("content-type")) || guessImageMimeTypeFromUrl(normalized);
+    const base64 = Buffer.from(bytes).toString("base64");
+    if (!base64) return null;
+    return {
+      mimeType: contentType,
+      data: base64,
+    };
+  } catch {
+    return null;
+  }
 };
 
 const generateSeriesImageWithGemini = async (
@@ -200,6 +272,27 @@ const generateSeriesImageWithGemini = async (
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     GEMINI_IMAGE_MODEL
   )}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+
+  const inlineReferences = await Promise.all(
+    dedupeImageReferences([
+      ...request.references.map((row) => row.url),
+      request.styleReference || "",
+    ])
+      .slice(0, 4)
+      .map((url) => fetchImageAsInlineData(url))
+  );
+
+  const parts: Array<Record<string, unknown>> = [{ text: buildGeminiImagePrompt(request) }];
+  for (const inline of inlineReferences) {
+    if (!inline?.data) continue;
+    parts.push({
+      inlineData: {
+        mimeType: inline.mimeType || "image/png",
+        data: inline.data,
+      },
+    });
+  }
+
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
@@ -209,7 +302,7 @@ const generateSeriesImageWithGemini = async (
       contents: [
         {
           role: "user",
-          parts: [{ text: buildGeminiImagePrompt(request) }],
+          parts,
         },
       ],
       generationConfig: {
@@ -240,6 +333,200 @@ const generateSeriesImageWithGemini = async (
     contentType: first.mimeType,
     data: toArrayBuffer(data),
   };
+};
+
+const dedupeImageReferences = (values: Array<string | undefined | null>) => {
+  const seen = new Set<string>();
+  return values
+    .map((value) => clean(value))
+    .filter((value) => {
+      if (!value) return false;
+      if (seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    });
+};
+
+type HybridImageProvider = "vertex" | "diffusers" | "gemini" | "pollinations";
+
+type HybridImageResult = {
+  provider: HybridImageProvider;
+  contentType: string;
+  data: ArrayBuffer;
+};
+
+const isIdentityLockedRequest = (request?: SeriesImageRequest) =>
+  Boolean(
+    request &&
+    (request.purpose === "cover" ||
+      request.purpose === "character_portrait" ||
+      request.references.length > 0 ||
+      Boolean(request.styleReference))
+  );
+
+const normalizeHybridProviderOrder = (request?: SeriesImageRequest): HybridImageProvider[] => {
+  const identityLocked = isIdentityLockedRequest(request);
+  const allowed = new Set<HybridImageProvider>(["vertex", "diffusers", "gemini", "pollinations"]);
+  let parsed = SERIES_IMAGE_HYBRID_ORDER
+    .split(",")
+    .map((part) => clean(part).toLowerCase())
+    .filter((part): part is HybridImageProvider => allowed.has(part as HybridImageProvider));
+  if (identityLocked) {
+    parsed = parsed.filter((provider) => provider !== "pollinations");
+  }
+  if (parsed.length > 0) return parsed;
+  if (identityLocked) return ["vertex", "diffusers", "gemini"];
+  return ["vertex", "diffusers", "gemini", "pollinations"];
+};
+
+const extractImageFromCustomProviderPayload = async (payload: any): Promise<{ contentType: string; data: ArrayBuffer } | null> => {
+  const base64 =
+    clean(payload?.image_base64) ||
+    clean(payload?.imageBase64) ||
+    clean(payload?.base64) ||
+    clean(payload?.data);
+  if (base64) {
+    const bytes = new Uint8Array(Buffer.from(base64, "base64"));
+    if (bytes.byteLength === 0) return null;
+    const contentType = normalizeGeminiImageMime(payload?.mime_type || payload?.mimeType || payload?.content_type);
+    return {
+      contentType,
+      data: toArrayBuffer(bytes),
+    };
+  }
+
+  const imageUrl = clean(payload?.image_url) || clean(payload?.imageUrl) || clean(payload?.url);
+  if (!imageUrl) return null;
+  const response = await fetch(imageUrl, {
+    headers: {
+      "User-Agent": "tomoshibi-mastra/series-image-proxy",
+    },
+  });
+  if (!response.ok) return null;
+  const bytes = await response.arrayBuffer();
+  if (bytes.byteLength === 0) return null;
+  return {
+    contentType: normalizeGeminiImageMime(response.headers.get("content-type")),
+    data: bytes,
+  };
+};
+
+const generateSeriesImageWithCustomEndpoint = async (
+  endpoint: string,
+  token: string,
+  provider: HybridImageProvider,
+  request: SeriesImageRequest
+): Promise<HybridImageResult> => {
+  const normalizedEndpoint = clean(endpoint);
+  if (!normalizedEndpoint) {
+    throw new Error(`${provider}_endpoint_unconfigured`);
+  }
+
+  const response = await fetch(normalizedEndpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      prompt: request.prompt,
+      seed: request.seed,
+      size: {
+        width: request.width,
+        height: request.height,
+      },
+      purpose: request.purpose,
+      references: request.references,
+      style_reference: request.styleReference || undefined,
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = clean(await response.text()).slice(0, 500);
+    throw new Error(`${provider}_api_error:${response.status}:${errText || "unknown"}`);
+  }
+
+  const payload = await response.json();
+  const extracted = await extractImageFromCustomProviderPayload(payload);
+  if (!extracted) {
+    throw new Error(`${provider}_image_missing`);
+  }
+  return {
+    provider,
+    contentType: extracted.contentType,
+    data: extracted.data,
+  };
+};
+
+const generateSeriesImageWithPollinations = async (
+  request: SeriesImageRequest
+): Promise<HybridImageResult> => {
+  const upstreamUrl = buildSeriesImageProviderUrl(request);
+  const upstream = await fetch(upstreamUrl, {
+    headers: {
+      "User-Agent": "tomoshibi-mastra/series-image-proxy",
+    },
+    redirect: "follow",
+  });
+  if (!upstream.ok) {
+    throw new Error(`pollinations_api_error:${upstream.status}`);
+  }
+  const bytes = await upstream.arrayBuffer();
+  if (bytes.byteLength === 0) {
+    throw new Error("pollinations_image_missing");
+  }
+  return {
+    provider: "pollinations",
+    contentType: normalizeGeminiImageMime(upstream.headers.get("content-type") || "image/jpeg"),
+    data: bytes,
+  };
+};
+
+const generateSeriesImageHybrid = async (
+  request: SeriesImageRequest
+): Promise<HybridImageResult> => {
+  const identityLocked = isIdentityLockedRequest(request);
+  const order = normalizeHybridProviderOrder(request);
+  const errors: string[] = [];
+
+  for (const provider of order) {
+    try {
+      if (provider === "vertex") {
+        return await generateSeriesImageWithCustomEndpoint(
+          SERIES_IMAGE_VERTEX_ENDPOINT,
+          SERIES_IMAGE_VERTEX_TOKEN,
+          "vertex",
+          request
+        );
+      }
+      if (provider === "diffusers") {
+        return await generateSeriesImageWithCustomEndpoint(
+          SERIES_IMAGE_DIFFUSERS_ENDPOINT,
+          SERIES_IMAGE_DIFFUSERS_TOKEN,
+          "diffusers",
+          request
+        );
+      }
+      if (provider === "gemini") {
+        const generated = await generateSeriesImageWithGemini(request);
+        return {
+          provider: "gemini",
+          contentType: generated.contentType,
+          data: generated.data,
+        };
+      }
+      if (provider === "pollinations") {
+        return await generateSeriesImageWithPollinations(request);
+      }
+    } catch (error: any) {
+      errors.push(`${provider}:${clean(error?.message || String(error))}`.slice(0, 200));
+      if (provider === "gemini" && (identityLocked || !GEMINI_POLLINATIONS_FALLBACK)) {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error(`hybrid_image_generation_failed:${errors.join("|") || "no_provider_succeeded"}`);
 };
 
 const unwrapMastraOutput = (value: any): any => {
@@ -854,6 +1141,9 @@ app.get("/api/series/image", async (c) => {
       seed: c.req.query("seed"),
       width: c.req.query("width"),
       height: c.req.query("height"),
+      purpose: c.req.query("purpose"),
+      styleReference: c.req.query("style_ref"),
+      references: c.req.query("refs"),
     });
 
     if (!request) {
@@ -866,85 +1156,34 @@ app.get("/api/series/image", async (c) => {
       );
     }
 
-    const selectedProvider = resolveSeriesImageProvider();
-    const selectedCacheKey = buildSeriesImageCacheKey(selectedProvider, request);
-    const cached = getSeriesImageCache(selectedCacheKey);
-    if (cached) {
+    const cacheProviders = normalizeHybridProviderOrder(request);
+    for (const provider of cacheProviders) {
+      const cacheKey = buildSeriesImageCacheKey(provider, request);
+      const cached = getSeriesImageCache(cacheKey);
+      if (!cached) continue;
       const headers = new Headers();
       headers.set("Content-Type", cached.contentType);
       headers.set("Cache-Control", `public, max-age=${IMAGE_CACHE_TTL_SECONDS}, s-maxage=${IMAGE_CACHE_TTL_SECONDS}`);
-      headers.set("X-Series-Image-Provider", `${selectedProvider}:cache`);
+      headers.set("X-Series-Image-Provider", `${provider}:cache`);
       return new Response(cached.data, { status: 200, headers });
     }
 
-    if (selectedProvider === "gemini") {
-      try {
-        const generated = await generateSeriesImageWithGemini(request);
-        setSeriesImageCache(selectedCacheKey, generated);
-        const headers = new Headers();
-        headers.set("Content-Type", generated.contentType || "image/png");
-        headers.set(
-          "Cache-Control",
-          `public, max-age=${IMAGE_CACHE_TTL_SECONDS}, s-maxage=${IMAGE_CACHE_TTL_SECONDS}`
-        );
-        headers.set("X-Series-Image-Provider", "gemini");
-        return new Response(generated.data, {
-          status: 200,
-          headers,
-        });
-      } catch (geminiError) {
-        if (!GEMINI_POLLINATIONS_FALLBACK) {
-          throw geminiError;
-        }
-        console.warn("[series-image] Gemini failed, fallback to pollinations", geminiError);
-      }
-    }
-
-    const upstreamUrl = buildSeriesImageProviderUrl(request);
-    const upstream = await fetch(upstreamUrl, {
-      headers: {
-        "User-Agent": "tomoshibi-mastra/series-image-proxy",
-      },
-      redirect: "follow",
-    });
-
-    if (!upstream.ok) {
-      return c.json(
-        {
-          status: "failed",
-          error: `image_provider_error:${upstream.status}`,
-          provider_url: upstreamUrl,
-        },
-        502
-      );
-    }
-
-    const bytes = await upstream.arrayBuffer();
-    if (bytes.byteLength === 0) {
-      return c.json(
-        {
-          status: "failed",
-          error: "image_provider_empty",
-          provider_url: upstreamUrl,
-        },
-        502
-      );
-    }
+    const generated = await generateSeriesImageHybrid(request);
 
     const headers = new Headers();
-    headers.set("Content-Type", upstream.headers.get("content-type") || "image/jpeg");
+    headers.set("Content-Type", generated.contentType || "image/png");
     headers.set(
       "Cache-Control",
       `public, max-age=${IMAGE_CACHE_TTL_SECONDS}, s-maxage=${IMAGE_CACHE_TTL_SECONDS}`
     );
-    headers.set("X-Series-Image-Provider", "pollinations");
+    headers.set("X-Series-Image-Provider", generated.provider);
 
-    setSeriesImageCache(buildSeriesImageCacheKey("pollinations", request), {
-      contentType: headers.get("Content-Type") || "image/jpeg",
-      data: bytes,
+    setSeriesImageCache(buildSeriesImageCacheKey(generated.provider, request), {
+      contentType: headers.get("Content-Type") || "image/png",
+      data: generated.data,
     });
 
-    return new Response(bytes, {
+    return new Response(generated.data, {
       status: 200,
       headers,
     });

@@ -64,6 +64,8 @@ export type SeriesInterviewInput = {
   continuationTrigger: string;
   avoidExpressions: string;
   additionalNotes?: string;
+  visualStylePreset?: string;
+  visualStyleNotes?: string;
 };
 
 export type GeneratedSeriesCharacterPersonality = {
@@ -97,6 +99,14 @@ export type GeneratedSeriesCharacterVisualDesign = {
   distinguishingFeature: string;
 };
 
+export type GeneratedSeriesCharacterIdentityAnchorTokens = {
+  hair: string;
+  silhouette: string;
+  dominantColor: string;
+  outfitKeyItem: string;
+  distinguishingFeature: string;
+};
+
 export type GeneratedSeriesCharacter = {
   id?: string;
   name: string;
@@ -113,6 +123,8 @@ export type GeneratedSeriesCharacter = {
   personality?: string;
   appearance?: string;
   visualDesign?: GeneratedSeriesCharacterVisualDesign;
+  isKeyPerson?: boolean;
+  identityAnchorTokens?: GeneratedSeriesCharacterIdentityAnchorTokens;
   portraitPrompt?: string;
   portraitImageUrl?: string;
   secrets?: string[];
@@ -194,6 +206,76 @@ export type GeneratedSeriesContinuity = {
   episodeLinkPolicy?: string[];
 };
 
+export type GeneratedSeriesCoverFocusCharacter = {
+  characterId: string;
+  name: string;
+  role: string;
+  focusReason: string;
+  visualAnchor: string;
+};
+
+export type GeneratedSeriesIdentityPackCharacter = {
+  characterId: string;
+  name: string;
+  role: string;
+  isKeyPerson: boolean;
+  identityAnchorTokens: GeneratedSeriesCharacterIdentityAnchorTokens;
+  portraitPrompt?: string;
+  portraitImageUrl?: string;
+};
+
+export type GeneratedSeriesIdentityPack = {
+  version: number;
+  source: "generated" | "reused";
+  styleBible: string;
+  keyPersonCharacterIds: string[];
+  characters: GeneratedSeriesIdentityPackCharacter[];
+  lockedAt: string;
+};
+
+export type GeneratedSeriesCoverConsistencyCharacterScore = {
+  characterId: string;
+  name: string;
+  role: string;
+  arcfaceSimilarity: number;
+  clipSimilarity: number;
+  visionAnchorMatch: number;
+  passedAxes: number;
+  passed: boolean;
+};
+
+export type GeneratedSeriesCoverConsistencyCandidateReport = {
+  candidateIndex: number;
+  roundIndex: number;
+  imageUrl: string;
+  provider?: string;
+  prompt: string;
+  arcfaceAvg: number;
+  clipAvg: number;
+  visionAnchorAvg: number;
+  styleSimilarity: number;
+  passRate: number;
+  passed: boolean;
+  characterScores: GeneratedSeriesCoverConsistencyCharacterScore[];
+};
+
+export type GeneratedSeriesCoverConsistencyReport = {
+  mode: "quality_first";
+  thresholds: {
+    requiredAxesPerCharacter: number;
+    minAveragePassRate: number;
+    minStyleSimilarity: number;
+  };
+  validationRounds: number;
+  selectedCandidateIndex: number;
+  selectedCoverImageUrl: string;
+  selectedCoverImagePrompt: string;
+  selectedProvider?: string;
+  passed: boolean;
+  summary: string;
+  candidateReports: GeneratedSeriesCoverConsistencyCandidateReport[];
+};
+
 export type GeneratedSeriesDraft = {
   title: string;
   overview: string;
@@ -205,12 +287,17 @@ export type GeneratedSeriesDraft = {
   tone?: string;
   premise?: string;
   seasonGoal?: string;
+  visualStylePreset?: string;
+  visualStyleNotes?: string;
   world?: GeneratedSeriesWorld;
   checkpoints?: GeneratedSeriesCheckpoint[];
   firstEpisodeSeed?: GeneratedSeriesFirstEpisodeSeed;
   progressState?: GeneratedSeriesProgressState;
   episodeBlueprints?: GeneratedSeriesEpisodeBlueprint[];
   continuity?: GeneratedSeriesContinuity;
+  coverFocusCharacters?: GeneratedSeriesCoverFocusCharacter[];
+  identityPack?: GeneratedSeriesIdentityPack;
+  coverConsistencyReport?: GeneratedSeriesCoverConsistencyReport;
   workflowVersion?: string;
 };
 
@@ -342,6 +429,8 @@ export type GenerateSeriesByMastraPayload = {
   prompt?: string;
   desiredEpisodeCount?: number;
   creatorId?: string;
+  existingIdentityPack?: GeneratedSeriesIdentityPack;
+  identityRetcon?: boolean;
 };
 
 const SERIES_DRAFT_GENERATION_PHASES = [
@@ -353,9 +442,15 @@ const SERIES_DRAFT_GENERATION_PHASES = [
   "generate_series_concept_done",
   "generate_series_characters_start",
   "generate_series_characters_done",
+  "build_series_identity_pack_start",
+  "build_series_identity_pack_done",
   "generate_series_checkpoints_start",
   "generate_series_checkpoints_done",
   "finalize_series_blueprint_start",
+  "generate_series_cover_candidates_start",
+  "generate_series_cover_candidates_done",
+  "validate_cover_identity_start",
+  "validate_cover_identity_done",
   "finalize_series_blueprint_done",
   "response_preparing",
   "completed",
@@ -385,6 +480,19 @@ const isSeriesDraftGenerationPhase = (value: string): value is SeriesDraftGenera
 const normalizeStringArray = (value: unknown) => {
   if (!Array.isArray(value)) return [] as string[];
   return value.map((item) => clean(typeof item === "string" ? item : String(item ?? ""))).filter(Boolean);
+};
+
+const normalizeIdentityAnchorTokens = (raw: unknown): GeneratedSeriesCharacterIdentityAnchorTokens | undefined => {
+  if (!raw || typeof raw !== "object") return undefined;
+  const row = raw as Record<string, unknown>;
+  return {
+    hair: clean(typeof row.hair === "string" ? row.hair : "") || "",
+    silhouette: clean(typeof row.silhouette === "string" ? row.silhouette : "") || "",
+    dominantColor: clean(typeof row.dominant_color === "string" ? row.dominant_color : "") || "",
+    outfitKeyItem: clean(typeof row.outfit_key_item === "string" ? row.outfit_key_item : "") || "",
+    distinguishingFeature:
+      clean(typeof row.distinguishing_feature === "string" ? row.distinguishing_feature : "") || "",
+  };
 };
 
 const buildSeedFallbackImageUrl = (seedBase: string, width: number, height: number) => {
@@ -484,6 +592,13 @@ const normalizeCharacters = (raw: unknown): GeneratedSeriesCharacter[] => {
       quirks: normalizeStringArray(row.quirks),
       appearance: clean(typeof row.appearance === "string" ? row.appearance : undefined) || undefined,
       visualDesign,
+      isKeyPerson:
+        typeof row.is_key_person === "boolean"
+          ? row.is_key_person
+          : clean(typeof row.role === "string" ? row.role : "").includes("主人公")
+            ? true
+            : undefined,
+      identityAnchorTokens: normalizeIdentityAnchorTokens(row.identity_anchor_tokens),
       portraitPrompt: clean(typeof row.portrait_prompt === "string" ? row.portrait_prompt : undefined) || undefined,
       portraitImageUrl:
         clean(typeof row.portrait_image_url === "string" ? row.portrait_image_url : undefined) ||
@@ -615,6 +730,155 @@ const normalizeContinuity = (raw: unknown): GeneratedSeriesContinuity | undefine
   };
 };
 
+const normalizeCoverFocusCharacters = (raw: unknown): GeneratedSeriesCoverFocusCharacter[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw.reduce<GeneratedSeriesCoverFocusCharacter[]>((acc, item) => {
+    if (!item || typeof item !== "object") return acc;
+    const row = item as Record<string, unknown>;
+    const characterId = clean(typeof row.character_id === "string" ? row.character_id : "");
+    const name = clean(typeof row.name === "string" ? row.name : "");
+    if (!characterId || !name) return acc;
+    acc.push({
+      characterId,
+      name,
+      role: clean(typeof row.role === "string" ? row.role : "") || "キーパーソン",
+      focusReason:
+        clean(typeof row.focus_reason === "string" ? row.focus_reason : "") || "物語の鍵を握る人物",
+      visualAnchor:
+        clean(typeof row.visual_anchor === "string" ? row.visual_anchor : "") || "印象的なシルエット",
+    });
+    return acc;
+  }, []);
+};
+
+const normalizeIdentityPack = (raw: unknown): GeneratedSeriesIdentityPack | undefined => {
+  if (!raw || typeof raw !== "object") return undefined;
+  const row = raw as Record<string, unknown>;
+  const version = Number.parseInt(String(row.version ?? 1), 10);
+  const sourceRaw = clean(typeof row.source === "string" ? row.source : "").toLowerCase();
+  const source: GeneratedSeriesIdentityPack["source"] = sourceRaw === "reused" ? "reused" : "generated";
+  const styleBible = clean(typeof row.style_bible === "string" ? row.style_bible : "");
+  const keyPersonCharacterIds = normalizeStringArray(row.key_person_character_ids).slice(0, 3);
+
+  const characters = Array.isArray(row.characters)
+    ? row.characters.reduce<GeneratedSeriesIdentityPackCharacter[]>((acc, item) => {
+        if (!item || typeof item !== "object") return acc;
+        const c = item as Record<string, unknown>;
+        const characterId = clean(typeof c.character_id === "string" ? c.character_id : "");
+        const name = clean(typeof c.name === "string" ? c.name : "");
+        if (!characterId || !name) return acc;
+        acc.push({
+          characterId,
+          name,
+          role: clean(typeof c.role === "string" ? c.role : "") || "キーパーソン",
+          isKeyPerson: Boolean(c.is_key_person),
+          identityAnchorTokens:
+            normalizeIdentityAnchorTokens(c.identity_anchor_tokens) || {
+              hair: "",
+              silhouette: "",
+              dominantColor: "",
+              outfitKeyItem: "",
+              distinguishingFeature: "",
+            },
+          portraitPrompt: clean(typeof c.portrait_prompt === "string" ? c.portrait_prompt : "") || undefined,
+          portraitImageUrl: clean(typeof c.portrait_image_url === "string" ? c.portrait_image_url : "") || undefined,
+        });
+        return acc;
+      }, [])
+    : [];
+
+  if (!styleBible || keyPersonCharacterIds.length === 0 || characters.length === 0) return undefined;
+  return {
+    version: Number.isFinite(version) && version > 0 ? version : 1,
+    source,
+    styleBible,
+    keyPersonCharacterIds,
+    characters: characters.slice(0, 8),
+    lockedAt: clean(typeof row.locked_at === "string" ? row.locked_at : "") || new Date().toISOString(),
+  };
+};
+
+const normalizeCoverConsistencyReport = (raw: unknown): GeneratedSeriesCoverConsistencyReport | undefined => {
+  if (!raw || typeof raw !== "object") return undefined;
+  const row = raw as Record<string, unknown>;
+  const modeRaw = clean(typeof row.mode === "string" ? row.mode : "");
+  const mode: GeneratedSeriesCoverConsistencyReport["mode"] = modeRaw === "quality_first" ? "quality_first" : "quality_first";
+
+  const thresholdsRaw =
+    row.thresholds && typeof row.thresholds === "object" ? (row.thresholds as Record<string, unknown>) : {};
+  const thresholds = {
+    requiredAxesPerCharacter: Number.parseInt(String(thresholdsRaw.required_axes_per_character ?? 3), 10) || 3,
+    minAveragePassRate: Number.parseFloat(String(thresholdsRaw.min_average_pass_rate ?? 0.75)) || 0.75,
+    minStyleSimilarity: Number.parseFloat(String(thresholdsRaw.min_style_similarity ?? 0.45)) || 0.45,
+  };
+
+  const candidateReports = Array.isArray(row.candidate_reports)
+    ? row.candidate_reports.reduce<GeneratedSeriesCoverConsistencyCandidateReport[]>((acc, item) => {
+        if (!item || typeof item !== "object") return acc;
+        const c = item as Record<string, unknown>;
+        const imageUrl = clean(typeof c.image_url === "string" ? c.image_url : "");
+        const prompt = clean(typeof c.prompt === "string" ? c.prompt : "");
+        if (!imageUrl || !prompt) return acc;
+
+        const characterScores = Array.isArray(c.character_scores)
+          ? c.character_scores.reduce<GeneratedSeriesCoverConsistencyCharacterScore[]>((scoreAcc, scoreItem) => {
+              if (!scoreItem || typeof scoreItem !== "object") return scoreAcc;
+              const score = scoreItem as Record<string, unknown>;
+              const characterId = clean(typeof score.character_id === "string" ? score.character_id : "");
+              const name = clean(typeof score.name === "string" ? score.name : "");
+              if (!characterId || !name) return scoreAcc;
+              scoreAcc.push({
+                characterId,
+                name,
+                role: clean(typeof score.role === "string" ? score.role : "") || "キーパーソン",
+                arcfaceSimilarity: Number.parseFloat(String(score.arcface_similarity ?? 0)) || 0,
+                clipSimilarity: Number.parseFloat(String(score.clip_similarity ?? 0)) || 0,
+                visionAnchorMatch: Number.parseFloat(String(score.vision_anchor_match ?? 0)) || 0,
+                passedAxes: Number.parseInt(String(score.passed_axes ?? 0), 10) || 0,
+                passed: Boolean(score.passed),
+              });
+              return scoreAcc;
+            }, [])
+          : [];
+
+        acc.push({
+          candidateIndex: Number.parseInt(String(c.candidate_index ?? acc.length + 1), 10) || acc.length + 1,
+          roundIndex: Number.parseInt(String(c.round_index ?? 1), 10) || 1,
+          imageUrl,
+          provider: clean(typeof c.provider === "string" ? c.provider : "") || undefined,
+          prompt,
+          arcfaceAvg: Number.parseFloat(String(c.arcface_avg ?? 0)) || 0,
+          clipAvg: Number.parseFloat(String(c.clip_avg ?? 0)) || 0,
+          visionAnchorAvg: Number.parseFloat(String(c.vision_anchor_avg ?? 0)) || 0,
+          styleSimilarity: Number.parseFloat(String(c.style_similarity ?? 0)) || 0,
+          passRate: Number.parseFloat(String(c.pass_rate ?? 0)) || 0,
+          passed: Boolean(c.passed),
+          characterScores,
+        });
+        return acc;
+      }, [])
+    : [];
+
+  const selectedCoverImageUrl = clean(typeof row.selected_cover_image_url === "string" ? row.selected_cover_image_url : "");
+  const selectedCoverImagePrompt = clean(
+    typeof row.selected_cover_image_prompt === "string" ? row.selected_cover_image_prompt : ""
+  );
+  if (!selectedCoverImageUrl || !selectedCoverImagePrompt) return undefined;
+
+  return {
+    mode,
+    thresholds,
+    validationRounds: Number.parseInt(String(row.validation_rounds ?? 1), 10) || 1,
+    selectedCandidateIndex: Number.parseInt(String(row.selected_candidate_index ?? 1), 10) || 1,
+    selectedCoverImageUrl,
+    selectedCoverImagePrompt,
+    selectedProvider: clean(typeof row.selected_provider === "string" ? row.selected_provider : "") || undefined,
+    passed: Boolean(row.passed),
+    summary: clean(typeof row.summary === "string" ? row.summary : "") || "",
+    candidateReports: candidateReports.slice(0, 12),
+  };
+};
+
 const normalizeFirstEpisodeSeed = (raw: unknown): GeneratedSeriesFirstEpisodeSeed | undefined => {
   if (!raw || typeof raw !== "object") return undefined;
   const seed = raw as Record<string, unknown>;
@@ -675,11 +939,38 @@ export const generateSeriesDraftViaMastra = async (
       continuation_trigger: payload.interview.continuationTrigger,
       avoidance_preferences: payload.interview.avoidExpressions,
       additional_notes: payload.interview.additionalNotes,
+      visual_style_preset: clean(payload.interview.visualStylePreset) || undefined,
+      visual_style_notes: clean(payload.interview.visualStyleNotes) || undefined,
     },
     prompt: clean(payload.prompt) || undefined,
     desired_episode_count: payload.desiredEpisodeCount ?? 8,
     ...(isUuid(payload.creatorId) ? { creator_id: payload.creatorId } : {}),
     language: "ja",
+    existing_identity_pack: payload.existingIdentityPack
+      ? {
+          version: payload.existingIdentityPack.version,
+          source: payload.existingIdentityPack.source,
+          style_bible: payload.existingIdentityPack.styleBible,
+          key_person_character_ids: payload.existingIdentityPack.keyPersonCharacterIds,
+          characters: payload.existingIdentityPack.characters.map((character) => ({
+            character_id: character.characterId,
+            name: character.name,
+            role: character.role,
+            is_key_person: character.isKeyPerson,
+            identity_anchor_tokens: {
+              hair: character.identityAnchorTokens.hair,
+              silhouette: character.identityAnchorTokens.silhouette,
+              dominant_color: character.identityAnchorTokens.dominantColor,
+              outfit_key_item: character.identityAnchorTokens.outfitKeyItem,
+              distinguishing_feature: character.identityAnchorTokens.distinguishingFeature,
+            },
+            portrait_prompt: clean(character.portraitPrompt) || undefined,
+            portrait_image_url: clean(character.portraitImageUrl) || undefined,
+          })),
+          locked_at: payload.existingIdentityPack.lockedAt,
+        }
+      : undefined,
+    identity_retcon: payload.identityRetcon ? true : undefined,
   };
 
   const emitProgress = (event: SeriesDraftGenerationEvent) => {
@@ -729,6 +1020,14 @@ export const generateSeriesDraftViaMastra = async (
       tone: clean(typeof seriesRaw.tone === "string" ? seriesRaw.tone : undefined) || undefined,
       premise: clean(typeof seriesRaw.premise === "string" ? seriesRaw.premise : undefined) || undefined,
       seasonGoal: clean(typeof seriesRaw.season_goal === "string" ? seriesRaw.season_goal : undefined) || undefined,
+      visualStylePreset:
+        clean(typeof seriesRaw.visual_style_preset === "string" ? seriesRaw.visual_style_preset : undefined) ||
+        clean(payload.interview.visualStylePreset) ||
+        undefined,
+      visualStyleNotes:
+        clean(typeof seriesRaw.visual_style_notes === "string" ? seriesRaw.visual_style_notes : undefined) ||
+        clean(payload.interview.visualStyleNotes) ||
+        undefined,
       world: normalizedWorld,
       checkpoints,
       firstEpisodeSeed:
@@ -768,6 +1067,9 @@ export const generateSeriesDraftViaMastra = async (
         },
       episodeBlueprints,
       continuity: normalizeContinuity(seriesRaw.continuity),
+      coverFocusCharacters: normalizeCoverFocusCharacters(seriesRaw.cover_focus_characters),
+      identityPack: normalizeIdentityPack(seriesRaw.identity_pack),
+      coverConsistencyReport: normalizeCoverConsistencyReport(seriesRaw.cover_consistency_report),
       workflowVersion:
         clean(typeof metaRaw?.workflow_version === "string" ? metaRaw.workflow_version : undefined) || undefined,
     };
@@ -874,7 +1176,7 @@ export const generateSeriesDraftViaMastra = async (
 
     const separator = pollUrl.includes("?") ? "&" : "?";
     const pollResponse = await fetch(`${pollUrl}${separator}cursor=${cursor}`, {
-      method: "POST",
+      method: "GET",
       headers: {
         "Content-Type": "application/json",
       },
@@ -1036,7 +1338,7 @@ const asObject = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 
 const createAbortError = () => {
-  const error = new Error("エピソード生成を中止しました。");
+  const error = new Error("生成を中止しました。");
   (error as Error & { name: string }).name = "AbortError";
   return error;
 };

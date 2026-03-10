@@ -70,6 +70,8 @@ export type SeriesEpisodeRuntimeContext = {
   aiRules: string | null;
   worldSetting: string | null;
   continuity: Record<string, unknown> | null;
+  identityPack: Record<string, unknown> | null;
+  coverConsistencyReport: Record<string, unknown> | null;
   progressState: Record<string, unknown> | null;
   firstEpisodeSeed: Record<string, unknown> | null;
   checkpoints: Array<{
@@ -368,7 +370,7 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
   const bibleResponse = await supabase
     .from("series_bibles")
     .select(
-      "overview, premise, season_goal, ai_rules, world, continuity, progress_state, first_episode_seed"
+      "overview, premise, season_goal, ai_rules, world, continuity, identity_pack, cover_consistency_report, progress_state, first_episode_seed"
     )
     .eq("quest_id", questId)
     .eq("creator_id", userId)
@@ -377,7 +379,15 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
   let bibleRows = (bibleResponse.data || null) as Array<Record<string, unknown>> | null;
   let bibleError = bibleResponse.error;
 
-  if (bibleError && isMissingAnyColumn(bibleError, ["progress_state", "first_episode_seed"])) {
+  if (
+    bibleError &&
+    isMissingAnyColumn(bibleError, [
+      "progress_state",
+      "first_episode_seed",
+      "identity_pack",
+      "cover_consistency_report",
+    ])
+  ) {
     const retry = await supabase
       .from("series_bibles")
       .select("overview, premise, season_goal, ai_rules, world, continuity")
@@ -401,6 +411,8 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
         ai_rules?: string | null;
         world?: Record<string, unknown> | null;
         continuity?: Record<string, unknown> | null;
+        identity_pack?: Record<string, unknown> | null;
+        cover_consistency_report?: Record<string, unknown> | null;
         progress_state?: Record<string, unknown> | null;
         first_episode_seed?: Record<string, unknown> | null;
       }
@@ -488,6 +500,8 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
       (questRow as { area_name: string | null }).area_name ||
       null,
     continuity: (bibleRow?.continuity as Record<string, unknown>) || null,
+    identityPack: (bibleRow?.identity_pack as Record<string, unknown>) || null,
+    coverConsistencyReport: (bibleRow?.cover_consistency_report as Record<string, unknown>) || null,
     progressState: (bibleRow?.progress_state as Record<string, unknown>) || null,
     firstEpisodeSeed: (bibleRow?.first_episode_seed as Record<string, unknown>) || null,
     checkpoints: ((checkpointRows || []) as Array<{
@@ -877,6 +891,8 @@ export const saveSeriesBlueprint = async (payload: SaveSeriesBlueprintPayload) =
     first_episode_seed: payload.generated.firstEpisodeSeed || {},
     cover_image_prompt: payload.generated.coverImagePrompt || null,
     cover_image_url: payload.generated.coverImageUrl || null,
+    identity_pack: payload.generated.identityPack || {},
+    cover_consistency_report: payload.generated.coverConsistencyReport || {},
   };
 
   let { data: bibleRow, error: bibleError } = await supabase
@@ -889,7 +905,14 @@ export const saveSeriesBlueprint = async (payload: SaveSeriesBlueprintPayload) =
     bibleError &&
     isMissingAnyColumn(
       bibleError,
-      ["cover_image_prompt", "cover_image_url", "progress_state", "first_episode_seed"]
+      [
+        "cover_image_prompt",
+        "cover_image_url",
+        "progress_state",
+        "first_episode_seed",
+        "identity_pack",
+        "cover_consistency_report",
+      ]
     )
   ) {
     const retry = await supabase
@@ -935,6 +958,17 @@ export const saveSeriesBlueprint = async (payload: SaveSeriesBlueprintPayload) =
     appearance: character.appearance || null,
     portrait_prompt: character.portraitPrompt || null,
     portrait_image_url: character.portraitImageUrl || null,
+    is_key_person: Boolean(character.isKeyPerson),
+    identity_anchor_tokens:
+      character.identityAnchorTokens
+        ? {
+            hair: character.identityAnchorTokens.hair || "",
+            silhouette: character.identityAnchorTokens.silhouette || "",
+            dominant_color: character.identityAnchorTokens.dominantColor || "",
+            outfit_key_item: character.identityAnchorTokens.outfitKeyItem || "",
+            distinguishing_feature: character.identityAnchorTokens.distinguishingFeature || "",
+          }
+        : {},
     secrets: character.secrets || [],
     relationship_hooks: character.relationshipHooks || [],
     updated_at: now,
@@ -945,7 +979,13 @@ export const saveSeriesBlueprint = async (payload: SaveSeriesBlueprintPayload) =
 
     if (
       insertCharactersError &&
-      isMissingAnyColumn(insertCharactersError, ["appearance", "portrait_prompt", "portrait_image_url"])
+      isMissingAnyColumn(insertCharactersError, [
+        "appearance",
+        "portrait_prompt",
+        "portrait_image_url",
+        "is_key_person",
+        "identity_anchor_tokens",
+      ])
     ) {
       const legacyRows = characterRows.map((row) => ({
         series_id: row.series_id,

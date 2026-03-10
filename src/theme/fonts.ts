@@ -5,4 +5,6 @@ export const fonts = {
   bodyRegular: "NotoSansJP_400Regular",
   bodyMedium: "NotoSansJP_500Medium",
   bodyBold: "NotoSansJP_700Bold",
+  storySerifRegular: "NotoSerifJP_400Regular",
+  storySerifSemiBold: "NotoSerifJP_600SemiBold",
 } as const;

@@ -7,6 +7,8 @@ export const seriesInterviewSchema = z.object({
   continuation_trigger: z.string().min(1),
   avoidance_preferences: z.string().default(""),
   additional_notes: z.string().optional(),
+  visual_style_preset: z.string().optional(),
+  visual_style_notes: z.string().optional(),
   // Legacy keys kept optional for backward compatibility.
   main_objective: z.string().optional(),
   protagonist_position: z.string().optional(),
@@ -19,6 +21,8 @@ export const seriesGenerationRequestSchema = z.object({
   prompt: z.string().optional(),
   creator_id: z.string().uuid().optional(),
   language: z.string().optional(),
+  existing_identity_pack: z.unknown().optional(),
+  identity_retcon: z.boolean().optional(),
 });
 
 export const seriesWorldSchema = z.object({
@@ -75,6 +79,14 @@ export const seriesCharacterVisualDesignSchema = z.object({
   distinguishing_feature: z.string().default(""),
 });
 
+export const seriesCharacterIdentityAnchorTokensSchema = z.object({
+  hair: z.string().default(""),
+  silhouette: z.string().default(""),
+  dominant_color: z.string().default(""),
+  outfit_key_item: z.string().default(""),
+  distinguishing_feature: z.string().default(""),
+});
+
 export const seriesCharacterSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -106,6 +118,8 @@ export const seriesCharacterSchema = z.object({
   // Relationships and visual
   relationships: z.array(seriesCharacterRelationshipSchema).optional(),
   visual_design: seriesCharacterVisualDesignSchema.optional(),
+  is_key_person: z.boolean().optional(),
+  identity_anchor_tokens: seriesCharacterIdentityAnchorTokensSchema.optional(),
 });
 
 export const seriesEpisodeBlueprintSchema = z.object({
@@ -158,6 +172,76 @@ export const seriesContinuitySchema = z.object({
   episode_link_policy: z.array(z.string()),
 });
 
+export const seriesCoverFocusCharacterSchema = z.object({
+  character_id: z.string(),
+  name: z.string(),
+  role: z.string(),
+  focus_reason: z.string(),
+  visual_anchor: z.string(),
+});
+
+export const seriesIdentityPackCharacterSchema = z.object({
+  character_id: z.string(),
+  name: z.string(),
+  role: z.string(),
+  is_key_person: z.boolean(),
+  identity_anchor_tokens: seriesCharacterIdentityAnchorTokensSchema,
+  portrait_prompt: z.string().optional(),
+  portrait_image_url: z.string().optional(),
+});
+
+export const seriesIdentityPackSchema = z.object({
+  version: z.number().int().min(1),
+  source: z.enum(["generated", "reused"]),
+  style_bible: z.string(),
+  key_person_character_ids: z.array(z.string()).min(1).max(3),
+  characters: z.array(seriesIdentityPackCharacterSchema).min(3).max(8),
+  locked_at: z.string(),
+});
+
+export const seriesCoverConsistencyCharacterScoreSchema = z.object({
+  character_id: z.string(),
+  name: z.string(),
+  role: z.string(),
+  arcface_similarity: z.number().min(0).max(1),
+  clip_similarity: z.number().min(0).max(1),
+  vision_anchor_match: z.number().min(0).max(1),
+  passed_axes: z.number().int().min(0).max(3),
+  passed: z.boolean(),
+});
+
+export const seriesCoverCandidateReportSchema = z.object({
+  candidate_index: z.number().int().min(1),
+  round_index: z.number().int().min(1),
+  image_url: z.string(),
+  provider: z.string().optional(),
+  prompt: z.string(),
+  arcface_avg: z.number().min(0).max(1),
+  clip_avg: z.number().min(0).max(1),
+  vision_anchor_avg: z.number().min(0).max(1),
+  style_similarity: z.number().min(0).max(1),
+  pass_rate: z.number().min(0).max(1),
+  passed: z.boolean(),
+  character_scores: z.array(seriesCoverConsistencyCharacterScoreSchema).min(0).max(3),
+});
+
+export const seriesCoverConsistencyReportSchema = z.object({
+  mode: z.enum(["quality_first"]),
+  thresholds: z.object({
+    required_axes_per_character: z.number().int().min(1).max(3),
+    min_average_pass_rate: z.number().min(0).max(1),
+    min_style_similarity: z.number().min(0).max(1),
+  }),
+  validation_rounds: z.number().int().min(1).max(3),
+  selected_candidate_index: z.number().int().min(1).max(12),
+  selected_cover_image_url: z.string(),
+  selected_cover_image_prompt: z.string(),
+  selected_provider: z.string().optional(),
+  passed: z.boolean(),
+  summary: z.string(),
+  candidate_reports: z.array(seriesCoverCandidateReportSchema).min(1).max(12),
+});
+
 export const seriesOutputSchema = z.object({
   title: z.string(),
   overview: z.string(),
@@ -166,10 +250,15 @@ export const seriesOutputSchema = z.object({
   tone: z.string(),
   premise: z.string(),
   season_goal: z.string(),
+  visual_style_preset: z.string().optional(),
+  visual_style_notes: z.string().optional(),
   cover_image_prompt: z.string(),
   cover_image_url: z.string(),
   world: seriesWorldSchema,
   characters: z.array(seriesCharacterSchema).min(3).max(8),
+  cover_focus_characters: z.array(seriesCoverFocusCharacterSchema).min(1).max(3),
+  identity_pack: seriesIdentityPackSchema,
+  cover_consistency_report: seriesCoverConsistencyReportSchema,
   checkpoints: z.array(seriesCheckpointSchema).min(4).max(8),
   first_episode_seed: seriesEpisodeSeedSchema,
   progress_state: seriesProgressStateSchema,

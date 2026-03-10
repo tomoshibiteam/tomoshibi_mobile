@@ -12,6 +12,7 @@ export const seriesCharacterAgentInputSchema = z.object({
   season_goal: z.string(),
   protagonist_position: z.string(),
   partner_description: z.string(),
+  style_guide: z.string().optional(),
   target_count: z.number().int().min(3).max(8).default(4),
 });
 
@@ -54,6 +55,7 @@ const SERIES_CHARACTER_AGENT_INSTRUCTIONS = `
 
 ## 差別化
 - キャラ数は3〜8。名前・口癖・dominant_colorは互いに被らせない。
+- name に「あなた」「アナタ」「プレイヤー」「主人公」「You」など自己参照語を使わない。全員を固有名詞で命名する。
 - relationships の type は "trust"|"rivalry"|"mentor"|"debt"|"secret"|"family"|"romance" のいずれか。
 `;
 
@@ -156,6 +158,7 @@ const withVisuals = (
     dominantColor: vd?.dominant_color,
     bodyType: vd?.body_type,
     distinguishingFeature: vd?.distinguishing_feature,
+    styleGuide: input.style_guide,
   });
 
   return {
@@ -329,6 +332,38 @@ const dedupeCharacters = (characters: SeriesCharacterAgentOutput["characters"]) 
   });
 };
 
+const SELF_REFERENCE_NAME_PATTERN = /^(?:あなた|アナタ|you|君|きみ|プレイヤー|player|主人公|protagonist|ユーザー|self)$/i;
+const FALLBACK_CHARACTER_NAMES = [
+  "九条サク",
+  "神代レン",
+  "霧島ユイ",
+  "黒崎アオ",
+  "白峰ナギ",
+  "天城リオ",
+  "桐生ミナ",
+  "真壁トウマ",
+];
+
+const isSelfReferenceName = (name?: string | null) => SELF_REFERENCE_NAME_PATTERN.test(clean(name ?? undefined));
+
+const enforceCharacterNamePolicy = (characters: SeriesCharacterAgentOutput["characters"]) => {
+  const used = new Set<string>();
+
+  return characters.map((character, index) => {
+    let name = clean(character.name);
+    if (!name || isSelfReferenceName(name) || used.has(name.toLowerCase())) {
+      const candidateFromPool = FALLBACK_CHARACTER_NAMES.find((candidate) => !used.has(candidate.toLowerCase()));
+      name = candidateFromPool || `キャラクター${index + 1}`;
+    }
+    used.add(name.toLowerCase());
+    return {
+      ...character,
+      name,
+      role: clean(character.role).replace(/プレイヤー本人|ユーザー本人/g, "主人公"),
+    };
+  });
+};
+
 const normalizeCharacter = (
   raw: SeriesCharacterAgentOutput["characters"][number],
   fallback: SeriesCharacterAgentOutput["characters"][number],
@@ -389,12 +424,13 @@ const normalizeCharacterOutput = (
   const deduped = dedupeCharacters(parsed.data.characters);
 
   const merged = [...deduped, ...fallback].slice(0, Math.max(3, input.target_count));
-  return {
-    characters: merged
-      .slice(0, 8)
-      .map((character, index) => {
-        const normalized = normalizeCharacter(character, fallback[index] || fallback[0], index);
+  const normalizedCharacters = merged
+    .slice(0, 8)
+    .map((character, index) => normalizeCharacter(character, fallback[index] || fallback[0], index));
+  const policyAppliedCharacters = enforceCharacterNamePolicy(normalizedCharacters);
 
+  return {
+    characters: policyAppliedCharacters.map((normalized, index) => {
         const portraitPrompt =
           clean(normalized.portrait_prompt) ||
           buildCharacterPortraitPrompt({
@@ -409,6 +445,7 @@ const normalizeCharacterOutput = (
             dominantColor: normalized.visual_design?.dominant_color,
             bodyType: normalized.visual_design?.body_type,
             distinguishingFeature: normalized.visual_design?.distinguishing_feature,
+            styleGuide: input.style_guide,
           });
 
         return {
@@ -456,6 +493,7 @@ export const generateSeriesCharacters = async (
 - relationship_hooks: 関係性フック（1〜2個）
 
 名前・性格・外見が互いに被らないようにしてください。
+name には「あなた」「アナタ」「プレイヤー」「主人公」「You」など自己参照語を使わず、全員を固有名詞で命名してください。
 `;
 
   const maxAttempts = 3;
