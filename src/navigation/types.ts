@@ -39,6 +39,8 @@ export type RootStackParamList = {
     seriesTitle: string;
     coverImageUrl?: string | null;
     episodeNo?: number;
+    stageLocation?: string;
+    stageCoords?: { lat: number; lng: number } | null;
   };
   SeriesDetail: { questId: string };
   GamePlay: {

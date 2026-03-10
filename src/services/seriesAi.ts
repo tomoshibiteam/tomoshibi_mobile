@@ -1,3 +1,6 @@
+import Constants from "expo-constants";
+import { NativeModules } from "react-native";
+
 const clean = (value?: string | null) => (value || "").replace(/\s+/g, " ").trim();
 const WALKABLE_WORLD_FALLBACK = "現代日本の徒歩で巡れる街区（駅前・商店街・公園・川沿い）";
 const INCOMPATIBLE_WORLD_PATTERN =
@@ -46,6 +49,77 @@ const ensureWalkSuggestedSpots = (spots: string[], settingHint?: string) => {
   if (merged.length >= 2) return merged.slice(0, 6);
   return ["駅前広場", "商店街"];
 };
+
+const SCENE_ROLES = ["起", "承", "転", "結"] as const;
+const isSceneRole = (value: string): value is (typeof SCENE_ROLES)[number] =>
+  (SCENE_ROLES as readonly string[]).includes(value);
+
+const sceneRoleForIndex = (index: number, count: number): "起" | "承" | "転" | "結" => {
+  if (count <= 2) return index === 0 ? "起" : "結";
+  if (index === 0) return "起";
+  if (index === count - 1) return "結";
+  return index === 1 ? "承" : "転";
+};
+
+const normalizeSpotRequirements = (
+  raw: unknown,
+  settingHint?: string
+): GeneratedSeriesFirstEpisodeSeed["spotRequirements"] => {
+  const rows = Array.isArray(raw) ? raw : [];
+  const normalized = rows
+    .map((item, index) => {
+      if (!item || typeof item !== "object") return null;
+      const row = item as Record<string, unknown>;
+      const spotRole = clean(typeof row.spot_role === "string" ? row.spot_role : "");
+      if (!spotRole) return null;
+      const sceneRoleRaw = clean(typeof row.scene_role === "string" ? row.scene_role : "");
+      return {
+        requirementId: clean(typeof row.requirement_id === "string" ? row.requirement_id : "") || `req_${index + 1}`,
+        sceneRole: isSceneRole(sceneRoleRaw) ? sceneRoleRaw : sceneRoleForIndex(index, Math.max(rows.length, 2)),
+        spotRole,
+        requiredAttributes: normalizeStringArray(row.required_attributes),
+        visitConstraints: normalizeStringArray(row.visit_constraints),
+        tourismValueType: clean(typeof row.tourism_value_type === "string" ? row.tourism_value_type : "") || "地域体験",
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => Boolean(row));
+
+  if (normalized.length >= 2) return normalized.slice(0, 4);
+  return [
+    {
+      requirementId: "req_1",
+      sceneRole: "起",
+      spotRole: "導入用の静かな公共スポット",
+      requiredAttributes: ["公共アクセス可能", `${clean(settingHint) || "地域"}らしさが分かる`],
+      visitConstraints: ["単独屋内完結を避ける"],
+      tourismValueType: "地域導入",
+    },
+    {
+      requirementId: "req_2",
+      sceneRole: "承",
+      spotRole: "関係進展が起こる回遊拠点",
+      requiredAttributes: ["会話しやすい", "徒歩導線で接続可能"],
+      visitConstraints: ["移動負荷を抑える"],
+      tourismValueType: "文化体験",
+    },
+    {
+      requirementId: "req_3",
+      sceneRole: "結",
+      spotRole: "余韻に向く見晴らし地点",
+      requiredAttributes: ["景観価値", "次話フック設置しやすい"],
+      visitConstraints: ["公共アクセスで離脱可能"],
+      tourismValueType: "景観",
+    },
+  ];
+};
+
+const deriveSuggestedSpotsFromRequirements = (
+  requirements: GeneratedSeriesFirstEpisodeSeed["spotRequirements"]
+) =>
+  requirements
+    .map((requirement) => clean(requirement.spotRole))
+    .filter(Boolean)
+    .slice(0, 4);
 
 const ensureWalkAiRules = (value?: string | null) => {
   const rawLines = clean(value)
@@ -111,6 +185,8 @@ export type GeneratedSeriesCharacter = {
   id?: string;
   name: string;
   role: string;
+  tier?: "primary" | "secondary";
+  mustAppear?: boolean;
   archetype?: string;
   goal?: string;
   drive?: string;
@@ -171,6 +247,14 @@ export type GeneratedSeriesFirstEpisodeSeed = {
   routeStyle: string;
   completionCondition: string;
   carryOverHint: string;
+  spotRequirements: Array<{
+    requirementId: string;
+    sceneRole: "起" | "承" | "転" | "結";
+    spotRole: string;
+    requiredAttributes: string[];
+    visitConstraints: string[];
+    tourismValueType: string;
+  }>;
   suggestedSpots: string[];
 };
 
@@ -178,7 +262,10 @@ export type GeneratedSeriesProgressState = {
   lastCompletedEpisodeNo: number;
   unresolvedThreads: string[];
   revealedFacts: string[];
-  companionTrustLevel: number;
+  relationshipStateSummary: string;
+  relationshipFlags: string[];
+  recentRelationShift: string[];
+  companionTrustLevel?: number;
   nextHook: string;
 };
 
@@ -305,7 +392,11 @@ export type RuntimeEpisodeProgressPatch = {
   unresolvedThreadsToAdd: string[];
   unresolvedThreadsToRemove: string[];
   revealedFactsToAdd: string[];
-  companionTrustDelta: number;
+  relationshipStateSummary: string;
+  relationshipFlagsToAdd: string[];
+  relationshipFlagsToRemove: string[];
+  recentRelationShift: string[];
+  companionTrustDelta?: number;
   nextHook: string;
 };
 
@@ -341,6 +432,79 @@ export type EpisodeCharacter = {
   name: string;
   role: string;
   personality: string;
+  origin?: "series" | "episode";
+};
+
+export type EpisodeWorld = {
+  title: string;
+  mood: string;
+  atmosphere: string;
+  sensoryKeywords: string[];
+  storyAxis: string;
+  emotionalArc: string;
+  localTheme: string;
+};
+
+export type EpisodeUniqueCharacter = {
+  id: string;
+  name: string;
+  role: string;
+  personality: string;
+  motivation: string;
+  relationToSeries: string;
+  introductionScene: string;
+};
+
+export type RuntimeEpisodeGenerationTraceCandidate = {
+  spotName: string;
+  tourismFocus: string;
+  estimatedWalkMinutes: number;
+  publicAccessible: boolean;
+  roleMatchScore: number;
+  tourismMatchScore: number;
+  localityScore: number;
+};
+
+export type RuntimeEpisodeGenerationTraceRequirement = {
+  requirementId: string;
+  sceneRole: "起" | "承" | "転" | "結";
+  spotRole: string;
+  candidates: RuntimeEpisodeGenerationTraceCandidate[];
+};
+
+export type RuntimeEpisodeGenerationRouteMetrics = {
+  optimizer: string;
+  totalEstimatedWalkMinutes: number;
+  transferMinutes: number;
+  maxLegMinutes: number;
+  maxTotalWalkMinutes: number;
+  feasible: boolean;
+  failureReasons: string[];
+  optimizedOrderIndices: number[];
+  optimizedOrderSpotNames: string[];
+};
+
+export type RuntimeEpisodeGenerationTrace = {
+  stageLocation: string;
+  candidateSpots: RuntimeEpisodeGenerationTraceRequirement[];
+  selectedSpots: Array<{
+    requirementId: string;
+    sceneRole: "起" | "承" | "転" | "結";
+    spotName: string;
+    tourismFocus: string;
+    estimatedWalkMinutes: number;
+  }>;
+  eligibilityRejectReasons: string[];
+  mmrScores: Array<{
+    requirementId: string;
+    spotName: string;
+    relevanceScore: number;
+    redundancyPenalty: number;
+    mmrScore: number;
+  }>;
+  routeMetrics: RuntimeEpisodeGenerationRouteMetrics;
+  routeScore: number;
+  continuityScore: number;
 };
 
 export type GeneratedRuntimeEpisode = {
@@ -352,11 +516,14 @@ export type GeneratedRuntimeEpisode = {
     goal: string;
   };
   characters: EpisodeCharacter[];
+  episodeWorld: EpisodeWorld;
+  episodeUniqueCharacters: EpisodeUniqueCharacter[];
   spots: EpisodeSpot[];
   completionCondition: string;
   carryOverHook: string;
   estimatedDurationMinutes: number;
   progressPatch: RuntimeEpisodeProgressPatch;
+  generationTrace?: RuntimeEpisodeGenerationTrace;
 };
 
 export type RuntimeEpisodeContext = {
@@ -383,6 +550,7 @@ export type GenerateSeriesEpisodeByMastraPayload = {
   stageLocation: string;
   purpose: string;
   userWishes?: string;
+  desiredSpotCount?: number;
   desiredDurationMinutes?: number;
   language?: string;
 };
@@ -396,6 +564,8 @@ const RUNTIME_EPISODE_GENERATION_PHASES = [
   "fallback_plan_done",
   "episode_plan_start",
   "episode_plan_done",
+  "spot_resolution_start",
+  "spot_resolution_done",
   "spot_chapter_start",
   "spot_chapter_done",
   "spot_puzzle_start",
@@ -429,6 +599,7 @@ export type GenerateSeriesByMastraPayload = {
   prompt?: string;
   desiredEpisodeCount?: number;
   creatorId?: string;
+  generationMode?: "proposal" | "full";
   existingIdentityPack?: GeneratedSeriesIdentityPack;
   identityRetcon?: boolean;
 };
@@ -446,6 +617,8 @@ const SERIES_DRAFT_GENERATION_PHASES = [
   "build_series_identity_pack_done",
   "generate_series_checkpoints_start",
   "generate_series_checkpoints_done",
+  "seed_route_dry_run_start",
+  "seed_route_dry_run_done",
   "finalize_series_blueprint_start",
   "generate_series_cover_candidates_start",
   "generate_series_cover_candidates_done",
@@ -500,12 +673,117 @@ const buildSeedFallbackImageUrl = (seedBase: string, width: number, height: numb
   return `https://picsum.photos/seed/${encodeURIComponent(seed)}/${Math.max(120, width)}/${Math.max(120, height)}`;
 };
 
+const LOCALHOST_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+
+const extractHostFromEndpoint = (value?: string | null) => {
+  const normalized = clean(value);
+  if (!normalized) return "";
+  const withoutScheme = normalized.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+  const hostPort = withoutScheme.split("/")[0] || "";
+  const hostOnly = hostPort.split(":")[0] || "";
+  return clean(hostOnly);
+};
+
+const resolveScriptHostFromNative = () => {
+  const nativeModules = (NativeModules as unknown as Record<string, unknown>) || {};
+  const sourceCode = (nativeModules.SourceCode as Record<string, unknown> | undefined) || undefined;
+  const scriptUrl = clean(typeof sourceCode?.scriptURL === "string" ? sourceCode.scriptURL : "");
+  if (!scriptUrl) return "";
+  return extractHostFromEndpoint(scriptUrl);
+};
+
+const resolveExpoDevHost = () => {
+  const c = Constants as unknown as Record<string, unknown>;
+  const expoConfig = (c.expoConfig as Record<string, unknown> | undefined) || undefined;
+  const manifest = (c.manifest as Record<string, unknown> | undefined) || undefined;
+  const manifest2 = (c.manifest2 as Record<string, unknown> | undefined) || undefined;
+  const expoGoConfig = (c.expoGoConfig as Record<string, unknown> | undefined) || undefined;
+  const expoClient = ((manifest2?.extra as Record<string, unknown> | undefined)?.expoClient as Record<string, unknown> | undefined) || undefined;
+
+  const candidates = [
+    clean(typeof expoConfig?.hostUri === "string" ? expoConfig.hostUri : ""),
+    clean(typeof manifest?.debuggerHost === "string" ? manifest.debuggerHost : ""),
+    clean(typeof expoGoConfig?.debuggerHost === "string" ? expoGoConfig.debuggerHost : ""),
+    clean(typeof c.linkingUri === "string" ? c.linkingUri : ""),
+    clean(typeof c.experienceUrl === "string" ? c.experienceUrl : ""),
+    clean(typeof expoClient?.hostUri === "string" ? expoClient.hostUri : ""),
+    clean(resolveScriptHostFromNative()),
+    clean(
+      typeof ((manifest2?.extra as Record<string, unknown> | undefined)?.expoGo as Record<string, unknown> | undefined)
+        ?.debuggerHost === "string"
+        ? (((manifest2?.extra as Record<string, unknown> | undefined)?.expoGo as Record<string, unknown>).debuggerHost as string)
+        : ""
+    ),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const host = extractHostFromEndpoint(candidate);
+    if (host && !LOCALHOST_HOSTS.has(host.toLowerCase())) {
+      return host;
+    }
+  }
+  return "";
+};
+
+const rewriteLocalhostBaseUrlForDevice = (value: string) => {
+  const normalized = clean(value).replace(/\/+$/, "");
+  if (!normalized) return "";
+  try {
+    const parsed = new URL(normalized);
+    if (!LOCALHOST_HOSTS.has(parsed.hostname.toLowerCase())) {
+      return normalized;
+    }
+    const devHost = resolveExpoDevHost();
+    if (!devHost) return normalized;
+    parsed.hostname = devHost;
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return normalized;
+  }
+};
+
+const normalizeMediaUrlForClient = (value?: string | null) => {
+  const normalized = clean(value);
+  if (!normalized) return "";
+
+  if (/^https?:\/\//i.test(normalized)) {
+    const rewritten = rewriteLocalhostBaseUrlForDevice(normalized);
+    try {
+      const parsed = new URL(rewritten);
+      const baseUrl = resolveMastraBaseUrl();
+      if (baseUrl && /^\/api\/series\/image(?:\/|$)/.test(parsed.pathname)) {
+        const baseParsed = new URL(baseUrl);
+        parsed.protocol = baseParsed.protocol;
+        parsed.hostname = baseParsed.hostname;
+        parsed.port = baseParsed.port;
+        return parsed.toString();
+      }
+    } catch {
+      return rewritten;
+    }
+    return rewritten;
+  }
+
+  if (normalized.startsWith("/")) {
+    const baseUrl = resolveMastraBaseUrl();
+    if (!baseUrl) return normalized;
+    const safePath = normalized.startsWith("/") ? normalized : `/${normalized}`;
+    return `${baseUrl}${safePath}`;
+  }
+
+  return normalized;
+};
+
 const resolveMastraBaseUrl = () => {
   const explicit = clean(process.env.EXPO_PUBLIC_MASTRA_BASE_URL);
-  if (explicit) return explicit.replace(/\/+$/, "");
+  if (explicit) return rewriteLocalhostBaseUrlForDevice(explicit);
 
   const fallback = clean(process.env.EXPO_PUBLIC_API_BASE_URL);
-  return fallback ? fallback.replace(/\/+$/, "") : "";
+  if (fallback) return rewriteLocalhostBaseUrlForDevice(fallback);
+
+  const devHost = resolveExpoDevHost();
+  if (!devHost) return "";
+  return `http://${devHost}:4111`;
 };
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -573,6 +851,14 @@ const normalizeCharacters = (raw: unknown): GeneratedSeriesCharacter[] => {
       id: clean(typeof row.id === "string" ? row.id : undefined) || `char_${index + 1}`,
       name,
       role,
+      tier:
+        clean(typeof row.tier === "string" ? row.tier : "").toLowerCase() === "primary"
+          ? "primary"
+          : "secondary",
+      mustAppear:
+        typeof row.must_appear === "boolean"
+          ? row.must_appear
+          : clean(typeof row.tier === "string" ? row.tier : "").toLowerCase() === "primary",
       archetype: clean(typeof row.archetype === "string" ? row.archetype : undefined) || undefined,
       goal: clean(typeof row.goal === "string" ? row.goal : undefined) || undefined,
       drive: clean(typeof row.drive === "string" ? row.drive : undefined) || undefined,
@@ -601,7 +887,7 @@ const normalizeCharacters = (raw: unknown): GeneratedSeriesCharacter[] => {
       identityAnchorTokens: normalizeIdentityAnchorTokens(row.identity_anchor_tokens),
       portraitPrompt: clean(typeof row.portrait_prompt === "string" ? row.portrait_prompt : undefined) || undefined,
       portraitImageUrl:
-        clean(typeof row.portrait_image_url === "string" ? row.portrait_image_url : undefined) ||
+        normalizeMediaUrlForClient(typeof row.portrait_image_url === "string" ? row.portrait_image_url : undefined) ||
         buildSeedFallbackImageUrl(`${name}-${role}-portrait`, 768, 1024),
       secrets: normalizeStringArray(row.secrets),
       relationshipHooks: normalizeStringArray(row.relationship_hooks),
@@ -701,7 +987,7 @@ const normalizeWorld = (raw: unknown): GeneratedSeriesWorld | undefined => {
         title: title || `世界観ビジュアル ${index + 1}`,
         description: description || "世界観の雰囲気を示すビジュアル。",
         prompt: clean(typeof row.prompt === "string" ? row.prompt : undefined) || undefined,
-        imageUrl: clean(typeof row.image_url === "string" ? row.image_url : undefined) || undefined,
+        imageUrl: normalizeMediaUrlForClient(typeof row.image_url === "string" ? row.image_url : undefined) || undefined,
       });
       return acc;
     }, [])
@@ -781,7 +1067,8 @@ const normalizeIdentityPack = (raw: unknown): GeneratedSeriesIdentityPack | unde
               distinguishingFeature: "",
             },
           portraitPrompt: clean(typeof c.portrait_prompt === "string" ? c.portrait_prompt : "") || undefined,
-          portraitImageUrl: clean(typeof c.portrait_image_url === "string" ? c.portrait_image_url : "") || undefined,
+          portraitImageUrl:
+            normalizeMediaUrlForClient(typeof c.portrait_image_url === "string" ? c.portrait_image_url : "") || undefined,
         });
         return acc;
       }, [])
@@ -814,11 +1101,11 @@ const normalizeCoverConsistencyReport = (raw: unknown): GeneratedSeriesCoverCons
 
   const candidateReports = Array.isArray(row.candidate_reports)
     ? row.candidate_reports.reduce<GeneratedSeriesCoverConsistencyCandidateReport[]>((acc, item) => {
-        if (!item || typeof item !== "object") return acc;
-        const c = item as Record<string, unknown>;
-        const imageUrl = clean(typeof c.image_url === "string" ? c.image_url : "");
-        const prompt = clean(typeof c.prompt === "string" ? c.prompt : "");
-        if (!imageUrl || !prompt) return acc;
+      if (!item || typeof item !== "object") return acc;
+      const c = item as Record<string, unknown>;
+      const imageUrl = normalizeMediaUrlForClient(typeof c.image_url === "string" ? c.image_url : "");
+      const prompt = clean(typeof c.prompt === "string" ? c.prompt : "");
+      if (!imageUrl || !prompt) return acc;
 
         const characterScores = Array.isArray(c.character_scores)
           ? c.character_scores.reduce<GeneratedSeriesCoverConsistencyCharacterScore[]>((scoreAcc, scoreItem) => {
@@ -859,7 +1146,9 @@ const normalizeCoverConsistencyReport = (raw: unknown): GeneratedSeriesCoverCons
       }, [])
     : [];
 
-  const selectedCoverImageUrl = clean(typeof row.selected_cover_image_url === "string" ? row.selected_cover_image_url : "");
+  const selectedCoverImageUrl = normalizeMediaUrlForClient(
+    typeof row.selected_cover_image_url === "string" ? row.selected_cover_image_url : ""
+  );
   const selectedCoverImagePrompt = clean(
     typeof row.selected_cover_image_prompt === "string" ? row.selected_cover_image_prompt : ""
   );
@@ -884,6 +1173,15 @@ const normalizeFirstEpisodeSeed = (raw: unknown): GeneratedSeriesFirstEpisodeSee
   const seed = raw as Record<string, unknown>;
   const duration = Number.parseInt(String(seed.expected_duration_minutes ?? 20), 10);
   const expectedDurationMinutes = Number.isFinite(duration) ? Math.max(10, Math.min(45, duration)) : 20;
+  const spotRequirements = normalizeSpotRequirements(
+    seed.spot_requirements,
+    clean(typeof seed.opening_scene === "string" ? seed.opening_scene : "")
+  );
+  const legacySuggested = ensureWalkSuggestedSpots(
+    normalizeStringArray(seed.suggested_spots),
+    clean(typeof seed.route_style === "string" ? seed.route_style : undefined)
+  );
+  const suggestedSpots = dedupeStrings([...legacySuggested, ...deriveSuggestedSpotsFromRequirements(spotRequirements)]).slice(0, 6);
   return {
     title: clean(typeof seed.title === "string" ? seed.title : undefined) || "第1話: 旅の始まり",
     objective:
@@ -897,10 +1195,8 @@ const normalizeFirstEpisodeSeed = (raw: unknown): GeneratedSeriesFirstEpisodeSee
       "主要スポットで発見を得る。",
     carryOverHint:
       clean(typeof seed.carry_over_hint === "string" ? seed.carry_over_hint : undefined) || "次回に続く問いが残る。",
-    suggestedSpots: ensureWalkSuggestedSpots(
-      normalizeStringArray(seed.suggested_spots),
-      clean(typeof seed.route_style === "string" ? seed.route_style : undefined)
-    ),
+    spotRequirements,
+    suggestedSpots,
   };
 };
 
@@ -915,7 +1211,11 @@ const normalizeProgressState = (raw: unknown): GeneratedSeriesProgressState | un
       Number.isFinite(lastCompletedEpisodeNo) && lastCompletedEpisodeNo >= 0 ? lastCompletedEpisodeNo : 0,
     unresolvedThreads: normalizeStringArray(state.unresolved_threads),
     revealedFacts: normalizeStringArray(state.revealed_facts),
-    companionTrustLevel: Number.isFinite(trust) ? Math.max(0, Math.min(100, trust)) : 40,
+    relationshipStateSummary:
+      clean(typeof state.relationship_state_summary === "string" ? state.relationship_state_summary : "") || "関係性は初期状態。",
+    relationshipFlags: normalizeStringArray(state.relationship_flags),
+    recentRelationShift: normalizeStringArray(state.recent_relation_shift),
+    companionTrustLevel: Number.isFinite(trust) ? Math.max(0, Math.min(100, trust)) : undefined,
     nextHook: clean(typeof state.next_hook === "string" ? state.next_hook : undefined) || "",
   };
 };
@@ -930,6 +1230,7 @@ export const generateSeriesDraftViaMastra = async (
   }
   const timeoutMs = Math.max(30_000, options.timeoutMs ?? SERIES_DRAFT_DEFAULT_TIMEOUT_MS);
   const pollIntervalMs = Math.max(250, options.pollIntervalMs ?? SERIES_DRAFT_DEFAULT_POLL_INTERVAL_MS);
+  const requestTimeoutMs = Math.max(8_000, Math.min(45_000, Math.floor(timeoutMs / 8)));
 
   const body = {
     interview: {
@@ -944,6 +1245,7 @@ export const generateSeriesDraftViaMastra = async (
     },
     prompt: clean(payload.prompt) || undefined,
     desired_episode_count: payload.desiredEpisodeCount ?? 8,
+    generation_mode: payload.generationMode || undefined,
     ...(isUuid(payload.creatorId) ? { creator_id: payload.creatorId } : {}),
     language: "ja",
     existing_identity_pack: payload.existingIdentityPack
@@ -1014,7 +1316,7 @@ export const generateSeriesDraftViaMastra = async (
       coverImagePrompt:
         clean(typeof seriesRaw.cover_image_prompt === "string" ? seriesRaw.cover_image_prompt : undefined) || undefined,
       coverImageUrl:
-        clean(typeof seriesRaw.cover_image_url === "string" ? seriesRaw.cover_image_url : undefined) ||
+        normalizeMediaUrlForClient(typeof seriesRaw.cover_image_url === "string" ? seriesRaw.cover_image_url : undefined) ||
         buildSeedFallbackImageUrl(`${title}-${clean(typeof seriesRaw.genre === "string" ? seriesRaw.genre : undefined)}`, 1024, 1365),
       genre: clean(typeof seriesRaw.genre === "string" ? seriesRaw.genre : undefined) || undefined,
       tone: clean(typeof seriesRaw.tone === "string" ? seriesRaw.tone : undefined) || undefined,
@@ -1041,6 +1343,7 @@ export const generateSeriesDraftViaMastra = async (
             routeStyle: "徒歩中心の周遊",
             completionCondition: "主要スポットで発見を得る。",
             carryOverHint: checkpoints[0].carryOver || "次回に続く問いが残る。",
+            spotRequirements: normalizeSpotRequirements([], normalizedWorld?.setting || WALKABLE_WORLD_FALLBACK),
             suggestedSpots: ensureWalkSuggestedSpots([
               normalizedWorld?.setting ||
               clean(
@@ -1062,6 +1365,9 @@ export const generateSeriesDraftViaMastra = async (
             return mystery ? [mystery] : [];
           })(),
           revealedFacts: [],
+          relationshipStateSummary: "主要キャラクターとの関係は導入段階。",
+          relationshipFlags: [],
+          recentRelationShift: [],
           companionTrustLevel: 40,
           nextHook: "",
         },
@@ -1076,26 +1382,32 @@ export const generateSeriesDraftViaMastra = async (
   };
 
   const runLegacyEndpoint = async (): Promise<GeneratedSeriesDraft> => {
-    const controller = options.signal ? null : new AbortController();
-    const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
     let response: Response;
     try {
-      response = await fetch(`${baseUrl}/api/series`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      response = await fetchWithTimeout(
+        `${baseUrl}/api/series`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
         },
-        body: JSON.stringify(body),
-        signal: options.signal ?? controller?.signal,
-      });
+        requestTimeoutMs,
+        options.signal
+      );
     } catch (fetchError) {
-      if (timeoutId) clearTimeout(timeoutId);
       if (fetchError instanceof Error && fetchError.name === "AbortError") {
         throw new Error(`シリーズ生成がタイムアウトしました（${Math.floor(timeoutMs / 1000)}秒）。再度お試しください。`);
       }
+      if (fetchError instanceof Error && fetchError.name === "TimeoutError") {
+        throw new Error(`Mastra APIの応答がタイムアウトしました（${Math.floor(requestTimeoutMs / 1000)}秒）。`);
+      }
+      if (isLikelyNetworkError(fetchError)) {
+        throw buildMastraNetworkError(baseUrl, fetchError);
+      }
       throw fetchError;
     }
-    if (timeoutId) clearTimeout(timeoutId);
 
     const rawText = await response.text();
     const json = parseJsonSafe(rawText);
@@ -1120,16 +1432,39 @@ export const generateSeriesDraftViaMastra = async (
     };
   };
 
-  const createJobResponse = await fetch(`${baseUrl}/api/series/jobs`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-    signal: options.signal,
-  });
-  const createJobRaw = await createJobResponse.text();
-  const createJobJson = parseJsonSafe(createJobRaw);
+  let createJobResponse: Response | null = null;
+  let createJobRaw = "";
+  let createJobJson: unknown = null;
+  try {
+    createJobResponse = await fetchWithTimeout(
+      `${baseUrl}/api/series/jobs`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      },
+      requestTimeoutMs,
+      options.signal
+    );
+    createJobRaw = await createJobResponse.text();
+    createJobJson = parseJsonSafe(createJobRaw);
+  } catch (fetchError) {
+    if (fetchError instanceof Error && fetchError.name === "AbortError") {
+      throw createAbortError();
+    }
+    if (fetchError instanceof Error && fetchError.name === "TimeoutError") {
+      throw new Error(`Mastra APIへの接続がタイムアウトしました（${Math.floor(requestTimeoutMs / 1000)}秒）。`);
+    }
+    if (isLikelyNetworkError(fetchError)) {
+      throw buildMastraNetworkError(baseUrl, fetchError);
+    }
+    throw fetchError;
+  }
+  if (!createJobResponse) {
+    throw new Error("シリーズ生成ジョブの作成レスポンスが取得できませんでした。");
+  }
 
   if (!createJobResponse.ok) {
     if (createJobResponse.status === 404 || createJobResponse.status === 405) {
@@ -1175,15 +1510,39 @@ export const generateSeriesDraftViaMastra = async (
     }
 
     const separator = pollUrl.includes("?") ? "&" : "?";
-    const pollResponse = await fetch(`${pollUrl}${separator}cursor=${cursor}`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      signal: options.signal,
-    });
-    const pollRaw = await pollResponse.text();
-    const pollJson = parseJsonSafe(pollRaw);
+    let pollResponse: Response | null = null;
+    let pollRaw = "";
+    let pollJson: unknown = null;
+    try {
+      pollResponse = await fetchWithTimeout(
+        `${pollUrl}${separator}cursor=${cursor}`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+        requestTimeoutMs,
+        options.signal
+      );
+      pollRaw = await pollResponse.text();
+      pollJson = parseJsonSafe(pollRaw);
+    } catch (fetchError) {
+      if (fetchError instanceof Error && fetchError.name === "AbortError") {
+        throw createAbortError();
+      }
+      if (fetchError instanceof Error && fetchError.name === "TimeoutError") {
+        throw new Error(`Mastra APIポーリングがタイムアウトしました（${Math.floor(requestTimeoutMs / 1000)}秒）。`);
+      }
+      if (isLikelyNetworkError(fetchError)) {
+        throw buildMastraNetworkError(baseUrl, fetchError);
+      }
+      throw fetchError;
+    }
+
+    if (!pollResponse) {
+      throw new Error("シリーズ生成ジョブのポーリングレスポンスが取得できませんでした。");
+    }
 
     if (!pollResponse.ok) {
       const errMsg =
@@ -1270,7 +1629,197 @@ const normalizeEpisodeCharacters = (raw: unknown): EpisodeCharacter[] => {
       name: clean(c.name) || "",
       role: clean(c.role) || "",
       personality: clean(c.personality) || "",
+      ...(c.origin === "series" || c.origin === "episode" ? { origin: c.origin } : {}),
     }));
+};
+
+const normalizeEpisodeWorld = (raw: unknown): EpisodeWorld => {
+  const row = asObject(raw);
+  return {
+    title: clean(typeof row.title === "string" ? row.title : "") || "今回の旅の章",
+    mood: clean(typeof row.mood === "string" ? row.mood : "") || "発見と余韻",
+    atmosphere:
+      clean(typeof row.atmosphere === "string" ? row.atmosphere : "") ||
+      "現実の街を歩きながら物語を体験する",
+    sensoryKeywords: normalizeStringArray(row.sensory_keywords).slice(0, 8),
+    storyAxis:
+      clean(typeof row.story_axis === "string" ? row.story_axis : "") ||
+      "街の断片情報を繋ぎ次話へ進む",
+    emotionalArc:
+      clean(typeof row.emotional_arc === "string" ? row.emotional_arc : "") ||
+      "導入から収束へ向かう感情曲線",
+    localTheme:
+      clean(typeof row.local_theme === "string" ? row.local_theme : "") ||
+      "地域性を体験として回収する",
+  };
+};
+
+const normalizeEpisodeUniqueCharacters = (raw: unknown): EpisodeUniqueCharacter[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item, index) => {
+      const row = asObject(item);
+      const name = clean(typeof row.name === "string" ? row.name : "");
+      const role = clean(typeof row.role === "string" ? row.role : "");
+      if (!name || !role) return null;
+      return {
+        id: clean(typeof row.id === "string" ? row.id : "") || `ep_char_${index + 1}`,
+        name,
+        role,
+        personality:
+          clean(typeof row.personality === "string" ? row.personality : "") || "観察力が高い",
+        motivation:
+          clean(typeof row.motivation === "string" ? row.motivation : "") ||
+          "この土地の情報を正確に伝えたい",
+        relationToSeries:
+          clean(typeof row.relation_to_series === "string" ? row.relation_to_series : "") ||
+          "シリーズの進行に関わる情報を持つ",
+        introductionScene:
+          clean(typeof row.introduction_scene === "string" ? row.introduction_scene : "") ||
+          "導入で出会う",
+      } satisfies EpisodeUniqueCharacter;
+    })
+    .filter((character): character is EpisodeUniqueCharacter => Boolean(character));
+};
+
+const toBoundedInt = (value: unknown, min: number, max: number, fallback: number) => {
+  const parsed = Number.parseInt(String(value ?? fallback), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+};
+
+const toBoundedNumber = (value: unknown, min: number, max: number, fallback: number) => {
+  const parsed = Number.parseFloat(String(value ?? fallback));
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+};
+
+const normalizeRuntimeEpisodeGenerationTrace = (
+  raw: unknown
+): RuntimeEpisodeGenerationTrace | undefined => {
+  if (!raw || typeof raw !== "object") return undefined;
+  const row = raw as Record<string, unknown>;
+  const routeMetricsRaw =
+    row.route_metrics && typeof row.route_metrics === "object"
+      ? (row.route_metrics as Record<string, unknown>)
+      : {};
+
+  const candidateSpots = Array.isArray(row.candidate_spots)
+    ? row.candidate_spots
+        .map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const requirement = item as Record<string, unknown>;
+          const candidates = Array.isArray(requirement.candidates)
+            ? requirement.candidates
+                .map((candidate) => {
+                  if (!candidate || typeof candidate !== "object") return null;
+                  const c = candidate as Record<string, unknown>;
+                  const spotName = clean(typeof c.spot_name === "string" ? c.spot_name : "");
+                  if (!spotName) return null;
+                  return {
+                    spotName,
+                    tourismFocus: clean(typeof c.tourism_focus === "string" ? c.tourism_focus : "") || "",
+                    estimatedWalkMinutes: toBoundedInt(c.estimated_walk_minutes, 0, 240, 0),
+                    publicAccessible: Boolean(c.public_accessible),
+                    roleMatchScore: toBoundedNumber(c.role_match_score, 0, 1, 0),
+                    tourismMatchScore: toBoundedNumber(c.tourism_match_score, 0, 1, 0),
+                    localityScore: toBoundedNumber(c.locality_score, 0, 1, 0),
+                  } satisfies RuntimeEpisodeGenerationTraceCandidate;
+                })
+                .filter((candidate): candidate is RuntimeEpisodeGenerationTraceCandidate => Boolean(candidate))
+            : [];
+          const requirementId = clean(
+            typeof requirement.requirement_id === "string" ? requirement.requirement_id : ""
+          );
+          if (!requirementId) return null;
+          const sceneRoleRaw =
+            clean(typeof requirement.scene_role === "string" ? requirement.scene_role : "") || "承";
+          const sceneRole = isSceneRole(sceneRoleRaw) ? sceneRoleRaw : "承";
+          return {
+            requirementId,
+            sceneRole,
+            spotRole: clean(typeof requirement.spot_role === "string" ? requirement.spot_role : "") || "",
+            candidates,
+          } satisfies RuntimeEpisodeGenerationTraceRequirement;
+        })
+        .filter((item): item is RuntimeEpisodeGenerationTraceRequirement => Boolean(item))
+    : [];
+
+  const selectedSpots = Array.isArray(row.selected_spots)
+    ? row.selected_spots
+        .map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const selected = item as Record<string, unknown>;
+          const requirementId = clean(
+            typeof selected.requirement_id === "string" ? selected.requirement_id : ""
+          );
+          const spotName = clean(typeof selected.spot_name === "string" ? selected.spot_name : "");
+          if (!requirementId || !spotName) return null;
+          const sceneRoleRaw = clean(typeof selected.scene_role === "string" ? selected.scene_role : "") || "承";
+          const sceneRole = isSceneRole(sceneRoleRaw) ? sceneRoleRaw : "承";
+          return {
+            requirementId,
+            sceneRole,
+            spotName,
+            tourismFocus: clean(typeof selected.tourism_focus === "string" ? selected.tourism_focus : "") || "",
+            estimatedWalkMinutes: toBoundedInt(selected.estimated_walk_minutes, 0, 240, 0),
+          };
+        })
+        .filter(
+          (
+            item
+          ): item is RuntimeEpisodeGenerationTrace["selectedSpots"][number] => Boolean(item)
+        )
+    : [];
+
+  const mmrScores = Array.isArray(row.mmr_scores)
+    ? row.mmr_scores
+        .map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const score = item as Record<string, unknown>;
+          const requirementId = clean(
+            typeof score.requirement_id === "string" ? score.requirement_id : ""
+          );
+          const spotName = clean(typeof score.spot_name === "string" ? score.spot_name : "");
+          if (!requirementId || !spotName) return null;
+          return {
+            requirementId,
+            spotName,
+            relevanceScore: toBoundedNumber(score.relevance_score, 0, 100, 0),
+            redundancyPenalty: toBoundedNumber(score.redundancy_penalty, 0, 100, 0),
+            mmrScore: toBoundedNumber(score.mmr_score, -100, 100, 0),
+          };
+        })
+        .filter((item): item is RuntimeEpisodeGenerationTrace["mmrScores"][number] => Boolean(item))
+    : [];
+
+  return {
+    stageLocation: clean(typeof row.stage_location === "string" ? row.stage_location : "") || "",
+    candidateSpots,
+    selectedSpots,
+    eligibilityRejectReasons: normalizeStringArray(row.eligibility_reject_reasons),
+    mmrScores,
+    routeMetrics: {
+      optimizer:
+        clean(typeof routeMetricsRaw.optimizer === "string" ? routeMetricsRaw.optimizer : "") ||
+        "unknown",
+      totalEstimatedWalkMinutes: toBoundedInt(routeMetricsRaw.total_estimated_walk_minutes, 0, 720, 0),
+      transferMinutes: toBoundedInt(routeMetricsRaw.transfer_minutes, 0, 720, 0),
+      maxLegMinutes: toBoundedInt(routeMetricsRaw.max_leg_minutes, 0, 360, 0),
+      maxTotalWalkMinutes: toBoundedInt(routeMetricsRaw.max_total_walk_minutes, 0, 720, 0),
+      feasible: Boolean(routeMetricsRaw.feasible),
+      failureReasons: normalizeStringArray(routeMetricsRaw.failure_reasons),
+      optimizedOrderIndices: (Array.isArray(routeMetricsRaw.optimized_order_indices)
+        ? routeMetricsRaw.optimized_order_indices
+        : []
+      )
+        .map((value) => Number.parseInt(String(value ?? ""), 10))
+        .filter((value) => Number.isFinite(value) && value >= 0),
+      optimizedOrderSpotNames: normalizeStringArray(routeMetricsRaw.optimized_order_spot_names),
+    },
+    routeScore: toBoundedNumber(row.route_score, 0, 1, 0),
+    continuityScore: toBoundedNumber(row.continuity_score, 0, 1, 0),
+  };
 };
 
 const normalizeRuntimeEpisode = (raw: unknown): GeneratedRuntimeEpisode | null => {
@@ -1290,6 +1839,9 @@ const normalizeRuntimeEpisode = (raw: unknown): GeneratedRuntimeEpisode | null =
   const patchRaw = (row.progress_patch && typeof row.progress_patch === "object"
     ? (row.progress_patch as Record<string, unknown>)
     : {}) as Record<string, unknown>;
+  const generationTrace = normalizeRuntimeEpisodeGenerationTrace(row.generation_trace);
+  const episodeWorld = normalizeEpisodeWorld(row.episode_world);
+  const episodeUniqueCharacters = normalizeEpisodeUniqueCharacters(row.episode_unique_characters);
 
   const trustDelta = Number.parseInt(String(patchRaw.companion_trust_delta ?? 0), 10);
 
@@ -1302,6 +1854,8 @@ const normalizeRuntimeEpisode = (raw: unknown): GeneratedRuntimeEpisode | null =
       goal: clean(typeof mainPlotRaw.goal === "string" ? mainPlotRaw.goal : "") || "",
     },
     characters: normalizeEpisodeCharacters(row.characters),
+    episodeWorld,
+    episodeUniqueCharacters,
     spots,
     completionCondition:
       clean(typeof row.completion_condition === "string" ? row.completion_condition : "") ||
@@ -1314,9 +1868,16 @@ const normalizeRuntimeEpisode = (raw: unknown): GeneratedRuntimeEpisode | null =
       unresolvedThreadsToAdd: normalizeStringArray(patchRaw.unresolved_threads_to_add),
       unresolvedThreadsToRemove: normalizeStringArray(patchRaw.unresolved_threads_to_remove),
       revealedFactsToAdd: normalizeStringArray(patchRaw.revealed_facts_to_add),
-      companionTrustDelta: Number.isFinite(trustDelta) ? Math.max(-10, Math.min(10, trustDelta)) : 0,
+      relationshipStateSummary:
+        clean(typeof patchRaw.relationship_state_summary === "string" ? patchRaw.relationship_state_summary : "") ||
+        "関係性は継続中。",
+      relationshipFlagsToAdd: normalizeStringArray(patchRaw.relationship_flags_to_add),
+      relationshipFlagsToRemove: normalizeStringArray(patchRaw.relationship_flags_to_remove),
+      recentRelationShift: normalizeStringArray(patchRaw.recent_relation_shift),
+      companionTrustDelta: Number.isFinite(trustDelta) ? Math.max(-10, Math.min(10, trustDelta)) : undefined,
       nextHook: clean(typeof patchRaw.next_hook === "string" ? patchRaw.next_hook : ""),
     },
+    generationTrace,
   };
 };
 
@@ -1341,6 +1902,59 @@ const createAbortError = () => {
   const error = new Error("生成を中止しました。");
   (error as Error & { name: string }).name = "AbortError";
   return error;
+};
+
+const createRequestTimeoutError = (timeoutMs: number) => {
+  const seconds = Math.max(1, Math.floor(timeoutMs / 1000));
+  const error = new Error(`通信がタイムアウトしました（${seconds}秒）。`);
+  (error as Error & { name: string }).name = "TimeoutError";
+  return error;
+};
+
+const fetchWithTimeout = async (
+  input: string,
+  init: RequestInit,
+  timeoutMs: number,
+  externalSignal?: AbortSignal
+): Promise<Response> => {
+  if (externalSignal?.aborted) throw createAbortError();
+  const controller = new AbortController();
+  const boundedMs = Math.max(2_000, timeoutMs);
+  let timedOut = false;
+  const onAbort = () => controller.abort();
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, boundedMs);
+
+  externalSignal?.addEventListener("abort", onAbort, { once: true });
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (externalSignal?.aborted) throw createAbortError();
+    if (timedOut) throw createRequestTimeoutError(boundedMs);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", onAbort);
+  }
+};
+
+const isLikelyNetworkError = (error: unknown) => {
+  if (error instanceof TypeError) return true;
+  const message = clean(error instanceof Error ? error.message : String(error ?? ""));
+  return /network request failed|fetch failed|networkerror|failed to fetch/i.test(message);
+};
+
+const buildMastraNetworkError = (baseUrl: string, original?: unknown) => {
+  const detail = clean(original instanceof Error ? original.message : String(original ?? ""));
+  const baseMessage =
+    `Mastra APIに接続できません (${baseUrl})。実機の場合は EXPO_PUBLIC_MASTRA_BASE_URL をPCのLAN IPに設定してください。例: http://192.168.x.x:4111`;
+  return new Error(detail ? `${baseMessage}\n詳細: ${detail}` : baseMessage);
 };
 
 const waitFor = async (ms: number, signal?: AbortSignal) => {
@@ -1394,6 +2008,7 @@ export const generateSeriesEpisodeViaMastra = async (
 
   const timeoutMs = Math.max(30_000, options.timeoutMs ?? EPISODE_GENERATION_DEFAULT_TIMEOUT_MS);
   const pollIntervalMs = Math.max(250, options.pollIntervalMs ?? EPISODE_GENERATION_DEFAULT_POLL_INTERVAL_MS);
+  const requestTimeoutMs = Math.max(8_000, Math.min(45_000, Math.floor(timeoutMs / 8)));
 
   const characters = payload.series.characters || [];
   if (characters.length === 0) {
@@ -1401,6 +2016,10 @@ export const generateSeriesEpisodeViaMastra = async (
       "シリーズのキャラクター情報が必須です。シリーズを保存し直してください。"
     );
   }
+  const desiredSpotCount = Math.max(
+    5,
+    Math.min(7, Number.parseInt(String(payload.desiredSpotCount ?? 5), 10) || 5)
+  );
 
   const body = {
     series: {
@@ -1424,7 +2043,10 @@ export const generateSeriesEpisodeViaMastra = async (
           last_completed_episode_no: payload.series.progressState.lastCompletedEpisodeNo || 0,
           unresolved_threads: payload.series.progressState.unresolvedThreads || [],
           revealed_facts: payload.series.progressState.revealedFacts || [],
-          companion_trust_level: payload.series.progressState.companionTrustLevel ?? 40,
+          relationship_state_summary: clean(payload.series.progressState.relationshipStateSummary),
+          relationship_flags: payload.series.progressState.relationshipFlags || [],
+          recent_relation_shift: payload.series.progressState.recentRelationShift || [],
+          companion_trust_level: payload.series.progressState.companionTrustLevel,
           next_hook: clean(payload.series.progressState.nextHook),
         }
         : undefined,
@@ -1437,6 +2059,14 @@ export const generateSeriesEpisodeViaMastra = async (
           route_style: clean(payload.series.firstEpisodeSeed.routeStyle),
           completion_condition: clean(payload.series.firstEpisodeSeed.completionCondition),
           carry_over_hint: clean(payload.series.firstEpisodeSeed.carryOverHint),
+          spot_requirements: (payload.series.firstEpisodeSeed.spotRequirements || []).map((requirement, index) => ({
+            requirement_id: clean(requirement.requirementId) || `req_${index + 1}`,
+            scene_role: requirement.sceneRole,
+            spot_role: clean(requirement.spotRole),
+            required_attributes: requirement.requiredAttributes || [],
+            visit_constraints: requirement.visitConstraints || [],
+            tourism_value_type: clean(requirement.tourismValueType),
+          })),
           suggested_spots: payload.series.firstEpisodeSeed.suggestedSpots || [],
         }
         : undefined,
@@ -1450,6 +2080,8 @@ export const generateSeriesEpisodeViaMastra = async (
       characters: characters.map((character) => ({
         name: character.name,
         role: character.role,
+        tier: character.tier || "secondary",
+        must_appear: Boolean(character.mustAppear),
         personality: clean(character.personality),
         arc_start: clean(character.arcStart),
         arc_end: clean(character.arcEnd),
@@ -1464,6 +2096,7 @@ export const generateSeriesEpisodeViaMastra = async (
       stage_location: payload.stageLocation,
       purpose: payload.purpose,
       user_wishes: clean(payload.userWishes) || undefined,
+      desired_spot_count: desiredSpotCount,
       desired_duration_minutes: payload.desiredDurationMinutes ?? 20,
       language: clean(payload.language) || "ja",
     },
@@ -1498,14 +2131,32 @@ export const generateSeriesEpisodeViaMastra = async (
   };
 
   const runLegacyEndpoint = async () => {
-    const response = await fetch(`${baseUrl}/api/series/episode`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-      signal: options.signal,
-    });
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(
+        `${baseUrl}/api/series/episode`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+        },
+        requestTimeoutMs,
+        options.signal
+      );
+    } catch (fetchError) {
+      if (fetchError instanceof Error && fetchError.name === "AbortError") {
+        throw createAbortError();
+      }
+      if (fetchError instanceof Error && fetchError.name === "TimeoutError") {
+        throw new Error(`Mastra APIの応答がタイムアウトしました（${Math.floor(requestTimeoutMs / 1000)}秒）。`);
+      }
+      if (isLikelyNetworkError(fetchError)) {
+        throw buildMastraNetworkError(baseUrl, fetchError);
+      }
+      throw fetchError;
+    }
     const rawText = await response.text();
     const json = parseJsonSafe(rawText);
     if (!response.ok) {
@@ -1515,17 +2166,39 @@ export const generateSeriesEpisodeViaMastra = async (
     return normalizeEpisodeFromResponse(json);
   };
 
-  const createJobResponse = await fetch(`${baseUrl}/api/series/episode/jobs`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-    signal: options.signal,
-  });
-
-  const createJobRaw = await createJobResponse.text();
-  const createJobJson = parseJsonSafe(createJobRaw);
+  let createJobResponse: Response | null = null;
+  let createJobRaw = "";
+  let createJobJson: unknown = null;
+  try {
+    createJobResponse = await fetchWithTimeout(
+      `${baseUrl}/api/series/episode/jobs`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      },
+      requestTimeoutMs,
+      options.signal
+    );
+    createJobRaw = await createJobResponse.text();
+    createJobJson = parseJsonSafe(createJobRaw);
+  } catch (fetchError) {
+    if (fetchError instanceof Error && fetchError.name === "AbortError") {
+      throw createAbortError();
+    }
+    if (fetchError instanceof Error && fetchError.name === "TimeoutError") {
+      throw new Error(`Mastra APIへの接続がタイムアウトしました（${Math.floor(requestTimeoutMs / 1000)}秒）。`);
+    }
+    if (isLikelyNetworkError(fetchError)) {
+      throw buildMastraNetworkError(baseUrl, fetchError);
+    }
+    throw fetchError;
+  }
+  if (!createJobResponse) {
+    throw new Error("エピソード生成ジョブの作成レスポンスが取得できませんでした。");
+  }
 
   if (!createJobResponse.ok) {
     if (createJobResponse.status === 404 || createJobResponse.status === 405) {
@@ -1568,15 +2241,38 @@ export const generateSeriesEpisodeViaMastra = async (
     }
 
     const separator = pollUrl.includes("?") ? "&" : "?";
-    const pollResponse = await fetch(`${pollUrl}${separator}cursor=${cursor}`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      signal: options.signal,
-    });
-    const pollRaw = await pollResponse.text();
-    const pollJson = parseJsonSafe(pollRaw);
+    let pollResponse: Response | null = null;
+    let pollRaw = "";
+    let pollJson: unknown = null;
+    try {
+      pollResponse = await fetchWithTimeout(
+        `${pollUrl}${separator}cursor=${cursor}`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+        requestTimeoutMs,
+        options.signal
+      );
+      pollRaw = await pollResponse.text();
+      pollJson = parseJsonSafe(pollRaw);
+    } catch (fetchError) {
+      if (fetchError instanceof Error && fetchError.name === "AbortError") {
+        throw createAbortError();
+      }
+      if (fetchError instanceof Error && fetchError.name === "TimeoutError") {
+        throw new Error(`Mastra APIポーリングがタイムアウトしました（${Math.floor(requestTimeoutMs / 1000)}秒）。`);
+      }
+      if (isLikelyNetworkError(fetchError)) {
+        throw buildMastraNetworkError(baseUrl, fetchError);
+      }
+      throw fetchError;
+    }
+    if (!pollResponse) {
+      throw new Error("エピソード生成ジョブのポーリングレスポンスが取得できませんでした。");
+    }
 
     if (!pollResponse.ok) {
       const errorBody = pollJson && typeof pollJson === "object" ? JSON.stringify(pollJson) : pollRaw;

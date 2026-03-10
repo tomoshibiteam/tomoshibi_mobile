@@ -37,9 +37,17 @@ const SERIES_EPISODE_AGENT_INSTRUCTIONS = `
 - checkpoints.carry_over は次回に引き継ぐ状態変化を記述
 - first_episode_seed は 15〜30 分の街歩き体験を想定
 - first_episode_seed.carry_over_hint は次回へ続けたくなる余韻にする
-- 各話は徒歩で複数スポット（2〜4箇所）を巡る前提を守る
+- first_episode_seed.spot_requirements は2〜4件で、各件に
+  - requirement_id
+  - scene_role
+  - spot_role
+  - required_attributes
+  - visit_constraints
+  - tourism_value_type
+  を必ず入れる
 - 単一の屋内拠点で完結させず、街路・公共空間の移動を含める
 - 空中都市・宇宙・海底・閉鎖施設内のみ等、街歩き不能な舞台を避ける
+- ここで具体スポット名は決めない（spot_roleまで）
 `;
 
 export const seriesEpisodePlannerAgent = new Agent({
@@ -51,7 +59,7 @@ export const seriesEpisodePlannerAgent = new Agent({
 
 const clean = (value?: string) => (value || "").replace(/\s+/g, " ").trim();
 const WALK_ROUTE_PATTERN = /(徒歩|街歩き|周遊|散策)/;
-const INCOMPATIBLE_SPOT_PATTERN =
+const INCOMPATIBLE_ROLE_PATTERN =
   /(オフィス内(?:だけ|のみ)?|社内(?:だけ|のみ)?|会議室|閉鎖施設|空中都市|天空都市|浮遊都市|宇宙|海底|塔内(?:だけ|のみ)?)/i;
 
 const dedupeStrings = (values: string[]) => {
@@ -72,13 +80,46 @@ const ensureWalkableRouteStyle = (value?: string) => {
   return "徒歩中心の周遊";
 };
 
-const normalizeSuggestedSpots = (spots: string[], fallback: string[]) => {
-  const filtered = dedupeStrings(spots).filter((spot) => !INCOMPATIBLE_SPOT_PATTERN.test(spot));
-  const fallbackFiltered = dedupeStrings(fallback).filter((spot) => !INCOMPATIBLE_SPOT_PATTERN.test(spot));
-  const merged = dedupeStrings([...filtered, ...fallbackFiltered]);
-  if (merged.length >= 2) return merged.slice(0, 6);
-  if (merged.length === 1) return [merged[0], "商店街"];
-  return ["駅前広場", "商店街"];
+const SCENE_ROLES = ["起", "承", "転", "結"] as const;
+type SceneRole = (typeof SCENE_ROLES)[number];
+const isSceneRole = (value: string): value is SceneRole =>
+  (SCENE_ROLES as readonly string[]).includes(value);
+
+const resolveSceneRoleForIndex = (index: number, count: number): SceneRole => {
+  if (count <= 2) return index === 0 ? "起" : "結";
+  if (index === 0) return "起";
+  if (index === count - 1) return "結";
+  return index === 1 ? "承" : "転";
+};
+
+const buildFallbackSpotRequirements = (setting: string) => {
+  const area = clean(setting) || "中心エリア";
+  return [
+    {
+      requirement_id: "req_1",
+      scene_role: "起" as const,
+      spot_role: "導入用の静かな公共スポット",
+      required_attributes: ["公共アクセス可能", "徒歩導線の起点", `${area}らしさが分かる`],
+      visit_constraints: ["日中訪問を想定", "単独屋内完結にしない"],
+      tourism_value_type: "地域導入",
+    },
+    {
+      requirement_id: "req_2",
+      scene_role: "承" as const,
+      spot_role: "関係進展が起こる回遊拠点",
+      required_attributes: ["滞在余地がある", "会話が発生しやすい", "観光文脈に接続できる"],
+      visit_constraints: ["徒歩10〜20分圏", "公共空間または準公共空間"],
+      tourism_value_type: "文化体験",
+    },
+    {
+      requirement_id: "req_3",
+      scene_role: "結" as const,
+      spot_role: "最後の余韻に向く見晴らし地点",
+      required_attributes: ["締めに使える景観", "次話フックを置きやすい", "安全にアクセス可能"],
+      visit_constraints: ["日没後も危険が低い", "徒歩で戻れる範囲"],
+      tourism_value_type: "景観",
+    },
+  ];
 };
 
 const hasModelApiKey = () =>
@@ -128,8 +169,40 @@ const buildFallbackEpisodeSeed = (input: SeriesEpisodePlannerAgentInput) => ({
   route_style: "徒歩中心の周遊",
   completion_condition: "主要スポットを2つ以上巡り、次回につながる発見を得る。",
   carry_over_hint: "相棒との会話で新たな疑問が残る。",
-  suggested_spots: [input.world.setting || "中心エリア", "駅前広場", "静かな裏通り"],
+  spot_requirements: buildFallbackSpotRequirements(input.world.setting),
 });
+
+const normalizeSpotRequirements = (
+  raw: z.infer<typeof seriesEpisodeSeedSchema>["spot_requirements"] | undefined,
+  fallback: z.infer<typeof seriesEpisodeSeedSchema>["spot_requirements"]
+) => {
+  const base = Array.isArray(raw) ? raw : [];
+  const normalized = base
+    .slice(0, 4)
+    .map((row, index) => {
+      const fallbackRow = fallback[Math.min(index, fallback.length - 1)];
+      const sceneRoleRaw = clean(String(row.scene_role || ""));
+      const sceneRole = isSceneRole(sceneRoleRaw) ? sceneRoleRaw : resolveSceneRoleForIndex(index, Math.max(base.length, 2));
+      const spotRole = clean(row.spot_role) || fallbackRow?.spot_role || "回遊スポット";
+      if (!spotRole || INCOMPATIBLE_ROLE_PATTERN.test(spotRole)) return null;
+      return {
+        requirement_id: clean(row.requirement_id) || `req_${index + 1}`,
+        scene_role: sceneRole,
+        spot_role: spotRole,
+        required_attributes: dedupeStrings(
+          (Array.isArray(row.required_attributes) ? row.required_attributes : []).map((item) => clean(String(item)))
+        ).slice(0, 8),
+        visit_constraints: dedupeStrings(
+          (Array.isArray(row.visit_constraints) ? row.visit_constraints : []).map((item) => clean(String(item)))
+        ).slice(0, 8),
+        tourism_value_type: clean(row.tourism_value_type) || fallbackRow?.tourism_value_type || "地域体験",
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => Boolean(row));
+
+  if (normalized.length < 2) return fallback;
+  return normalized;
+};
 
 const normalizeCheckpoint = (
   raw: z.infer<typeof seriesCheckpointSchema>,
@@ -152,10 +225,6 @@ const normalizeEpisodeSeed = (
 ) => {
   const duration = Number.parseInt(String(raw.expected_duration_minutes), 10);
   const safeDuration = Number.isFinite(duration) ? Math.max(10, Math.min(45, duration)) : fallback.expected_duration_minutes;
-  const suggestedSpots = normalizeSuggestedSpots(
-    Array.isArray(raw.suggested_spots) ? raw.suggested_spots.map((item) => clean(item)).filter(Boolean) : [],
-    fallback.suggested_spots
-  );
 
   return {
     title: clean(raw.title) || fallback.title,
@@ -165,7 +234,7 @@ const normalizeEpisodeSeed = (
     route_style: ensureWalkableRouteStyle(raw.route_style || fallback.route_style),
     completion_condition: clean(raw.completion_condition) || fallback.completion_condition,
     carry_over_hint: clean(raw.carry_over_hint) || fallback.carry_over_hint,
-    suggested_spots: suggestedSpots,
+    spot_requirements: normalizeSpotRequirements(raw.spot_requirements, fallback.spot_requirements),
   };
 };
 
@@ -230,7 +299,9 @@ export const generateSeriesEpisodePlan = async (
 ## TOMOSHIBI 制約（最優先）
 - 各 checkpoint は「徒歩で2〜4スポットを巡る」導線を前提にする。
 - first_episode_seed.route_style は徒歩中心にする。
-- first_episode_seed.suggested_spots は2件以上で、街歩き可能な地上スポットにする。
+- first_episode_seed.spot_requirements は2〜4件にする。
+- spot_requirements では spot_role / scene_role / required_attributes / visit_constraints / tourism_value_type を必ず出す。
+- 具体スポット名は出さない。
 - 単一屋内完結・空中都市・宇宙・海底・閉鎖施設内のみの舞台は採用しない。
 
 ## キャラクター

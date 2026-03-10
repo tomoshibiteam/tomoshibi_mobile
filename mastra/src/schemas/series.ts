@@ -21,6 +21,7 @@ export const seriesGenerationRequestSchema = z.object({
   prompt: z.string().optional(),
   creator_id: z.string().uuid().optional(),
   language: z.string().optional(),
+  generation_mode: z.enum(["proposal", "full"]).optional(),
   existing_identity_pack: z.unknown().optional(),
   identity_retcon: z.boolean().optional(),
 });
@@ -91,6 +92,8 @@ export const seriesCharacterSchema = z.object({
   id: z.string(),
   name: z.string(),
   role: z.string(),
+  tier: z.enum(["primary", "secondary"]).default("secondary"),
+  must_appear: z.boolean().default(false),
   goal: z.string(),
   arc_start: z.string(),
   arc_end: z.string(),
@@ -145,6 +148,15 @@ export const seriesCheckpointSchema = z.object({
   carry_over: z.string(),
 });
 
+export const seriesEpisodeSeedSpotRequirementSchema = z.object({
+  requirement_id: z.string(),
+  scene_role: z.enum(["起", "承", "転", "結"]),
+  spot_role: z.string(),
+  required_attributes: z.array(z.string()).max(8).default([]),
+  visit_constraints: z.array(z.string()).max(8).default([]),
+  tourism_value_type: z.string(),
+});
+
 export const seriesEpisodeSeedSchema = z.object({
   title: z.string(),
   objective: z.string(),
@@ -153,14 +165,20 @@ export const seriesEpisodeSeedSchema = z.object({
   route_style: z.string(),
   completion_condition: z.string(),
   carry_over_hint: z.string(),
-  suggested_spots: z.array(z.string()).min(1).max(6),
+  spot_requirements: z.array(seriesEpisodeSeedSpotRequirementSchema).min(2).max(4),
+  // Legacy compatibility field. New planner no longer decides concrete spot names.
+  suggested_spots: z.array(z.string()).max(6).optional(),
 });
 
 export const seriesProgressStateSchema = z.object({
   last_completed_episode_no: z.number().int().min(0),
   unresolved_threads: z.array(z.string()),
   revealed_facts: z.array(z.string()),
-  companion_trust_level: z.number().min(0).max(100),
+  relationship_state_summary: z.string().default("関係性は初期状態。"),
+  relationship_flags: z.array(z.string()).default([]),
+  recent_relation_shift: z.array(z.string()).default([]),
+  // Legacy compatibility field. Keep as derived metric input only.
+  companion_trust_level: z.number().min(0).max(100).optional(),
   next_hook: z.string(),
 });
 
@@ -267,6 +285,27 @@ export const seriesOutputSchema = z.object({
   continuity: seriesContinuitySchema,
 });
 
+const seriesSeedRouteDryRunMetricsSchema = z.object({
+  optimizer: z.string(),
+  total_estimated_walk_minutes: z.number().int().min(0),
+  transfer_minutes: z.number().int().min(0),
+  max_leg_minutes: z.number().int().min(0),
+  max_total_walk_minutes: z.number().int().min(0),
+  feasible: z.boolean(),
+  failure_reasons: z.array(z.string()).max(20),
+  optimized_order_indices: z.array(z.number().int().min(0)).max(6),
+  optimized_order_spot_names: z.array(z.string()).max(6),
+});
+
+const seriesSeedRouteDryRunSchema = z.object({
+  feasible: z.boolean(),
+  selected_spots: z.array(z.string()).max(4),
+  failure_reasons: z.array(z.string()).max(20),
+  route_metrics: seriesSeedRouteDryRunMetricsSchema,
+  route_score: z.number().min(0).max(1),
+  continuity_score: z.number().min(0).max(1),
+});
+
 export const seriesWorkflowOutputSchema = z.object({
   series: seriesOutputSchema,
   meta: z.object({
@@ -274,6 +313,7 @@ export const seriesWorkflowOutputSchema = z.object({
     generated_checkpoint_count: z.number().int().min(4).max(8),
     workflow_version: z.string(),
     warnings: z.array(z.string()),
+    first_episode_seed_dry_run: seriesSeedRouteDryRunSchema.optional(),
   }),
 });
 

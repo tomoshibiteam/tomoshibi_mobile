@@ -20,6 +20,7 @@ import {
   type GameplayCharacter,
   type GameplayMessage,
   type GameplayQuest,
+  type GameplaySpot,
 } from "@/services/gameplay";
 import { getSupabaseOrThrow, isSupabaseConfigured } from "@/lib/supabase";
 import { useSessionUserId } from "@/hooks/useSessionUser";
@@ -71,6 +72,15 @@ const CHOICE_LINE_PATTERN = /^\s*([A-Za-zＡ-Ｚａ-ｚ0-9０-９])[\.．:：\)�
 const AUTO_CHOICE_LABELS = ["A", "B", "C", "D"] as const;
 const NEAR_THRESHOLD_M = 120;
 const DEFAULT_MAP_CENTER = { lat: 35.681236, lng: 139.767125 };
+
+const toCoordinate = (
+  lat?: number | null,
+  lng?: number | null
+): { lat: number; lng: number } | null => {
+  if (typeof lat !== "number" || typeof lng !== "number") return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng };
+};
 
 const normalizeText = (value?: string | null) =>
   (value || "").replace(/\s+/g, " ").trim();
@@ -522,6 +532,82 @@ const ensureCharacterPresence = (
   ];
 };
 
+const SpotRouteStrip = ({
+  spots,
+  currentSpotIndex,
+  theme = "dark",
+}: {
+  spots: GameplaySpot[];
+  currentSpotIndex: number;
+  theme?: "light" | "dark";
+}) => (
+  <ScrollView
+    horizontal
+    showsHorizontalScrollIndicator={false}
+    contentContainerStyle={{ paddingRight: 4 }}
+  >
+    <View className="flex-row items-center gap-2">
+      {spots.map((spot, index) => {
+        const isCompleted = index < currentSpotIndex;
+        const isCurrent = index === currentSpotIndex;
+        const toneClass =
+          theme === "light"
+            ? isCompleted
+              ? "border-[#8CC8A4]/80 bg-[#E8F6EE]"
+              : isCurrent
+                ? "border-[#E7BB8D]/80 bg-[#FFF3E7]"
+                : "border-[#E4DCD4] bg-[#FAF7F4]"
+            : isCompleted
+              ? "border-[#95DFB1]/60 bg-[#2A6B4C]/35"
+              : isCurrent
+                ? "border-[#F6B76F]/70 bg-[#EE8C2B]/28"
+                : "border-white/20 bg-white/10";
+        const label = isCompleted ? "CLEAR" : isCurrent ? "NOW" : "NEXT";
+        const labelClass =
+          theme === "light"
+            ? isCompleted
+              ? "text-[#33744D]"
+              : isCurrent
+                ? "text-[#8A5E36]"
+                : "text-[#7D6F63]"
+            : isCompleted
+              ? "text-[#B5F0CA]"
+              : isCurrent
+                ? "text-[#F8DAB3]"
+                : "text-white/65";
+        const textClass =
+          theme === "light"
+            ? isCompleted || isCurrent
+              ? "text-[#2E251D]"
+              : "text-[#5E5146]"
+            : isCompleted || isCurrent
+              ? "text-white"
+              : "text-white/78";
+        const chevronColor = theme === "light" ? "#7D6F63" : "#FFFFFF88";
+
+        return (
+          <View key={spot.id} className="flex-row items-center gap-2">
+            <View className={`min-w-[98px] rounded-xl border px-2.5 py-1.5 ${toneClass}`}>
+              <Text
+                className={`text-[9px] tracking-[1.4px] ${labelClass}`}
+                style={{ fontFamily: fonts.displayBold }}
+              >
+                {`SPOT ${index + 1} · ${label}`}
+              </Text>
+              <Text className={`mt-0.5 text-xs ${textClass}`} style={{ fontFamily: fonts.bodyMedium }} numberOfLines={1}>
+                {spot.name}
+              </Text>
+            </View>
+            {index < spots.length - 1 ? (
+              <Ionicons name="chevron-forward" size={14} color={chevronColor} />
+            ) : null}
+          </View>
+        );
+      })}
+    </View>
+  </ScrollView>
+);
+
 const TypewriterDialogueOverlay = ({
   line,
   isLast,
@@ -713,6 +799,12 @@ export const GamePlayScreen = ({ navigation, route }: Props) => {
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(
     null
   );
+  const [resolvedSpotCoords, setResolvedSpotCoords] = useState<
+    Record<string, { lat: number; lng: number }>
+  >({});
+  const [geocodeFailedSpotIds, setGeocodeFailedSpotIds] = useState<
+    Record<string, true>
+  >({});
   const [distance, setDistance] = useState<number | null>(null);
   const [locationStatus, setLocationStatus] = useState<LocationStatus>(
     "locationUnavailable"
@@ -728,6 +820,24 @@ export const GamePlayScreen = ({ navigation, route }: Props) => {
   const nextSpot = quest?.spots[currentSpotIndex + 1] || null;
   const isLastSpot = Boolean(quest && currentSpotIndex >= quest.spots.length - 1);
   const activeDialogue = dialogues[dialogueIndex] || null;
+
+  const resolveSpotCoordinate = useCallback(
+    (spot?: GameplaySpot | null) => {
+      if (!spot) return null;
+      return toCoordinate(spot.lat, spot.lng) || resolvedSpotCoords[spot.id] || null;
+    },
+    [resolvedSpotCoords]
+  );
+
+  const currentSpotCoords = useMemo(
+    () => resolveSpotCoordinate(currentSpot),
+    [resolveSpotCoordinate, currentSpot]
+  );
+
+  const nextSpotCoords = useMemo(
+    () => resolveSpotCoordinate(nextSpot),
+    [resolveSpotCoordinate, nextSpot]
+  );
 
   const characterNameMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -1075,7 +1185,7 @@ export const GamePlayScreen = ({ navigation, route }: Props) => {
   const canArrive =
     mode === "travel" &&
     gpsEnabled &&
-    (currentSpot?.lat == null || currentSpot?.lng == null || locationStatus === "nearTarget" || __DEV__);
+    (!currentSpotCoords || locationStatus === "nearTarget" || __DEV__);
 
   const handleArrive = useCallback(() => {
     if (!canArrive) return;
@@ -1348,6 +1458,8 @@ export const GamePlayScreen = ({ navigation, route }: Props) => {
 
         setQuest(loaded);
         setCurrentSpotIndex(safeIndex);
+        setResolvedSpotCoords({});
+        setGeocodeFailedSpotIds({});
         setPrologueDialogues(builtPrologue);
         setEpilogueDialogues(builtEpilogue);
         setDialogues([]);
@@ -1407,6 +1519,88 @@ export const GamePlayScreen = ({ navigation, route }: Props) => {
   ]);
 
   useEffect(() => {
+    if (!quest) return;
+
+    const candidates = [currentSpot, nextSpot].filter(
+      (spot): spot is GameplaySpot => Boolean(spot)
+    );
+
+    const targets = candidates.filter((spot) => {
+      if (toCoordinate(spot.lat, spot.lng)) return false;
+      if (resolvedSpotCoords[spot.id]) return false;
+      if (geocodeFailedSpotIds[spot.id]) return false;
+      return true;
+    });
+
+    if (targets.length === 0) return;
+
+    let active = true;
+
+    const resolveByGeocoding = async () => {
+      for (const spot of targets) {
+        const queries = [
+          normalizeText(`${spot.name} ${quest.areaName || ""}`),
+          normalizeText(spot.name),
+          normalizeText(quest.areaName || ""),
+        ].filter(Boolean);
+
+        let resolved = false;
+
+        for (const query of queries) {
+          try {
+            const geocoded = await Location.geocodeAsync(query);
+            const first = geocoded.find(
+              (item) => Number.isFinite(item.latitude) && Number.isFinite(item.longitude)
+            );
+            if (!first || !active) continue;
+
+            setResolvedSpotCoords((prev) => {
+              if (prev[spot.id]) return prev;
+              return {
+                ...prev,
+                [spot.id]: { lat: first.latitude, lng: first.longitude },
+              };
+            });
+            resolved = true;
+            break;
+          } catch (error) {
+            console.warn("GamePlayScreen: spot geocoding failed", error);
+          }
+        }
+
+        if (!resolved && active) {
+          setGeocodeFailedSpotIds((prev) =>
+            prev[spot.id]
+              ? prev
+              : {
+                  ...prev,
+                  [spot.id]: true,
+                }
+          );
+        }
+      }
+    };
+
+    void resolveByGeocoding();
+
+    return () => {
+      active = false;
+    };
+  }, [
+    currentSpot?.id,
+    currentSpot?.name,
+    currentSpot?.lat,
+    currentSpot?.lng,
+    nextSpot?.id,
+    nextSpot?.name,
+    nextSpot?.lat,
+    nextSpot?.lng,
+    quest?.areaName,
+    resolvedSpotCoords,
+    geocodeFailedSpotIds,
+  ]);
+
+  useEffect(() => {
     if (!gpsEnabled) {
       setDistance(null);
       setLocationStatus("locationUnavailable");
@@ -1417,7 +1611,7 @@ export const GamePlayScreen = ({ navigation, route }: Props) => {
       return;
     }
 
-    if (!currentSpot || currentSpot.lat == null || currentSpot.lng == null) {
+    if (!currentSpot || !currentSpotCoords) {
       setDistance(null);
       setLocationStatus("locationUnavailable");
       if (locationSubscriptionRef.current) {
@@ -1452,8 +1646,8 @@ export const GamePlayScreen = ({ navigation, route }: Props) => {
             const d = haversineDistance(
               nextLocation.lat,
               nextLocation.lng,
-              currentSpot.lat as number,
-              currentSpot.lng as number
+              currentSpotCoords.lat,
+              currentSpotCoords.lng
             );
             setDistance(d);
             setLocationStatus(d <= NEAR_THRESHOLD_M ? "nearTarget" : "tooFar");
@@ -1477,7 +1671,7 @@ export const GamePlayScreen = ({ navigation, route }: Props) => {
         locationSubscriptionRef.current = null;
       }
     };
-  }, [gpsEnabled, currentSpot?.id, currentSpot?.lat, currentSpot?.lng]);
+  }, [gpsEnabled, currentSpot?.id, currentSpotCoords?.lat, currentSpotCoords?.lng]);
 
   useEffect(() => {
     let active = true;
@@ -1576,14 +1770,45 @@ export const GamePlayScreen = ({ navigation, route }: Props) => {
     mode === "travel" && currentSpotIndex === 0 && !hasPlayedOpeningPrologue
       ? "この到着でゲーム開始。到着後にプロローグと第1章へ進みます。"
       : "到着後に会話と謎解きが始まり、次の章へ進行します。";
+  const isStartPointPhase =
+    mode === "travel" && currentSpotIndex === 0 && !hasPlayedOpeningPrologue;
 
   const travelPrimaryCtaText = canArrive
-    ? mode === "travel" && currentSpotIndex === 0 && !hasPlayedOpeningPrologue
+    ? isStartPointPhase
       ? "到着してゲーム開始"
       : "到着して次のミッション開始"
-    : mode === "travel" && currentSpotIndex === 0 && !hasPlayedOpeningPrologue
+    : isStartPointPhase
       ? "最初のスポット付近で開始可能"
       : "目的地付近で有効になります";
+  const isMapMode = mode === "travel" || mode === "location_gate";
+  const currentTargetBadgeLabel =
+    currentSpotIndex === 0 && !hasPlayedOpeningPrologue ? "START" : "GOAL";
+  const mapMaskClass =
+    mode === "travel"
+      ? "bg-black/38"
+      : mode === "location_gate"
+        ? "bg-black/48"
+        : "bg-black/62";
+  const travelStatusText = !gpsEnabled
+    ? "現在地を有効化すると、あなたの現在地と目的地までのルートを表示します。"
+    : locationStatus === "nearTarget"
+      ? "スポット付近です。ボタンを押してゲームプレイを開始できます。"
+      : locationStatus === "tooFar"
+      ? "スポット付近まで近づくと開始ボタンが有効になります。"
+      : "現在地を測位しています…";
+  const travelCardClass = isStartPointPhase
+    ? "rounded-2xl border border-[#E5DED7] bg-white px-4 py-4"
+    : "rounded-2xl border border-[#EE8C2B]/28 bg-black/72 px-4 py-4";
+  const travelMetaClass = isStartPointPhase ? "text-[#7F7164]" : "text-white/60";
+  const travelTitleClass = isStartPointPhase ? "text-[#2B2118]" : "text-white";
+  const travelSubClass = isStartPointPhase ? "text-[#6A5A4D]" : "text-white/70";
+  const travelBodyClass = isStartPointPhase ? "text-[#5A4B3F]" : "text-white/72";
+  const travelStatusClass = isStartPointPhase ? "text-[#5A4B3F]" : "text-white/75";
+  const travelSectionLabelClass = isStartPointPhase ? "text-[#8A6C54]" : "text-[#F6D4A7]";
+  const travelDistanceValueClass = isStartPointPhase ? "text-[#D97824]" : "text-[#F6B76F]";
+  const travelWalkMetaClass = isStartPointPhase ? "text-[#7F7164]" : "text-white/60";
+  const travelErrorClass = isStartPointPhase ? "text-[#B33B2F]" : "text-[#FFC7C3]";
+  const travelEstimatedClass = isStartPointPhase ? "text-[#7C6450]" : "text-[#F6D4A7]";
 
   if (loading) {
     return (
@@ -1619,28 +1844,40 @@ export const GamePlayScreen = ({ navigation, route }: Props) => {
     );
   }
 
-  const hasSpotCoordinates = currentSpot.lat != null && currentSpot.lng != null;
+  const hasSpotCoordinates = Boolean(currentSpotCoords);
   const mapCenter = hasSpotCoordinates
-    ? { lat: currentSpot.lat as number, lng: currentSpot.lng as number }
+    ? currentSpotCoords!
     : userLocation || DEFAULT_MAP_CENTER;
 
   const routeCoordinates =
-    userLocation && hasSpotCoordinates
+    userLocation && currentSpotCoords
       ? [
           { latitude: userLocation.lat, longitude: userLocation.lng },
           {
-            latitude: currentSpot.lat as number,
-            longitude: currentSpot.lng as number,
+            latitude: currentSpotCoords.lat,
+            longitude: currentSpotCoords.lng,
           },
         ]
       : null;
+  const spotToNextRouteCoordinates =
+    currentSpotCoords && nextSpotCoords
+      ? [
+          { latitude: currentSpotCoords.lat, longitude: currentSpotCoords.lng },
+          { latitude: nextSpotCoords.lat, longitude: nextSpotCoords.lng },
+        ]
+      : null;
+
+  const isUsingEstimatedSpotCoordinate =
+    hasSpotCoordinates &&
+    (typeof currentSpot.lat !== "number" || typeof currentSpot.lng !== "number");
+  const spotBackgroundImage = currentSpot.backgroundImage || quest.coverImageUrl || undefined;
 
   return (
     <View className="flex-1 bg-black">
-      {mode === "travel" && hasSpotCoordinates ? (
+      {isMapMode ? (
         <View className="absolute inset-0">
           <MapView
-            key={currentSpot.id}
+            key={`${currentSpot.id}:${currentSpotCoords?.lat ?? "na"}:${currentSpotCoords?.lng ?? "na"}`}
             style={{ flex: 1 }}
             initialRegion={{
               latitude: mapCenter.lat,
@@ -1664,24 +1901,55 @@ export const GamePlayScreen = ({ navigation, route }: Props) => {
               />
             ) : null}
 
-            <Marker
-              coordinate={{
-                latitude: currentSpot.lat as number,
-                longitude: currentSpot.lng as number,
-              }}
-              title={currentSpot.name}
-              pinColor="#EE8C2B"
-            />
+            {spotToNextRouteCoordinates ? (
+              <Polyline
+                coordinates={spotToNextRouteCoordinates}
+                strokeColor="#FFFFFF99"
+                strokeWidth={2}
+                lineDashPattern={[4, 4]}
+              />
+            ) : null}
 
-            {nextSpot && nextSpot.lat != null && nextSpot.lng != null ? (
+            {currentSpotCoords ? (
               <Marker
                 coordinate={{
-                  latitude: nextSpot.lat,
-                  longitude: nextSpot.lng,
+                  latitude: currentSpotCoords.lat,
+                  longitude: currentSpotCoords.lng,
+                }}
+                title={currentSpot.name}
+              >
+                <View className="items-center">
+                  <View className="w-11 h-11 rounded-full border border-[#FFE0B8]/70 bg-[#EE8C2B] items-center justify-center">
+                    <Ionicons name="location" size={18} color="#FFFFFF" />
+                  </View>
+                  <View className="mt-1 rounded-full border border-[#FFE0B8]/45 bg-black/60 px-1.5 py-[1px]">
+                    <Text className="text-[8px] tracking-[1.5px] text-[#FFE6C8]" style={{ fontFamily: fonts.displayBold }}>
+                      {currentTargetBadgeLabel}
+                    </Text>
+                  </View>
+                </View>
+              </Marker>
+            ) : null}
+
+            {nextSpot && nextSpotCoords ? (
+              <Marker
+                coordinate={{
+                  latitude: nextSpotCoords.lat,
+                  longitude: nextSpotCoords.lng,
                 }}
                 title={nextSpot.name}
-                pinColor="#B6ADA3"
-              />
+              >
+                <View className="items-center">
+                  <View className="w-9 h-9 rounded-full border border-[#F0ECE7]/70 bg-[#6A5F55]/90 items-center justify-center">
+                    <Ionicons name="flag-outline" size={14} color="#F7F1E8" />
+                  </View>
+                  <View className="mt-1 rounded-full border border-white/25 bg-black/55 px-1.5 py-[1px]">
+                    <Text className="text-[8px] tracking-[1.3px] text-white/85" style={{ fontFamily: fonts.displayBold }}>
+                      NEXT
+                    </Text>
+                  </View>
+                </View>
+              </Marker>
             ) : null}
 
             {userLocation ? (
@@ -1718,12 +1986,12 @@ export const GamePlayScreen = ({ navigation, route }: Props) => {
         </View>
       ) : (
         <Image
-          source={{ uri: currentSpot.backgroundImage || quest.coverImageUrl || undefined }}
+          source={{ uri: spotBackgroundImage }}
           className="absolute inset-0 w-full h-full"
           resizeMode="cover"
         />
       )}
-      <View className={`absolute inset-0 ${mode === "travel" ? "bg-black/38" : "bg-black/62"}`} />
+      <View className={`absolute inset-0 ${mapMaskClass}`} />
 
       {mode !== "opening_prologue" ? (
         <SafeAreaView edges={["top"]} className="absolute top-0 left-0 right-0 z-20 px-4 pt-1">
@@ -1822,22 +2090,36 @@ export const GamePlayScreen = ({ navigation, route }: Props) => {
 
       {mode === "location_gate" ? (
         <View className="absolute inset-0 z-40 items-center justify-center bg-black/70 px-6">
-          <View className="w-full rounded-2xl border border-[#EE8C2B]/35 bg-black/72 px-5 py-5">
+          <View className="w-full rounded-2xl border border-[#E5DED7] bg-white px-5 py-5">
             <View className="mb-3 flex-row items-center gap-2">
               <Ionicons name="location-outline" size={16} color="#EE8C2B" />
-              <Text className="text-[11px] text-[#F5D7B0] tracking-[1.5px]" style={{ fontFamily: fonts.displayBold }}>
+              <Text className="text-[11px] text-[#8A6C54] tracking-[1.5px]" style={{ fontFamily: fonts.displayBold }}>
                 LOCATION REQUIRED
               </Text>
             </View>
-            <Text className="text-white text-lg mb-2" style={{ fontFamily: fonts.displayBold }}>
+            <Text className="text-[#2B2118] text-lg mb-2" style={{ fontFamily: fonts.displayBold }}>
               現在地を有効化してください
             </Text>
-            <Text className="text-white/80 text-sm leading-6 mb-4" style={{ fontFamily: fonts.bodyRegular }}>
+            <Text className="text-[#5A4B3F] text-sm leading-6 mb-4" style={{ fontFamily: fonts.bodyRegular }}>
               ゲーム開始前に位置情報の許可が必要です。許可後に移動フェーズへ進みます。
             </Text>
 
+            <View className="rounded-xl border border-[#E9E1D9] bg-[#F8F5F2] px-3 py-2 mb-3">
+              <Text className="text-[#8A6C54] text-[10px] tracking-[1.5px] mb-1" style={{ fontFamily: fonts.displayBold }}>
+                開始スポット
+              </Text>
+              <Text className="text-[#2B2118] text-sm mb-2" style={{ fontFamily: fonts.displayBold }}>
+                {currentSpot.name}
+              </Text>
+              <SpotRouteStrip
+                spots={quest.spots}
+                currentSpotIndex={currentSpotIndex}
+                theme="light"
+              />
+            </View>
+
             {gpsError ? (
-              <Text className="text-[#FFC7C3] text-xs mb-3" style={{ fontFamily: fonts.bodyRegular }}>
+              <Text className="text-[#B33B2F] text-xs mb-3" style={{ fontFamily: fonts.bodyRegular }}>
                 {gpsError}
               </Text>
             ) : null}
@@ -1858,7 +2140,7 @@ export const GamePlayScreen = ({ navigation, route }: Props) => {
       {mode === "opening_prologue" ? (
         <View className="absolute inset-0 z-40 bg-[#0A0807]">
           <Image
-            source={{ uri: currentSpot.backgroundImage || quest.coverImageUrl || undefined }}
+            source={{ uri: spotBackgroundImage }}
             className="absolute inset-0 w-full h-full"
             resizeMode="cover"
           />
@@ -1888,25 +2170,25 @@ export const GamePlayScreen = ({ navigation, route }: Props) => {
 
       {mode === "travel" ? (
         <SafeAreaView edges={["bottom"]} className="absolute bottom-0 left-0 right-0 z-30 px-4 pb-3">
-          <View className="rounded-2xl border border-[#EE8C2B]/28 bg-black/72 px-4 py-4">
+          <View className={travelCardClass}>
             <View className="flex-row items-start justify-between mb-3">
               <View className="flex-1 pr-4">
-                <Text className="text-[#F5D7B0] text-[11px] tracking-[2px]" style={{ fontFamily: fonts.displayBold }}>
+                <Text className={`text-[11px] tracking-[2px] ${travelSectionLabelClass}`} style={{ fontFamily: fonts.displayBold }}>
                   {travelPhaseLabel}
                 </Text>
-                <Text className="text-white text-lg mt-1" style={{ fontFamily: fonts.displayBold }}>
+                <Text className={`text-lg mt-1 ${travelTitleClass}`} style={{ fontFamily: fonts.displayBold }}>
                   {currentSpot.name}
                 </Text>
-                <Text className="text-white/70 text-xs mt-1" style={{ fontFamily: fonts.bodyRegular }}>
+                <Text className={`text-xs mt-1 ${travelSubClass}`} style={{ fontFamily: fonts.bodyRegular }}>
                   {travelHeadline}
                 </Text>
               </View>
 
               <View className="items-end">
-                <Text className="text-white/60 text-[11px]" style={{ fontFamily: fonts.bodyRegular }}>
+                <Text className={`text-[11px] ${travelMetaClass}`} style={{ fontFamily: fonts.bodyRegular }}>
                   距離
                 </Text>
-                <Text className="text-[#F6B76F] text-sm" style={{ fontFamily: fonts.displayBold }}>
+                <Text className={`text-sm ${travelDistanceValueClass}`} style={{ fontFamily: fonts.displayBold }}>
                   {formatDistance(distance)}
                 </Text>
               </View>
@@ -1914,20 +2196,41 @@ export const GamePlayScreen = ({ navigation, route }: Props) => {
 
             <View className="flex-row items-start gap-2 mb-3">
               <Ionicons name="compass-outline" size={14} color="#F6B76F" style={{ marginTop: 1 }} />
-              <Text className="text-white/72 text-xs flex-1" style={{ fontFamily: fonts.bodyRegular }}>
+              <Text className={`text-xs flex-1 ${travelBodyClass}`} style={{ fontFamily: fonts.bodyRegular }}>
                 {travelGuideText}
               </Text>
             </View>
 
+            <Text className={`text-[11px] mb-2 ${travelStatusClass}`} style={{ fontFamily: fonts.bodyRegular }}>
+              {travelStatusText}
+            </Text>
+
+            <View className="mb-3">
+              <Text className={`text-[10px] tracking-[1.8px] mb-1.5 ${travelSectionLabelClass}`} style={{ fontFamily: fonts.displayBold }}>
+                SPOT ROUTE
+              </Text>
+              <SpotRouteStrip
+                spots={quest.spots}
+                currentSpotIndex={currentSpotIndex}
+                theme={isStartPointPhase ? "light" : "dark"}
+              />
+            </View>
+
             {distance != null ? (
-              <Text className="text-white/60 text-[11px] mb-3" style={{ fontFamily: fonts.bodyRegular }}>
+              <Text className={`text-[11px] mb-3 ${travelWalkMetaClass}`} style={{ fontFamily: fonts.bodyRegular }}>
                 徒歩の目安: 約{Math.ceil((distance / 1000 / 5) * 60)}分
               </Text>
             ) : null}
 
             {gpsError ? (
-              <Text className="text-[#FFC7C3] text-[11px] mb-2" style={{ fontFamily: fonts.bodyRegular }}>
+              <Text className={`text-[11px] mb-2 ${travelErrorClass}`} style={{ fontFamily: fonts.bodyRegular }}>
                 {gpsError}
+              </Text>
+            ) : null}
+
+            {isUsingEstimatedSpotCoordinate ? (
+              <Text className={`text-[11px] mb-2 ${travelEstimatedClass}`} style={{ fontFamily: fonts.bodyRegular }}>
+                スポット座標を推定して地図を表示しています。
               </Text>
             ) : null}
 
@@ -2162,102 +2465,115 @@ export const GamePlayScreen = ({ navigation, route }: Props) => {
             </SafeAreaView>
           </View>
         ) : (
-          <SafeAreaView
-            edges={["bottom"]}
-            className="absolute bottom-0 left-0 right-0 z-30 px-4 pb-3"
-          >
-            <View className="rounded-2xl border border-[#EE8C2B]/28 bg-black/72 px-4 py-4">
-              <View className="flex-row items-center gap-3 mb-4">
-                <View className="w-11 h-11 rounded-xl border border-[#F6B76F]/35 bg-[#EE8C2B]/15 items-center justify-center">
-                  <Ionicons name="help-circle-outline" size={20} color="#F6B76F" />
+          <View className="absolute inset-0 z-30 bg-[#0E0C0A]">
+            <SafeAreaView edges={["top", "bottom"]} className="flex-1">
+              <View className="pt-5 pb-3 px-4">
+                <View className="flex-row items-center gap-3 mb-3">
+                  <View className="w-11 h-11 rounded-xl border border-[#F6B76F]/35 bg-[#EE8C2B]/15 items-center justify-center">
+                    <Ionicons name="help-circle-outline" size={20} color="#F6B76F" />
+                  </View>
+                  <View className="flex-1">
+                    <Text className="text-[#F6D4A7] text-[10px] tracking-[2px]" style={{ fontFamily: fonts.displayBold }}>
+                      MISSION
+                    </Text>
+                    <Text className="text-white text-base" style={{ fontFamily: fonts.displayBold }}>
+                      {currentSpot.name}の謎
+                    </Text>
+                  </View>
                 </View>
-                <View className="flex-1">
-                  <Text className="text-[#F6D4A7] text-[10px] tracking-[2px]" style={{ fontFamily: fonts.displayBold }}>
-                    MISSION
-                  </Text>
-                  <Text className="text-white text-base" style={{ fontFamily: fonts.displayBold }}>
-                    {currentSpot.name}の謎
+
+                <View className="rounded-xl border border-white/15 bg-white/8 px-3 py-2">
+                  <Text className="text-[11px] text-white/75" style={{ fontFamily: fonts.bodyRegular }}>
+                    ミス: {wrongAnswers} / 試行: {attemptCount} / ヒント: {hintsUsed}
                   </Text>
                 </View>
               </View>
 
-              <View className="mb-3 rounded-xl border border-white/15 bg-white/8 px-4 py-3">
-                <Text className="text-white text-[15px] leading-6" style={{ fontFamily: fonts.bodyRegular }}>
-                  {puzzlePromptText}
-                </Text>
-              </View>
-
-              {visibleHints.length > 0 ? (
-                <View className="mb-3 gap-1.5">
-                  {visibleHints.map((hint, index) => (
-                    <View
-                      key={`${currentSpot.id}-hint-${index}`}
-                      className="rounded-lg border border-[#F6B76F]/28 bg-[#EE8C2B]/12 px-2.5 py-1.5"
-                    >
-                      <Text className="text-[12px] text-[#FBE9D3]" style={{ fontFamily: fonts.bodyRegular }}>
-                        ヒント{index + 1}: {hint}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              ) : null}
-
-              <TextInput
-                value={puzzleInput}
-                onChangeText={setPuzzleInput}
-                placeholder="答えを入力"
-                placeholderTextColor="#FFFFFF66"
-                className={`h-11 rounded-xl border bg-white/10 px-3 text-sm text-white mb-2 ${
-                  puzzleState === "correct"
-                    ? "border-[#95DFB1]/60"
-                    : puzzleState === "incorrect"
-                      ? "border-[#EBAAAA]/60"
-                      : "border-white/20"
-                }`}
-                style={{ fontFamily: fonts.bodyRegular }}
-              />
-
-              {puzzleError ? (
-                <Text className="text-[12px] text-[#FFC7C3] mb-2" style={{ fontFamily: fonts.bodyRegular }}>
-                  {puzzleError}
-                </Text>
-              ) : null}
-
-              <View className="flex-row items-center gap-2 mb-2">
-                <Pressable
-                  onPress={handleRevealHint}
-                  disabled={revealedHintLevel >= (currentSpot.puzzleHints || []).length}
-                  className="flex-1 h-10 rounded-xl border border-white/20 bg-white/5 items-center justify-center flex-row gap-1.5"
-                >
-                  <Ionicons name="bulb-outline" size={14} color="#FFFFFFE0" />
-                  <Text className="text-white/90 text-sm" style={{ fontFamily: fonts.bodyMedium }}>
-                    ヒントを見る
-                  </Text>
-                </Pressable>
-
-                <Pressable
-                  onPress={handleRevealAnswer}
-                  disabled={attemptCount < 3 || !currentSpot.puzzleAnswer}
-                  className="flex-1 h-10 rounded-xl border border-white/20 bg-white/5 items-center justify-center"
-                >
-                  <Text className="text-white/90 text-sm" style={{ fontFamily: fonts.bodyMedium }}>
-                    答えを見る
-                  </Text>
-                </Pressable>
-              </View>
-
-              <Pressable
-                onPress={handleSubmitPuzzle}
-                className="h-11 rounded-xl bg-[#EE8C2B] items-center justify-center"
+              <ScrollView
+                className="flex-1 px-4"
+                contentContainerStyle={{ paddingBottom: 10 }}
+                showsVerticalScrollIndicator={false}
               >
-                <Text className="text-white text-sm" style={{ fontFamily: fonts.displayBold }}>
-                  {puzzleState === "correct" || puzzleState === "revealedAnswer"
-                    ? "次へ進む"
-                    : "回答する"}
-                </Text>
-              </Pressable>
-            </View>
-          </SafeAreaView>
+                <View className="mb-3 rounded-xl border border-white/15 bg-white/8 px-4 py-3">
+                  <Text className="text-white text-[15px] leading-6" style={{ fontFamily: fonts.bodyRegular }}>
+                    {puzzlePromptText}
+                  </Text>
+                </View>
+
+                {visibleHints.length > 0 ? (
+                  <View className="mb-3 gap-1.5">
+                    {visibleHints.map((hint, index) => (
+                      <View
+                        key={`${currentSpot.id}-hint-${index}`}
+                        className="rounded-lg border border-[#F6B76F]/28 bg-[#EE8C2B]/12 px-2.5 py-1.5"
+                      >
+                        <Text className="text-[12px] text-[#FBE9D3]" style={{ fontFamily: fonts.bodyRegular }}>
+                          ヒント{index + 1}: {hint}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+
+                <TextInput
+                  value={puzzleInput}
+                  onChangeText={setPuzzleInput}
+                  placeholder="答えを入力"
+                  placeholderTextColor="#FFFFFF66"
+                  className={`h-11 rounded-xl border bg-white/10 px-3 text-sm text-white mb-2 ${
+                    puzzleState === "correct"
+                      ? "border-[#95DFB1]/60"
+                      : puzzleState === "incorrect"
+                        ? "border-[#EBAAAA]/60"
+                        : "border-white/20"
+                  }`}
+                  style={{ fontFamily: fonts.bodyRegular }}
+                />
+
+                {puzzleError ? (
+                  <Text className="text-[12px] text-[#FFC7C3] mb-2" style={{ fontFamily: fonts.bodyRegular }}>
+                    {puzzleError}
+                  </Text>
+                ) : null}
+              </ScrollView>
+
+              <View className="px-4 pb-4 pt-2">
+                <View className="flex-row items-center gap-2 mb-2">
+                  <Pressable
+                    onPress={handleRevealHint}
+                    disabled={revealedHintLevel >= (currentSpot.puzzleHints || []).length}
+                    className="flex-1 h-10 rounded-xl border border-white/20 bg-white/5 items-center justify-center flex-row gap-1.5"
+                  >
+                    <Ionicons name="bulb-outline" size={14} color="#FFFFFFE0" />
+                    <Text className="text-white/90 text-sm" style={{ fontFamily: fonts.bodyMedium }}>
+                      ヒントを見る
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={handleRevealAnswer}
+                    disabled={attemptCount < 3 || !currentSpot.puzzleAnswer}
+                    className="flex-1 h-10 rounded-xl border border-white/20 bg-white/5 items-center justify-center"
+                  >
+                    <Text className="text-white/90 text-sm" style={{ fontFamily: fonts.bodyMedium }}>
+                      答えを見る
+                    </Text>
+                  </Pressable>
+                </View>
+
+                <Pressable
+                  onPress={handleSubmitPuzzle}
+                  className="h-11 rounded-xl bg-[#EE8C2B] items-center justify-center"
+                >
+                  <Text className="text-white text-sm" style={{ fontFamily: fonts.displayBold }}>
+                    {puzzleState === "correct" || puzzleState === "revealedAnswer"
+                      ? "次へ進む"
+                      : "回答する"}
+                  </Text>
+                </Pressable>
+              </View>
+            </SafeAreaView>
+          </View>
         )
       ) : null}
 
@@ -2307,21 +2623,6 @@ export const GamePlayScreen = ({ navigation, route }: Props) => {
         </View>
       ) : null}
 
-      {mode === "puzzle" && !hasChoicePuzzle ? (
-        <View className="absolute left-4 top-[110px] z-20 rounded-xl bg-black/38 px-3 py-2">
-          <Text className="text-[11px] text-white/75" style={{ fontFamily: fonts.bodyRegular }}>
-            ミス: {wrongAnswers} / 試行: {attemptCount} / ヒント: {hintsUsed}
-          </Text>
-        </View>
-      ) : null}
-
-      {mode !== "travel" && mode !== "location_gate" ? (
-        <View className="absolute left-4 bottom-4 z-10 rounded-full bg-black/35 px-3 py-1.5">
-          <Text className="text-[10px] text-white/80" style={{ fontFamily: fonts.displayBold }}>
-            {quest.title}
-          </Text>
-        </View>
-      ) : null}
     </View>
   );
 };

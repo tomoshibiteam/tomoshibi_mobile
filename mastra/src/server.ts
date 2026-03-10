@@ -54,6 +54,23 @@ const IMAGE_CACHE_LIMIT = Math.max(
   16,
   Number.parseInt(clean(process.env.SERIES_IMAGE_CACHE_LIMIT) || "96", 10) || 96
 );
+const IMAGE_FETCH_TIMEOUT_MS = Math.max(
+  5_000,
+  Number.parseInt(clean(process.env.SERIES_IMAGE_FETCH_TIMEOUT_MS) || "45000", 10) || 45_000
+);
+const IMAGE_PROVIDER_TIMEOUT_MS = Math.max(
+  8_000,
+  Number.parseInt(clean(process.env.SERIES_IMAGE_PROVIDER_TIMEOUT_MS) || "90000", 10) || 90_000
+);
+const GEMINI_IMAGE_TIMEOUT_MS = Math.max(
+  8_000,
+  Number.parseInt(clean(process.env.SERIES_IMAGE_GEMINI_TIMEOUT_MS) || "90000", 10) || 90_000
+);
+const isAbortLikeError = (error: unknown) => {
+  const message = clean(error instanceof Error ? error.message : String(error ?? "")).toLowerCase();
+  if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) return true;
+  return /abort|aborted|timeout|timed out/.test(message);
+};
 
 type CachedImage = {
   contentType: string;
@@ -243,6 +260,7 @@ const fetchImageAsInlineData = async (url: string): Promise<GeminiInlineData | n
       headers: {
         "User-Agent": "tomoshibi-mastra/series-image-proxy",
       },
+      signal: AbortSignal.timeout(IMAGE_FETCH_TIMEOUT_MS),
     });
     if (!response.ok) return null;
 
@@ -293,24 +311,33 @@ const generateSeriesImageWithGemini = async (
     });
   }
 
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: "user",
-          parts,
-        },
-      ],
-      generationConfig: {
-        temperature: 0.8,
-        responseModalities: ["TEXT", "IMAGE"],
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    }),
-  });
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts,
+          },
+        ],
+        generationConfig: {
+          temperature: 0.8,
+          responseModalities: ["TEXT", "IMAGE"],
+        },
+      }),
+      signal: AbortSignal.timeout(GEMINI_IMAGE_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (isAbortLikeError(error)) {
+      throw new Error(`gemini_api_timeout:${Math.floor(GEMINI_IMAGE_TIMEOUT_MS / 1000)}s`);
+    }
+    throw error;
+  }
 
   if (!response.ok) {
     const errorText = clean(await response.text()).slice(0, 500);
@@ -401,6 +428,7 @@ const extractImageFromCustomProviderPayload = async (payload: any): Promise<{ co
     headers: {
       "User-Agent": "tomoshibi-mastra/series-image-proxy",
     },
+    signal: AbortSignal.timeout(IMAGE_FETCH_TIMEOUT_MS),
   });
   if (!response.ok) return null;
   const bytes = await response.arrayBuffer();
@@ -422,24 +450,33 @@ const generateSeriesImageWithCustomEndpoint = async (
     throw new Error(`${provider}_endpoint_unconfigured`);
   }
 
-  const response = await fetch(normalizedEndpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({
-      prompt: request.prompt,
-      seed: request.seed,
-      size: {
-        width: request.width,
-        height: request.height,
+  let response: Response;
+  try {
+    response = await fetch(normalizedEndpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      purpose: request.purpose,
-      references: request.references,
-      style_reference: request.styleReference || undefined,
-    }),
-  });
+      body: JSON.stringify({
+        prompt: request.prompt,
+        seed: request.seed,
+        size: {
+          width: request.width,
+          height: request.height,
+        },
+        purpose: request.purpose,
+        references: request.references,
+        style_reference: request.styleReference || undefined,
+      }),
+      signal: AbortSignal.timeout(IMAGE_PROVIDER_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (isAbortLikeError(error)) {
+      throw new Error(`${provider}_api_timeout:${Math.floor(IMAGE_PROVIDER_TIMEOUT_MS / 1000)}s`);
+    }
+    throw error;
+  }
 
   if (!response.ok) {
     const errText = clean(await response.text()).slice(0, 500);
@@ -462,12 +499,21 @@ const generateSeriesImageWithPollinations = async (
   request: SeriesImageRequest
 ): Promise<HybridImageResult> => {
   const upstreamUrl = buildSeriesImageProviderUrl(request);
-  const upstream = await fetch(upstreamUrl, {
-    headers: {
-      "User-Agent": "tomoshibi-mastra/series-image-proxy",
-    },
-    redirect: "follow",
-  });
+  let upstream: Response;
+  try {
+    upstream = await fetch(upstreamUrl, {
+      headers: {
+        "User-Agent": "tomoshibi-mastra/series-image-proxy",
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(IMAGE_PROVIDER_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (isAbortLikeError(error)) {
+      throw new Error(`pollinations_api_timeout:${Math.floor(IMAGE_PROVIDER_TIMEOUT_MS / 1000)}s`);
+    }
+    throw error;
+  }
   if (!upstream.ok) {
     throw new Error(`pollinations_api_error:${upstream.status}`);
   }
@@ -999,7 +1045,7 @@ app.post("/api/series/episode/jobs", async (c) => {
           job.status = "succeeded";
           job.episode = episode;
           job.meta = {
-            workflow_version: "series-runtime-episode-v2-pipeline",
+            workflow_version: "series-runtime-episode-v3-route-trace",
             spots_count: episode.spots.length,
             elapsed_ms: elapsedMs,
           };
@@ -1107,7 +1153,7 @@ app.post("/api/series/episode", async (c) => {
       return c.json({
         episode,
         meta: {
-          workflow_version: "series-runtime-episode-v2-pipeline",
+          workflow_version: "series-runtime-episode-v3-route-trace",
           spots_count: episode.spots.length,
           elapsed_ms: elapsedMs,
         },

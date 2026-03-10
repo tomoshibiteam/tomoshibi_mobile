@@ -3,6 +3,7 @@ import * as Location from "expo-location";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   Alert,
   Image,
   InteractionManager,
@@ -26,6 +27,8 @@ import { isSupabaseConfigured } from "@/lib/supabase";
 import {
   createEpisodeForSeries,
   createQuestDraft,
+  type SeriesEpisode,
+  type SeriesEpisodeRuntimeContext,
   fetchSeriesEpisodeRuntimeContext,
   fetchMySeriesOptions,
   fetchSeriesEpisodes,
@@ -52,6 +55,14 @@ type SelectableSeries = {
   coverImageUrl: string | null;
   status: string | null;
   source: "supabase" | "local";
+};
+
+type SeriesSummaryMeta = {
+  currentEpisodeNo: number;
+  nextEpisodeNo: number;
+  episodeCount: number;
+  latestEpisodeTitle: string | null;
+  characterNames: string[];
 };
 
 type DraftRow = {
@@ -91,6 +102,14 @@ const FALLBACK_EPISODE_LOGS: Record<string, Array<{ text: string; active: boolea
     { text: "EP.1『朝焼けの遊歩道』クリア済 | 川沿い遊歩道", active: true },
     { text: "EP.2『公園の秘密地図』進行中 | 中央公園エリア", active: false },
   ],
+};
+
+const EMPTY_SERIES_META: SeriesSummaryMeta = {
+  currentEpisodeNo: 0,
+  nextEpisodeNo: 1,
+  episodeCount: 0,
+  latestEpisodeTitle: null,
+  characterNames: [],
 };
 
 const normalizeTitle = (value: string) => value.trim().toLowerCase();
@@ -163,15 +182,27 @@ const buildGeneratedEpisodeTitle = (purpose: Purpose, stageLocation: string) => 
   return `${compact || "舞台"}の${purpose}`;
 };
 
-const buildGeneratedEpisodeBody = (seriesTitle: string, purpose: Purpose, stageLocation: string) => {
+const buildGeneratedEpisodeBody = (
+  seriesTitle: string,
+  purpose: Purpose,
+  stageLocation: string,
+  stageCoords?: { lat: number; lng: number } | null
+) => {
+  const coordsLine =
+    stageCoords && Number.isFinite(stageCoords.lat) && Number.isFinite(stageCoords.lng)
+      ? `座標: ${stageCoords.lat.toFixed(6)},${stageCoords.lng.toFixed(6)}`
+      : null;
   return [
     `${seriesTitle}の新章。`,
     "",
     `舞台: ${stageLocation}`,
+    coordsLine,
     `目的: ${purpose}`,
     "",
     "土地に眠る手がかりを辿りながら、次の真実へと物語を進める。",
-  ].join("\n");
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
 };
 
 const safeParseProgressState = (value?: Record<string, unknown> | null) => {
@@ -182,6 +213,12 @@ const safeParseProgressState = (value?: Record<string, unknown> | null) => {
   const revealed = Array.isArray(value.revealed_facts)
     ? value.revealed_facts.map((item) => String(item ?? "").trim()).filter(Boolean)
     : [];
+  const relationshipFlags = Array.isArray(value.relationship_flags)
+    ? value.relationship_flags.map((item) => String(item ?? "").trim()).filter(Boolean)
+    : [];
+  const recentRelationShift = Array.isArray(value.recent_relation_shift)
+    ? value.recent_relation_shift.map((item) => String(item ?? "").trim()).filter(Boolean)
+    : [];
   const last = Number.parseInt(String(value.last_completed_episode_no ?? 0), 10);
   const trust = Number.parseFloat(String(value.companion_trust_level ?? 40));
 
@@ -189,7 +226,10 @@ const safeParseProgressState = (value?: Record<string, unknown> | null) => {
     lastCompletedEpisodeNo: Number.isFinite(last) ? Math.max(0, last) : 0,
     unresolvedThreads: unresolved,
     revealedFacts: revealed,
-    companionTrustLevel: Number.isFinite(trust) ? Math.max(0, Math.min(100, trust)) : 40,
+    relationshipStateSummary: String(value.relationship_state_summary ?? "").trim() || "関係性は継続中。",
+    relationshipFlags,
+    recentRelationShift,
+    companionTrustLevel: Number.isFinite(trust) ? Math.max(0, Math.min(100, trust)) : undefined,
     nextHook: String(value.next_hook ?? "").trim(),
   };
 };
@@ -205,6 +245,49 @@ const safeParseFirstEpisodeSeed = (value?: Record<string, unknown> | null) => {
     routeStyle: String(value.route_style ?? "").trim(),
     completionCondition: String(value.completion_condition ?? "").trim(),
     carryOverHint: String(value.carry_over_hint ?? "").trim(),
+    spotRequirements: Array.isArray(value.spot_requirements)
+      ? value.spot_requirements
+          .map((item, index): {
+            requirementId: string;
+            sceneRole: "起" | "承" | "転" | "結";
+            spotRole: string;
+            requiredAttributes: string[];
+            visitConstraints: string[];
+            tourismValueType: string;
+          } | null => {
+            if (!item || typeof item !== "object") return null;
+            const row = item as Record<string, unknown>;
+            const spotRole = String(row.spot_role ?? "").trim();
+            if (!spotRole) return null;
+            const sceneRoleRaw = String(row.scene_role ?? "").trim();
+            const sceneRole: "起" | "承" | "転" | "結" =
+              sceneRoleRaw === "起" || sceneRoleRaw === "承" || sceneRoleRaw === "転" || sceneRoleRaw === "結"
+                ? sceneRoleRaw
+                : index === 0
+                  ? "起"
+                  : "結";
+            return {
+              requirementId: String(row.requirement_id ?? `req_${index + 1}`).trim(),
+              sceneRole,
+              spotRole,
+              requiredAttributes: Array.isArray(row.required_attributes)
+                ? row.required_attributes.map((v) => String(v ?? "").trim()).filter(Boolean)
+                : [],
+              visitConstraints: Array.isArray(row.visit_constraints)
+                ? row.visit_constraints.map((v) => String(v ?? "").trim()).filter(Boolean)
+                : [],
+              tourismValueType: String(row.tourism_value_type ?? "").trim() || "地域体験",
+            };
+          })
+          .filter((item): item is {
+            requirementId: string;
+            sceneRole: "起" | "承" | "転" | "結";
+            spotRole: string;
+            requiredAttributes: string[];
+            visitConstraints: string[];
+            tourismValueType: string;
+          } => Boolean(item))
+      : [],
     suggestedSpots: Array.isArray(value.suggested_spots)
       ? value.suggested_spots.map((item) => String(item ?? "").trim()).filter(Boolean)
       : [],
@@ -252,6 +335,43 @@ const parseLocationCoords = (value: string): { lat: number; lng: number } | null
   return { lat, lng };
 };
 
+const buildMetaFromEpisodeLogs = (logs: Array<{ text: string }>): SeriesSummaryMeta => {
+  const episodes = logs
+    .map((row) => {
+      const match = row.text.match(/EP\.(\d+)/i);
+      return match ? Number.parseInt(match[1], 10) : 0;
+    })
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  const currentEpisodeNo = episodes.length > 0 ? Math.max(...episodes) : 0;
+  return {
+    currentEpisodeNo,
+    nextEpisodeNo: currentEpisodeNo + 1 || 1,
+    episodeCount: episodes.length,
+    latestEpisodeTitle: null,
+    characterNames: [],
+  };
+};
+
+const buildMetaFromRuntime = (
+  episodes: SeriesEpisode[],
+  runtimeCtx: SeriesEpisodeRuntimeContext | null
+): SeriesSummaryMeta => {
+  const currentEpisodeNo = episodes.reduce((max, row) => Math.max(max, row.episodeNo || 0), 0);
+  const latestEpisode = [...episodes].sort((left, right) => right.episodeNo - left.episodeNo)[0];
+  const characterNames = (runtimeCtx?.characters || [])
+    .map((row) => row.name.trim())
+    .filter(Boolean);
+
+  return {
+    currentEpisodeNo,
+    nextEpisodeNo: Math.max(1, currentEpisodeNo + 1),
+    episodeCount: episodes.length,
+    latestEpisodeTitle: latestEpisode?.title || null,
+    characterNames,
+  };
+};
+
 
 export const AddEpisodeScreen = ({ navigation, route }: Props) => {
   const { userId } = useSessionUserId();
@@ -261,22 +381,22 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
   const [seriesOptions, setSeriesOptions] = useState<SelectableSeries[]>(fallbackSeriesRows());
   const [selectedSeriesKey, setSelectedSeriesKey] = useState<string | null>(null);
   const [seriesLoading, setSeriesLoading] = useState(false);
-  const [seriesLogsLoading, setSeriesLogsLoading] = useState(false);
+  const [seriesMetaLoading, setSeriesMetaLoading] = useState(false);
   const [seriesSelectorOpen, setSeriesSelectorOpen] = useState(false);
 
   const [step, setStep] = useState<1 | 2>(1);
   const [stageLocation, setStageLocation] = useState("横浜赤レンガ倉庫");
   const [purpose, setPurpose] = useState<Purpose>("観光");
+  const [desiredSpotCount, setDesiredSpotCount] = useState<5 | 6 | 7>(5);
   const [userWishes, setUserWishes] = useState("");
   const [isLocating, setIsLocating] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
 
   const isMountedRef = useRef(true);
   const generationAbortRef = useRef<AbortController | null>(null);
+  const seriesSheetTranslateY = useRef(new Animated.Value(42)).current;
 
-  const [selectedSeriesEpisodeLogs, setSelectedSeriesEpisodeLogs] = useState<Array<{ text: string; active: boolean }>>(
-    []
-  );
+  const [seriesMetaByKey, setSeriesMetaByKey] = useState<Record<string, SeriesSummaryMeta>>({});
   const [suggestedSpots, setSuggestedSpots] = useState<string[]>([]);
   const [geocodedCoords, setGeocodedCoords] = useState<{ lat: number; lng: number } | null>(null);
 
@@ -284,6 +404,10 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
     () => seriesOptions.find((item) => item.key === selectedSeriesKey) || seriesOptions[0] || null,
     [seriesOptions, selectedSeriesKey]
   );
+  const selectedSeriesMeta = useMemo(() => {
+    if (!selectedSeries) return EMPTY_SERIES_META;
+    return seriesMetaByKey[selectedSeries.key] || EMPTY_SERIES_META;
+  }, [selectedSeries, seriesMetaByKey]);
 
   const parsedCoords = useMemo(() => parseLocationCoords(stageLocation), [stageLocation]);
   const mapCoords = parsedCoords ?? geocodedCoords;
@@ -348,6 +472,17 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
       isMountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!seriesSelectorOpen) return;
+    seriesSheetTranslateY.setValue(42);
+    Animated.spring(seriesSheetTranslateY, {
+      toValue: 0,
+      useNativeDriver: true,
+      speed: 20,
+      bounciness: 3,
+    }).start();
+  }, [seriesSelectorOpen, seriesSheetTranslateY]);
 
   const selectedSeriesOverview = useMemo(() => {
     if (!selectedSeries) return "シリーズを選択してください。";
@@ -424,7 +559,7 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
   useEffect(() => {
     const selected = selectedSeries;
     if (!selected) {
-      setSelectedSeriesEpisodeLogs([]);
+      setSuggestedSpots([]);
       return;
     }
 
@@ -432,8 +567,8 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
       setStageLocation(selected.areaName || "横浜赤レンガ倉庫");
     }
 
-    const hydrateLogs = async () => {
-      setSeriesLogsLoading(true);
+    const hydrateSeriesMeta = async () => {
+      setSeriesMetaLoading(true);
       try {
         if (selected.id && userId) {
           const [rows, runtimeCtx] = await Promise.all([
@@ -443,51 +578,91 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
 
           if (runtimeCtx) {
             const seed = runtimeCtx.firstEpisodeSeed as Record<string, unknown> | null;
-            const spots = Array.isArray(seed?.suggested_spots)
+            const spotsFromSeed = Array.isArray(seed?.suggested_spots)
               ? seed.suggested_spots.map((s) => String(s ?? "").trim()).filter(Boolean)
               : [];
-            setSuggestedSpots(spots.slice(0, 4));
+            const spotsFromRequirements = Array.isArray(seed?.spot_requirements)
+              ? seed.spot_requirements
+                  .map((item) => {
+                    if (!item || typeof item !== "object") return "";
+                    const row = item as Record<string, unknown>;
+                    return String(row.spot_role ?? "").trim();
+                  })
+                  .filter(Boolean)
+              : [];
+            setSuggestedSpots([...spotsFromSeed, ...spotsFromRequirements].slice(0, 7));
           } else {
             setSuggestedSpots([]);
           }
-
-          if (rows.length === 0) {
-            setSelectedSeriesEpisodeLogs([
-              { text: "まだ公開済みエピソードはありません", active: false },
-            ]);
-            return;
-          }
-
-          const logs = rows
-            .slice(0, 4)
-            .map((episode, index) => ({
-              text: `EP.${episode.episodeNo}『${episode.title}』${index === 0 ? "最新" : "公開済"}`,
-              active: index === 0,
-            }))
-            .reverse();
-
-          setSelectedSeriesEpisodeLogs(logs);
+          setSeriesMetaByKey((prev) => ({
+            ...prev,
+            [selected.key]: buildMetaFromRuntime(rows, runtimeCtx),
+          }));
           return;
         }
 
         setSuggestedSpots([]);
-        setSelectedSeriesEpisodeLogs(
-          FALLBACK_EPISODE_LOGS[selected.title] || [
-            { text: "まだ公開済みエピソードはありません", active: false },
-          ]
-        );
+        setSeriesMetaByKey((prev) => ({
+          ...prev,
+          [selected.key]: buildMetaFromEpisodeLogs(FALLBACK_EPISODE_LOGS[selected.title] || []),
+        }));
       } catch (error) {
-        console.warn("AddEpisodeScreen: failed to load episode logs", error);
-        setSelectedSeriesEpisodeLogs([
-          { text: "エピソード状況を読み込めませんでした", active: false },
-        ]);
+        console.warn("AddEpisodeScreen: failed to load series summary", error);
+        setSeriesMetaByKey((prev) => ({
+          ...prev,
+          [selected.key]: prev[selected.key] || EMPTY_SERIES_META,
+        }));
       } finally {
-        setSeriesLogsLoading(false);
+        setSeriesMetaLoading(false);
       }
     };
 
-    void hydrateLogs();
-  }, [selectedSeries]);
+    void hydrateSeriesMeta();
+  }, [selectedSeries, userId]);
+
+  useEffect(() => {
+    if (!seriesSelectorOpen || !userId || seriesOptions.length === 0) return;
+
+    let cancelled = false;
+    const targetRows = seriesOptions
+      .filter((row) => row.id && !seriesMetaByKey[row.key])
+      .slice(0, 12);
+
+    if (targetRows.length === 0) return;
+
+    const prefetch = async () => {
+      try {
+        const entries = await Promise.all(
+          targetRows.map(async (item) => {
+            try {
+              const [episodes, runtimeCtx] = await Promise.all([
+                fetchSeriesEpisodes(item.id!),
+                fetchSeriesEpisodeRuntimeContext(item.id!, userId).catch(() => null),
+              ]);
+              return [item.key, buildMetaFromRuntime(episodes, runtimeCtx)] as const;
+            } catch {
+              return [item.key, EMPTY_SERIES_META] as const;
+            }
+          })
+        );
+
+        if (cancelled) return;
+        setSeriesMetaByKey((prev) => ({
+          ...prev,
+          ...Object.fromEntries(entries),
+        }));
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("AddEpisodeScreen: failed to prefetch series metadata", error);
+        }
+      }
+    };
+
+    void prefetch();
+    return () => {
+      cancelled = true;
+    };
+  }, [seriesMetaByKey, seriesOptions, seriesSelectorOpen, userId]);
 
   const handleSelectSeries = async (item: SelectableSeries) => {
     setSelectedSeriesKey(item.key);
@@ -574,7 +749,12 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
       }
 
       let episodeTitle = buildGeneratedEpisodeTitle(purpose, stageLocation);
-      let episodeBody = buildGeneratedEpisodeBody(targetSeriesTitle, purpose, stageLocation);
+      let episodeBody = buildGeneratedEpisodeBody(
+        targetSeriesTitle,
+        purpose,
+        stageLocation,
+        mapCoords
+      );
       let runtimeEpisode: GeneratedRuntimeEpisode | null = null;
 
       if (isMastraSeriesConfigured) {
@@ -613,6 +793,8 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
                 id: `char_${index + 1}`,
                 name: character.name,
                 role: character.role,
+                tier: character.tier || "secondary",
+                mustAppear: Boolean(character.mustAppear),
                 personality: character.personality || undefined,
                 arcStart: character.arcStart || undefined,
                 arcEnd: character.arcEnd || undefined,
@@ -623,6 +805,7 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
             purpose,
             userWishes: userWishes.trim() || undefined,
             desiredDurationMinutes: 20,
+            desiredSpotCount,
             language: "ja",
           }, {
             signal: generationAbortController.signal,
@@ -675,6 +858,8 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
                 seriesTitle: targetSeriesTitle,
                 coverImageUrl: selectedSeries?.coverImageUrl,
                 episodeNo: nextEpisodeNo,
+                stageLocation: stageLocation.trim(),
+                stageCoords: mapCoords,
               });
             } catch (navErr) {
               console.error("AddEpisodeScreen: navigation to EpisodeGenerationResult failed", navErr);
@@ -746,7 +931,7 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
             <Ionicons name="arrow-back" size={20} color="#6C5647" />
           </Pressable>
           <Text className="text-base text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
-            {step === 1 ? "次話の舞台を決める" : "今回の狙いを整える"}
+            エピソード生成画面
           </Text>
           <View className="w-9 h-9" />
         </View>
@@ -780,8 +965,8 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
                   )}
                 </Pressable>
 
-                <View className="mt-4 rounded-xl border border-[#ECE6DF] bg-white overflow-hidden">
-                  <View className="p-4 flex-row gap-3 border-b border-[#EFE9E3]">
+                <View className="mt-4 rounded-xl border border-[#ECE6DF] bg-white p-4">
+                  <View className="flex-row gap-3">
                     <View className="w-16 h-16 rounded-lg bg-[#E5DFD7] items-center justify-center overflow-hidden">
                       {selectedSeries?.coverImageUrl ? (
                         <Image source={{ uri: selectedSeries.coverImageUrl }} className="w-full h-full" resizeMode="cover" />
@@ -792,7 +977,7 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
 
                     <View className="flex-1">
                       <View className="flex-row items-start justify-between">
-                        <View className="flex-1 pr-3">
+                        <View className="flex-1 pr-2">
                           <Text className="text-xs text-[#8A7B6C] mb-0.5" style={{ fontFamily: fonts.bodyRegular }}>
                             現在選択中
                           </Text>
@@ -803,37 +988,59 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
                         <Ionicons name="checkmark-circle" size={20} color="#EE8C2B" />
                       </View>
 
-                      <Text className="mt-2 text-xs text-[#5C4D40] leading-5" style={{ fontFamily: fonts.bodyRegular }}>
+                      <View className="flex-row flex-wrap gap-1.5 mt-2">
+                        <View className="px-2.5 py-1 rounded-full bg-[#FFF6EC] border border-[#F5D6B3]">
+                          <Text className="text-[10px] text-[#C66A18]" style={{ fontFamily: fonts.displayBold }}>
+                            現在 EP.{selectedSeriesMeta.currentEpisodeNo}
+                          </Text>
+                        </View>
+                        <View className="px-2.5 py-1 rounded-full bg-[#ECFDF3] border border-[#BBE9CB]">
+                          <Text className="text-[10px] text-[#0F8A43]" style={{ fontFamily: fonts.displayBold }}>
+                            次 EP.{selectedSeriesMeta.nextEpisodeNo}
+                          </Text>
+                        </View>
+                        <View className="px-2.5 py-1 rounded-full bg-[#EEF2FF] border border-[#D7DEF9]">
+                          <Text className="text-[10px] text-[#4754AA]" style={{ fontFamily: fonts.displayBold }}>
+                            登場人物 {selectedSeriesMeta.characterNames.length}人
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  </View>
+
+                  {seriesMetaLoading ? (
+                    <View className="py-2 items-center">
+                      <ActivityIndicator size="small" color="#EE8C2B" />
+                    </View>
+                  ) : (
+                    <>
+                      <Text className="mt-3 text-[11px] text-[#62584E]" numberOfLines={2} style={{ fontFamily: fonts.bodyRegular }}>
                         {selectedSeriesOverview}
                       </Text>
-                    </View>
-                  </View>
 
-                  <View className="px-4 py-3 bg-[#F8F7F6]">
-                    <View className="flex-row items-center gap-2 mb-2">
-                      <Ionicons name="time-outline" size={14} color="#9B8B7B" />
-                      <Text className="text-xs text-[#8A7B6C]" style={{ fontFamily: fonts.displayBold }}>
-                        過去のエピソード状況
-                      </Text>
-                    </View>
+                      <View className="mt-2 flex-row items-center gap-1.5">
+                        <Ionicons name="refresh-outline" size={12} color="#8A7B6C" />
+                        <Text className="text-[11px] text-[#8A7B6C] flex-1" numberOfLines={1} style={{ fontFamily: fonts.bodyRegular }}>
+                          {selectedSeriesMeta.latestEpisodeTitle
+                            ? `最新話: ${selectedSeriesMeta.latestEpisodeTitle}`
+                            : "まだ公開済みエピソードはありません"}
+                        </Text>
+                      </View>
 
-                    {seriesLogsLoading ? (
-                      <View className="py-3">
-                        <ActivityIndicator size="small" color="#EE8C2B" />
+                      <View className="mt-2 flex-row items-center gap-1.5">
+                        <Ionicons name="people-outline" size={12} color="#8A7B6C" />
+                        <Text className="text-[11px] text-[#6C5647] flex-1" numberOfLines={1} style={{ fontFamily: fonts.bodyRegular }}>
+                          {selectedSeriesMeta.characterNames.length > 0
+                            ? `引き継ぎキャラ: ${selectedSeriesMeta.characterNames.slice(0, 3).join(" / ")}${
+                                selectedSeriesMeta.characterNames.length > 3
+                                  ? ` +${selectedSeriesMeta.characterNames.length - 3}`
+                                  : ""
+                              }`
+                            : "引き継ぎキャラ: 未設定"}
+                        </Text>
                       </View>
-                    ) : (
-                      <View className="gap-2">
-                        {selectedSeriesEpisodeLogs.map((item, index) => (
-                          <View key={`${item.text}-${index}`} className="flex-row items-start gap-2">
-                            <View className={`mt-1.5 w-1.5 h-1.5 rounded-full ${item.active ? "bg-[#EE8C2B]" : "bg-[#D0C4B6]"}`} />
-                            <Text className="text-xs text-[#6C5647] leading-5 flex-1" style={{ fontFamily: fonts.bodyRegular }}>
-                              {item.text}
-                            </Text>
-                          </View>
-                        ))}
-                      </View>
-                    )}
-                  </View>
+                    </>
+                  )}
                 </View>
               </View>
 
@@ -970,6 +1177,39 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
 
               <View className="px-5 py-4 border-t border-[#EFE9E3]">
                 <View className="flex-row items-center gap-2 mb-1">
+                  <Ionicons name="trail-sign-outline" size={16} color="#EE8C2B" />
+                  <Text className="text-sm text-[#5E554C]" style={{ fontFamily: fonts.displayBold }}>
+                    今回の巡回スポット数
+                  </Text>
+                </View>
+                <Text className="text-xs text-[#8A7B6C] mb-3" style={{ fontFamily: fonts.bodyRegular }}>
+                  5〜7件から選択。選んだ件数をAI生成に反映します
+                </Text>
+                <View className="flex-row gap-2">
+                  {[5, 6, 7].map((value) => {
+                    const active = desiredSpotCount === value;
+                    return (
+                      <Pressable
+                        key={value}
+                        onPress={() => setDesiredSpotCount(value as 5 | 6 | 7)}
+                        className={`flex-1 h-11 rounded-xl border items-center justify-center ${
+                          active ? "border-[#EE8C2B] bg-[#EE8C2B]" : "border-[#E3D6C9] bg-white"
+                        }`}
+                      >
+                        <Text
+                          className={`text-sm ${active ? "text-white" : "text-[#6C5647]"}`}
+                          style={{ fontFamily: fonts.displayBold }}
+                        >
+                          {value}件
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <View className="px-5 py-4 border-t border-[#EFE9E3]">
+                <View className="flex-row items-center gap-2 mb-1">
                   <Ionicons name="heart-outline" size={16} color="#EE8C2B" />
                   <Text className="text-sm text-[#5E554C]" style={{ fontFamily: fonts.displayBold }}>
                     このエピソードへの思い
@@ -1051,10 +1291,13 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
         </SafeAreaView>
       </KeyboardAvoidingView>
 
-      <Modal visible={seriesSelectorOpen} transparent animationType="slide" onRequestClose={() => setSeriesSelectorOpen(false)}>
+      <Modal visible={seriesSelectorOpen} transparent animationType="none" onRequestClose={() => setSeriesSelectorOpen(false)}>
         <View className="flex-1 justify-end bg-black/45">
           <Pressable className="absolute inset-0" onPress={() => setSeriesSelectorOpen(false)} />
-          <View className="rounded-t-3xl bg-white px-5 pt-4 pb-8 max-h-[80%]">
+          <Animated.View
+            className="rounded-t-3xl bg-white px-5 pt-4 pb-8 max-h-[80%]"
+            style={{ transform: [{ translateY: seriesSheetTranslateY }] }}
+          >
             <View className="w-12 h-1.5 rounded-full bg-[#E7DDD2] self-center mb-5" />
             <View className="flex-row items-center justify-between mb-3">
               <Text className="text-lg text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
@@ -1072,6 +1315,11 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
               <View className="gap-2 pb-4">
                 {seriesOptions.map((item) => {
                   const active = item.key === selectedSeries?.key;
+                  const meta = seriesMetaByKey[item.key];
+                  const isMetaPending = Boolean(item.id && !meta);
+                  const currentEpisodeNo = meta?.currentEpisodeNo || 0;
+                  const nextEpisodeNo = meta?.nextEpisodeNo || 1;
+                  const characterCount = meta?.characterNames.length || 0;
                   return (
                     <Pressable
                       key={item.key}
@@ -1083,14 +1331,51 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
                       }}
                     >
                       <View className="flex-row items-start justify-between gap-3">
+                        <View className="w-11 h-11 rounded-md bg-[#E5DFD7] overflow-hidden items-center justify-center">
+                          {item.coverImageUrl ? (
+                            <Image source={{ uri: item.coverImageUrl }} className="w-full h-full" resizeMode="cover" />
+                          ) : (
+                            <Ionicons name="book-outline" size={18} color="#8A7B6C" />
+                          )}
+                        </View>
+
                         <View className="flex-1">
-                          <Text className="text-sm text-[#2B1E16]" style={{ fontFamily: fonts.displayBold }}>
+                          <Text className="text-sm text-[#2B1E16]" numberOfLines={1} style={{ fontFamily: fonts.displayBold }}>
                             {item.title}
                           </Text>
-                          <Text className="text-xs text-[#7A6F63] mt-1" numberOfLines={2} style={{ fontFamily: fonts.bodyRegular }}>
-                            {item.description || item.areaName || "シリーズ"}
+                          <Text className="text-[11px] text-[#7A6F63] mt-0.5" numberOfLines={1} style={{ fontFamily: fonts.bodyRegular }}>
+                            {item.areaName || item.description || "シリーズ"}
                           </Text>
+
+                          {isMetaPending ? (
+                            <View className="mt-1.5">
+                              <Text className="text-[10px] text-[#A09183]" style={{ fontFamily: fonts.bodyRegular }}>
+                                EP / 登場人物 情報を取得中...
+                              </Text>
+                            </View>
+                          ) : (
+                            <View className="flex-row flex-wrap gap-1 mt-1.5">
+                              <View className="px-2 py-0.5 rounded-full bg-[#FFF6EC] border border-[#F5D6B3]">
+                                <Text className="text-[10px] text-[#C66A18]" style={{ fontFamily: fonts.displayBold }}>
+                                  EP.{currentEpisodeNo} → 次EP.{nextEpisodeNo}
+                                </Text>
+                              </View>
+                              <View className="px-2 py-0.5 rounded-full bg-[#EEF2FF] border border-[#D7DEF9]">
+                                <Text className="text-[10px] text-[#4754AA]" style={{ fontFamily: fonts.displayBold }}>
+                                  登場人物 {characterCount}人
+                                </Text>
+                              </View>
+                            </View>
+                          )}
+
+                          {!isMetaPending && characterCount > 0 ? (
+                            <Text className="text-[10px] text-[#7A6F63] mt-1" numberOfLines={1} style={{ fontFamily: fonts.bodyRegular }}>
+                              継承: {meta?.characterNames.slice(0, 2).join(" / ")}
+                              {characterCount > 2 ? ` +${characterCount - 2}` : ""}
+                            </Text>
+                          ) : null}
                         </View>
+
                         {active ? <Ionicons name="checkmark-circle" size={19} color="#EE8C2B" /> : null}
                       </View>
                     </Pressable>
@@ -1111,7 +1396,7 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
                 </Pressable>
               </View>
             </ScrollView>
-          </View>
+          </Animated.View>
         </View>
       </Modal>
     </View>

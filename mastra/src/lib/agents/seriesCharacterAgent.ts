@@ -25,6 +25,8 @@ const lightCharacterSchema = z.object({
   id: z.string(),
   name: z.string(),
   role: z.string(),
+  tier: z.enum(["primary", "secondary"]).optional(),
+  must_appear: z.boolean().optional(),
   goal: z.string(),
   arc_start: z.string(),
   arc_end: z.string(),
@@ -49,12 +51,15 @@ const SERIES_CHARACTER_AGENT_INSTRUCTIONS = `
 - 指定されたスキーマの型とフィールド名をそのまま使うこと。
 - personality は**文字列1つ**（性格の一文要約）。オブジェクトは出さない。
 - 各キャラクター: id(char_1〜), name, role, goal, arc_start, arc_end, personality, appearance は必須。
+- tier は primary/secondary。
+- must_appear は primary のみ true を許可。
 - portrait_prompt: 画像生成用の短い英語説明（1文）。portrait_image_url: 空文字 "" でよい。
 - secrets, relationship_hooks は文字列の配列（空配列可）。
 - オプション: archetype, drive, dilemma, backstory, big_five(5数値0-100), enneagram_type(1-9), core_fear, core_desire, speech_pattern, catchphrase, quirks(最大4), visual_design(4文字列), relationships(target_id, type, description, tension_level)。
 
 ## 差別化
-- キャラ数は3〜8。名前・口癖・dominant_colorは互いに被らせない。
+- キャラ数は3〜5。名前・口癖・dominant_colorは互いに被らせない。
+- primary は1〜2人を必須。secondary は最大3人。
 - name に「あなた」「アナタ」「プレイヤー」「主人公」「You」など自己参照語を使わない。全員を固有名詞で命名する。
 - relationships の type は "trust"|"rivalry"|"mentor"|"debt"|"secret"|"family"|"romance" のいずれか。
 `;
@@ -126,6 +131,8 @@ const withVisuals = (
     id: string;
     name: string;
     role: string;
+    tier?: "primary" | "secondary";
+    must_appear?: boolean;
     goal: string;
     arc_start: string;
     arc_end: string;
@@ -180,6 +187,8 @@ const fallbackCharacters = (input: SeriesCharacterAgentInput): SeriesCharacterAg
       id: "char_1",
       name: "主人公",
       role: input.protagonist_position || "物語の視点人物",
+      tier: "primary" as const,
+      must_appear: true,
       archetype: "Hero",
       goal: input.season_goal || "真相へ到達する",
       drive: "知りたいという衝動と、見て見ぬふりできない性分",
@@ -215,6 +224,8 @@ const fallbackCharacters = (input: SeriesCharacterAgentInput): SeriesCharacterAg
       id: "char_2",
       name: "相棒",
       role: input.partner_description || "主人公を支える実務家",
+      tier: "primary" as const,
+      must_appear: true,
       archetype: "Caregiver",
       goal: "主人公の目的達成を補助しつつ自分の信念を守る。",
       drive: "守りたいものを守る。そのためなら手を汚す覚悟もある",
@@ -250,6 +261,8 @@ const fallbackCharacters = (input: SeriesCharacterAgentInput): SeriesCharacterAg
       id: "char_3",
       name: "調停者",
       role: "対立陣営の橋渡し役",
+      tier: "secondary" as const,
+      must_appear: false,
       archetype: "Sage",
       goal: "大きな衝突を避けつつ均衡を保つ。",
       drive: "争いが生む痛みを誰にも味わわせたくない",
@@ -285,6 +298,8 @@ const fallbackCharacters = (input: SeriesCharacterAgentInput): SeriesCharacterAg
       id: "char_4",
       name: "対抗者",
       role: "同じ目的を別手段で追うライバル",
+      tier: "secondary" as const,
+      must_appear: false,
       archetype: "Rebel",
       goal: "主人公より先に核心を掴み主導権を握る。",
       drive: "正義は行動で示すもの。待っていても世界は変わらない",
@@ -380,6 +395,18 @@ const normalizeCharacter = (
     id: `char_${index + 1}`,
     name: clean(raw.name) || fallback.name,
     role: clean(raw.role) || fallback.role,
+    tier:
+      raw.tier === "primary" || raw.tier === "secondary"
+        ? raw.tier
+        : fallback.tier === "primary" || fallback.tier === "secondary"
+          ? fallback.tier
+          : "secondary",
+    must_appear:
+      typeof raw.must_appear === "boolean"
+        ? raw.must_appear
+        : typeof fallback.must_appear === "boolean"
+          ? fallback.must_appear
+          : false,
     archetype: clean(raw.archetype) || fallback.archetype || ARCHETYPE_POOL[index % ARCHETYPE_POOL.length],
     goal: clean(raw.goal) || fallback.goal,
     drive: clean(raw.drive) || fallback.drive,
@@ -414,6 +441,24 @@ const normalizeCharacter = (
   };
 };
 
+const applyTierPolicy = (
+  characters: SeriesCharacterAgentOutput["characters"]
+): SeriesCharacterAgentOutput["characters"] => {
+  if (characters.length === 0) return characters;
+  const requestedPrimary = characters.filter((character) => character.tier === "primary").length;
+  const primaryTarget = requestedPrimary >= 2 ? 2 : 1;
+  const capped = characters.slice(0, 5);
+
+  return capped.map((character, index) => {
+    const isPrimary = index < primaryTarget;
+    return {
+      ...character,
+      tier: isPrimary ? "primary" : "secondary",
+      must_appear: isPrimary,
+    };
+  });
+};
+
 const normalizeCharacterOutput = (
   input: SeriesCharacterAgentInput,
   raw: unknown
@@ -423,11 +468,12 @@ const normalizeCharacterOutput = (
   const fallback = fallbackCharacters(input);
   const deduped = dedupeCharacters(parsed.data.characters);
 
-  const merged = [...deduped, ...fallback].slice(0, Math.max(3, input.target_count));
+  const targetCount = Math.max(3, Math.min(5, input.target_count));
+  const merged = [...deduped, ...fallback].slice(0, targetCount);
   const normalizedCharacters = merged
-    .slice(0, 8)
+    .slice(0, targetCount)
     .map((character, index) => normalizeCharacter(character, fallback[index] || fallback[0], index));
-  const policyAppliedCharacters = enforceCharacterNamePolicy(normalizedCharacters);
+  const policyAppliedCharacters = applyTierPolicy(enforceCharacterNamePolicy(normalizedCharacters));
 
   return {
     characters: policyAppliedCharacters.map((normalized, index) => {
@@ -476,7 +522,7 @@ export const generateSeriesCharacters = async (
   }
 
   const prompt = `
-シリーズ「${input.title}」のキャラクターを ${input.target_count} 人分、JSON で出力してください。
+シリーズ「${input.title}」のキャラクターを ${Math.max(3, Math.min(5, input.target_count))} 人分、JSON で出力してください。
 ジャンル: ${input.genre} / トーン: ${input.tone} / 前提: ${input.premise}
 主人公: ${input.protagonist_position} / 相棒像: ${input.partner_description} / シーズン目標: ${input.season_goal}
 
@@ -484,6 +530,8 @@ export const generateSeriesCharacters = async (
 - id: "char_1" から連番
 - name: キャラ名
 - role: 物語上の役割（1文）
+- tier: "primary" または "secondary"
+- must_appear: boolean（primary のみ true）
 - goal: 目標（1文）
 - arc_start: シリーズ開始時の状態（1文）
 - arc_end: シリーズ終盤の状態（1文）
@@ -493,6 +541,7 @@ export const generateSeriesCharacters = async (
 - relationship_hooks: 関係性フック（1〜2個）
 
 名前・性格・外見が互いに被らないようにしてください。
+primary は1〜2人、secondary は最大3人にしてください。
 name には「あなた」「アナタ」「プレイヤー」「主人公」「You」など自己参照語を使わず、全員を固有名詞で命名してください。
 `;
 

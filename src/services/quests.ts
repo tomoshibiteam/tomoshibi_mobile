@@ -1,5 +1,9 @@
 import { getSupabaseOrThrow } from "@/lib/supabase";
-import type { GeneratedSeriesDraft } from "@/services/seriesAi";
+import type {
+  EpisodeSpot,
+  GeneratedRuntimeEpisode,
+  GeneratedSeriesDraft,
+} from "@/services/seriesAi";
 
 type CreateQuestDraftPayload = {
   creatorId: string;
@@ -27,6 +31,13 @@ type EpisodeSaveResult = {
   questTitle: string;
   storage: "quest_episodes" | "quest_posts";
   episodeNo?: number;
+};
+
+export type RuntimeSpotCoordinate = {
+  spotName: string;
+  lat: number;
+  lng: number;
+  address?: string | null;
 };
 
 export type SeriesOption = {
@@ -84,6 +95,8 @@ export type SeriesEpisodeRuntimeContext = {
   characters: Array<{
     name: string;
     role: string;
+    tier?: "primary" | "secondary";
+    mustAppear?: boolean;
     personality: string | null;
     arcStart: string | null;
     arcEnd: string | null;
@@ -161,6 +174,19 @@ const isMissingAnyColumn = (error: unknown, columnNames: string[]) => {
   const normalized = `${maybeError.message || ""} ${maybeError.details || ""}`.toLowerCase();
   if (code !== "42703" && code !== "PGRST204" && !normalized.includes("column")) return false;
   return columnNames.some((column) => normalized.includes(column.toLowerCase()));
+};
+
+const isMissingTableError = (error: unknown, tableName: string) => {
+  if (!error || typeof error !== "object") return false;
+  const maybeError = error as { code?: string; message?: string; details?: string };
+  const code = maybeError.code || "";
+  const normalized = `${maybeError.message || ""} ${maybeError.details || ""}`.toLowerCase();
+  return (
+    code === "42P01" ||
+    code === "PGRST205" ||
+    normalized.includes("does not exist") ||
+    normalized.includes(tableName.toLowerCase())
+  );
 };
 
 const generateUuid = (): string => {
@@ -455,6 +481,8 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
     | Array<{
       name: string | null;
       role: string | null;
+      tier: string | null;
+      must_appear: boolean | null;
       personality: string | null;
       arc_start: string | null;
       arc_end: string | null;
@@ -462,17 +490,62 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
     | null = null;
 
   try {
-    const query = await supabase
+    const queryWithTier = await supabase
       .from("series_characters")
-      .select("name, role, personality, arc_start, arc_end")
+      .select("name, role, tier, must_appear, personality, arc_start, arc_end")
       .eq("quest_id", questId)
       .eq("creator_id", userId)
       .order("character_order", { ascending: true })
       .limit(8);
-    if (query.error) throw query.error;
-    characterRows = (query.data || null) as Array<{
+
+    let dataForMapping: Array<{
       name: string | null;
       role: string | null;
+      tier?: string | null;
+      must_appear?: boolean | null;
+      personality: string | null;
+      arc_start: string | null;
+      arc_end: string | null;
+    }> | null = null;
+
+    if (queryWithTier.error && isMissingAnyColumn(queryWithTier.error, ["tier", "must_appear"])) {
+      const legacyQuery = await supabase
+        .from("series_characters")
+        .select("name, role, personality, arc_start, arc_end")
+        .eq("quest_id", questId)
+        .eq("creator_id", userId)
+        .order("character_order", { ascending: true })
+        .limit(8);
+      if (legacyQuery.error) throw legacyQuery.error;
+      dataForMapping = ((legacyQuery.data || null) as Array<{
+        name: string | null;
+        role: string | null;
+        personality: string | null;
+        arc_start: string | null;
+        arc_end: string | null;
+      }> | null)?.map((row) => ({
+        ...row,
+        tier: null,
+        must_appear: null,
+      })) || null;
+    } else {
+      if (queryWithTier.error) throw queryWithTier.error;
+      dataForMapping = (queryWithTier.data || null) as Array<{
+        name: string | null;
+        role: string | null;
+        tier?: string | null;
+        must_appear?: boolean | null;
+        personality: string | null;
+        arc_start: string | null;
+        arc_end: string | null;
+      }> | null;
+    }
+
+    characterRows = (dataForMapping || null) as Array<{
+      name: string | null;
+      role: string | null;
+      tier: string | null;
+      must_appear: boolean | null;
       personality: string | null;
       arc_start: string | null;
       arc_end: string | null;
@@ -520,6 +593,8 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
     characters: ((characterRows || []) as Array<{
       name: string | null;
       role: string | null;
+      tier?: string | null;
+      must_appear?: boolean | null;
       personality: string | null;
       arc_start: string | null;
       arc_end: string | null;
@@ -528,6 +603,8 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
       .map((row) => ({
         name: row.name || "登場人物",
         role: row.role || "役割未設定",
+        tier: clean(row.tier || "").toLowerCase() === "primary" ? "primary" : "secondary",
+        mustAppear: Boolean(row.must_appear),
         personality: row.personality,
         arcStart: row.arc_start,
         arcEnd: row.arc_end,
@@ -544,6 +621,10 @@ type ApplySeriesProgressPatchPayload = {
     unresolvedThreadsToAdd?: string[];
     unresolvedThreadsToRemove?: string[];
     revealedFactsToAdd?: string[];
+    relationshipStateSummary?: string;
+    relationshipFlagsToAdd?: string[];
+    relationshipFlagsToRemove?: string[];
+    recentRelationShift?: string[];
     companionTrustDelta?: number;
     nextHook?: string;
   };
@@ -582,9 +663,32 @@ export const applySeriesProgressPatch = async (payload: ApplySeriesProgressPatch
     asStringArray(rawCurrent.revealed_facts).concat(asStringArray(payload.progressPatch.revealedFactsToAdd || []))
   );
 
+  const currentFlags = asStringArray(rawCurrent.relationship_flags);
+  const relationFlagsToRemove = asStringArray(payload.progressPatch.relationshipFlagsToRemove || []);
+  const relationFlagsAfter = dedupe(
+    currentFlags
+      .filter((item) => !relationFlagsToRemove.some((removed) => normalize(removed) === normalize(item)))
+      .concat(asStringArray(payload.progressPatch.relationshipFlagsToAdd || []))
+  );
+  const recentRelationShift = dedupe([
+    ...asStringArray(payload.progressPatch.recentRelationShift || []),
+    ...asStringArray(rawCurrent.recent_relation_shift),
+  ]).slice(0, 8);
+  const relationshipStateSummary =
+    clean(payload.progressPatch.relationshipStateSummary) ||
+    clean(typeof rawCurrent.relationship_state_summary === "string" ? rawCurrent.relationship_state_summary : "") ||
+    "関係性は継続中。";
+
   const trustDelta = Number.parseFloat(String(payload.progressPatch.companionTrustDelta ?? 0));
   const nextTrust = Number.isFinite(currentTrust) ? currentTrust : 40;
-  const companionTrustLevel = Math.max(0, Math.min(100, Math.round(nextTrust + (Number.isFinite(trustDelta) ? trustDelta : 0))));
+  const derivedTrustFromFlags = 40 + relationFlagsAfter.length * 2;
+  const companionTrustLevel = Math.max(
+    0,
+    Math.min(
+      100,
+      Math.round((Number.isFinite(nextTrust) ? nextTrust : derivedTrustFromFlags) + (Number.isFinite(trustDelta) ? trustDelta : 0))
+    )
+  );
   const nextHook = clean(payload.progressPatch.nextHook) || clean(typeof rawCurrent.next_hook === "string" ? rawCurrent.next_hook : "");
   const currentLastSafe = Number.isFinite(currentLast) ? Math.max(0, currentLast) : 0;
   const lastCompletedEpisodeNo = Math.max(
@@ -596,6 +700,9 @@ export const applySeriesProgressPatch = async (payload: ApplySeriesProgressPatch
     last_completed_episode_no: lastCompletedEpisodeNo,
     unresolved_threads: unresolvedAfter,
     revealed_facts: revealedAfter,
+    relationship_state_summary: relationshipStateSummary,
+    relationship_flags: relationFlagsAfter,
+    recent_relation_shift: recentRelationShift,
     companion_trust_level: companionTrustLevel,
     next_hook: nextHook,
   };
@@ -854,6 +961,263 @@ export const createEpisodeForSeries = async (payload: CreateEpisodePayload) => {
   }
 };
 
+type SaveRuntimeEpisodeSpotsPayload = {
+  questId: string;
+  userId?: string;
+  episodeNo?: number;
+  runtimeEpisode: GeneratedRuntimeEpisode;
+  stageLocation?: string;
+  stageCoords?: { lat: number; lng: number } | null;
+  spotCoordinates?: RuntimeSpotCoordinate[];
+};
+
+export const saveRuntimeEpisodeSpots = async (
+  payload: SaveRuntimeEpisodeSpotsPayload
+) => {
+  const supabase = getSupabaseOrThrow();
+  const spots = payload.runtimeEpisode.spots || [];
+  if (spots.length === 0) return { savedSpotCount: 0 };
+
+  const coordsByName = new Map<string, RuntimeSpotCoordinate>();
+  (payload.spotCoordinates || []).forEach((item) => {
+    const key = normalize(item.spotName);
+    if (!key) return;
+    coordsByName.set(key, item);
+  });
+
+  const { data: currentRows, error: currentError } = await supabase
+    .from("spots")
+    .select("order_index")
+    .eq("quest_id", payload.questId)
+    .order("order_index", { ascending: false })
+    .limit(1);
+
+  if (currentError) {
+    if (isMissingTableError(currentError, "spots")) {
+      return { savedSpotCount: 0 };
+    }
+    throw currentError;
+  }
+
+  const maxOrder = ((currentRows || []) as Array<{ order_index: number | null }>)[0]?.order_index || 0;
+
+  const toSpotRow = (spot: EpisodeSpot, index: number) => {
+    const resolved = coordsByName.get(normalize(spot.spotName) || "");
+    const lat = resolved?.lat ?? payload.stageCoords?.lat ?? null;
+    const lng = resolved?.lng ?? payload.stageCoords?.lng ?? null;
+    return {
+      quest_id: payload.questId,
+      name: clean(spot.spotName) || `スポット${index + 1}`,
+      address:
+        clean(resolved?.address || payload.stageLocation || spot.spotName) || "",
+      lat,
+      lng,
+      order_index: maxOrder + index + 1,
+    };
+  };
+
+  const spotRows = spots.map(toSpotRow);
+
+  const { data: insertedSpots, error: insertSpotsError } = await supabase
+    .from("spots")
+    .insert(spotRows)
+    .select("id, name, order_index");
+
+  if (insertSpotsError) {
+    if (isMissingTableError(insertSpotsError, "spots")) {
+      return { savedSpotCount: 0 };
+    }
+    throw insertSpotsError;
+  }
+
+  const inserted =
+    ((insertedSpots || []) as Array<{ id: string; name: string | null; order_index: number | null }>)
+      .sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+  if (inserted.length === 0) return { savedSpotCount: 0 };
+
+  const detailRows = inserted.map((row, index) => {
+    const source = spots[index];
+    return {
+      spot_id: row.id,
+      question_text: clean(source?.questionText) || null,
+      answer_text: clean(source?.answerText) || null,
+      hint_text: clean(source?.hintText) || null,
+      explanation_text: clean(source?.explanationText) || null,
+    };
+  });
+
+  const { error: detailsError } = await supabase.from("spot_details").insert(detailRows);
+  if (detailsError && !isMissingTableError(detailsError, "spot_details")) {
+    console.warn("saveRuntimeEpisodeSpots: spot_details insert warning", detailsError);
+  }
+
+  const characterNameById = new Map(
+    (payload.runtimeEpisode.characters || []).map((character) => [
+      character.id,
+      clean(character.name) || character.id,
+    ])
+  );
+
+  const messageRows = inserted.flatMap((row, index) => {
+    const source = spots[index];
+    if (!source) return [];
+
+    const rows: Array<{
+      quest_id: string;
+      spot_id: string;
+      stage: string;
+      order_index: number;
+      speaker_type: "narrator" | "character";
+      speaker_name: string | null;
+      avatar_url: null;
+      text: string;
+    }> = [];
+
+    let preOrder = 1;
+    if (clean(source.sceneNarration)) {
+      rows.push({
+        quest_id: payload.questId,
+        spot_id: row.id,
+        stage: "pre_puzzle",
+        order_index: preOrder,
+        speaker_type: "narrator",
+        speaker_name: null,
+        avatar_url: null,
+        text: clean(source.sceneNarration),
+      });
+      preOrder += 1;
+    }
+
+    (source.preMissionDialogue || [])
+      .map((dialogue) => ({
+        speakerName: clean(
+          (dialogue.characterId && characterNameById.get(dialogue.characterId)) ||
+            dialogue.characterId ||
+            ""
+        ),
+        text: clean(dialogue.text),
+      }))
+      .filter((dialogue) => dialogue.text)
+      .forEach((dialogue, innerIndex) => {
+        rows.push({
+          quest_id: payload.questId,
+          spot_id: row.id,
+          stage: "pre_puzzle",
+          order_index: preOrder + innerIndex,
+          speaker_type: "character",
+          speaker_name: dialogue.speakerName || null,
+          avatar_url: null,
+          text: dialogue.text,
+        });
+      });
+
+    (source.postMissionDialogue || [])
+      .map((dialogue) => ({
+        speakerName: clean(
+          (dialogue.characterId && characterNameById.get(dialogue.characterId)) ||
+            dialogue.characterId ||
+            ""
+        ),
+        text: clean(dialogue.text),
+      }))
+      .filter((dialogue) => dialogue.text)
+      .forEach((dialogue, innerIndex) => {
+        rows.push({
+          quest_id: payload.questId,
+          spot_id: row.id,
+          stage: "post_puzzle",
+          order_index: innerIndex + 1,
+          speaker_type: "character",
+          speaker_name: dialogue.speakerName || null,
+          avatar_url: null,
+          text: dialogue.text,
+        });
+      });
+
+    return rows;
+  });
+
+  if (messageRows.length > 0) {
+    const { error: messagesError } = await supabase
+      .from("spot_story_messages")
+      .insert(messageRows);
+    if (messagesError && !isMissingTableError(messagesError, "spot_story_messages")) {
+      console.warn(
+        "saveRuntimeEpisodeSpots: spot_story_messages insert warning",
+        messagesError
+      );
+    }
+  }
+
+  const trace = payload.runtimeEpisode.generationTrace;
+  const resolvedEpisodeNo =
+    Number.isFinite(payload.episodeNo) && (payload.episodeNo || 0) > 0
+      ? Math.floor(payload.episodeNo as number)
+      : null;
+
+  if (trace && payload.userId && resolvedEpisodeNo) {
+    const traceRow = {
+      quest_id: payload.questId,
+      user_id: payload.userId,
+      episode_no: resolvedEpisodeNo,
+      stage_location: clean(payload.stageLocation || trace.stageLocation) || null,
+      candidate_spots_json: (trace.candidateSpots || []).map((requirement) => ({
+        requirement_id: requirement.requirementId,
+        scene_role: requirement.sceneRole,
+        spot_role: requirement.spotRole,
+        candidates: (requirement.candidates || []).map((candidate) => ({
+          spot_name: candidate.spotName,
+          tourism_focus: candidate.tourismFocus,
+          estimated_walk_minutes: candidate.estimatedWalkMinutes,
+          public_accessible: candidate.publicAccessible,
+          role_match_score: candidate.roleMatchScore,
+          tourism_match_score: candidate.tourismMatchScore,
+          locality_score: candidate.localityScore,
+        })),
+      })),
+      selected_spots_json: (trace.selectedSpots || []).map((spot) => ({
+        requirement_id: spot.requirementId,
+        scene_role: spot.sceneRole,
+        spot_name: spot.spotName,
+        tourism_focus: spot.tourismFocus,
+        estimated_walk_minutes: spot.estimatedWalkMinutes,
+      })),
+      route_score:
+        Number.isFinite(trace.routeScore) ? Number(trace.routeScore.toFixed(4)) : null,
+      continuity_score:
+        Number.isFinite(trace.continuityScore) ? Number(trace.continuityScore.toFixed(4)) : null,
+      eligibility_reject_reasons_json: trace.eligibilityRejectReasons || [],
+      mmr_scores_json: (trace.mmrScores || []).map((score) => ({
+        requirement_id: score.requirementId,
+        spot_name: score.spotName,
+        relevance_score: score.relevanceScore,
+        redundancy_penalty: score.redundancyPenalty,
+        mmr_score: score.mmrScore,
+      })),
+      route_metrics_json: {
+        optimizer: trace.routeMetrics.optimizer,
+        total_estimated_walk_minutes: trace.routeMetrics.totalEstimatedWalkMinutes,
+        transfer_minutes: trace.routeMetrics.transferMinutes,
+        max_leg_minutes: trace.routeMetrics.maxLegMinutes,
+        max_total_walk_minutes: trace.routeMetrics.maxTotalWalkMinutes,
+        feasible: trace.routeMetrics.feasible,
+        failure_reasons: trace.routeMetrics.failureReasons,
+        optimized_order_indices: trace.routeMetrics.optimizedOrderIndices,
+        optimized_order_spot_names: trace.routeMetrics.optimizedOrderSpotNames,
+      },
+    };
+
+    const { error: traceError } = await supabase
+      .from("episode_generation_traces")
+      .insert(traceRow);
+    if (traceError && !isMissingTableError(traceError, "episode_generation_traces")) {
+      console.warn("saveRuntimeEpisodeSpots: episode_generation_traces insert warning", traceError);
+    }
+  }
+
+  return { savedSpotCount: inserted.length };
+};
+
 
 type SaveSeriesBlueprintPayload = {
   questId: string;
@@ -951,6 +1315,8 @@ export const saveSeriesBlueprint = async (payload: SaveSeriesBlueprintPayload) =
     character_order: index + 1,
     name: character.name,
     role: character.role,
+    tier: character.tier === "primary" ? "primary" : "secondary",
+    must_appear: Boolean(character.mustAppear),
     goal: character.goal || null,
     arc_start: character.arcStart || null,
     arc_end: character.arcEnd || null,
@@ -980,6 +1346,8 @@ export const saveSeriesBlueprint = async (payload: SaveSeriesBlueprintPayload) =
     if (
       insertCharactersError &&
       isMissingAnyColumn(insertCharactersError, [
+        "tier",
+        "must_appear",
         "appearance",
         "portrait_prompt",
         "portrait_image_url",

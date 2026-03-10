@@ -200,8 +200,8 @@ export const HomeScreen = () => {
       <ScrollView className="flex-1" contentContainerStyle={{ paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
         <View className="w-full" style={{ aspectRatio: 4 / 5 }}>
           <Image source={{ uri: homeHeroPost?.questImage || HERO_FALLBACK }} className="absolute inset-0 w-full h-full" resizeMode="cover" />
-          <View className="absolute inset-0 bg-black/45" />
-          <View className="absolute inset-x-0 bottom-0 h-52 bg-black/45" />
+          <View className="absolute inset-0 bg-black/40" />
+          <View className="absolute inset-x-0 bottom-0 h-64 bg-black/55" />
 
           <View className="absolute inset-x-0 top-0 px-5 pt-4 flex-row items-center justify-between">
             <Text className="text-xl text-white" style={{ fontFamily: fonts.displayBold }}>
@@ -213,7 +213,7 @@ export const HomeScreen = () => {
                 className="w-9 h-9 rounded-full bg-black/20 items-center justify-center"
                 onPress={() => navigation.navigate("MainTabs", { screen: "Notifications" })}
               >
-                <Ionicons name="notifications-outline" size={18} color="#FFFFFF" />
+                <Ionicons name="trophy-outline" size={18} color="#FFFFFF" />
               </Pressable>
               <Pressable
                 className="w-9 h-9 rounded-full bg-black/20 items-center justify-center"
@@ -224,22 +224,22 @@ export const HomeScreen = () => {
             </View>
           </View>
 
-          <View className="absolute inset-x-0 bottom-0 px-6 pb-8">
+          <View className="absolute inset-x-0 bottom-0 px-6 pb-11">
             <View className="flex-row items-center gap-2 mb-2">
               <View className="rounded px-2 py-0.5 bg-[#F29130]/90">
                 <Text className="text-[10px] text-white" style={{ fontFamily: fonts.displayBold }}>
                   CONTINUE
                 </Text>
               </View>
-              <Text className="text-xs text-slate-200" style={{ fontFamily: fonts.bodyMedium }}>
+              <Text className="text-xs text-slate-200 flex-1" numberOfLines={1} style={{ fontFamily: fonts.bodyMedium }}>
                 最終プレイ: {homeHeroPost ? formatRelativeTime(homeHeroPost.postedAt) : "2時間前"}
               </Text>
             </View>
 
-            <Text className="text-3xl text-white mb-1" numberOfLines={2} style={{ fontFamily: fonts.displayExtraBold }}>
+            <Text className="text-[28px] text-white mb-1" numberOfLines={1} style={{ fontFamily: fonts.displayExtraBold }}>
               {homeHeroPost?.questTitle || "港の記憶"}
             </Text>
-            <Text className="text-sm text-slate-200 mb-5" style={{ fontFamily: fonts.bodyMedium }}>
+            <Text className="text-sm text-slate-200 mb-4" numberOfLines={1} style={{ fontFamily: fonts.bodyMedium }}>
               {homeHeroPost?.area || "第2話：夕暮れの約束"}
             </Text>
 

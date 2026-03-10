@@ -412,8 +412,16 @@ export const SearchScreen = ({}: Props) => {
               onChangeText={setKeyword}
               placeholder="場所、物語のタイトル、作者を検索"
               placeholderTextColor="#A39A90"
+              multiline={false}
+              numberOfLines={1}
               className="w-full h-11 pl-10 pr-10 bg-[#F1ECE6] border border-[#E5DDD3] rounded-xl text-sm text-[#221910]"
-              style={{ fontFamily: fonts.bodyRegular }}
+              style={{
+                fontFamily: fonts.bodyRegular,
+                lineHeight: 18,
+                paddingTop: 0,
+                paddingBottom: 0,
+                textAlignVertical: "center",
+              }}
             />
             {hasKeyword && (
               <Pressable className="absolute right-3 top-3" onPress={() => setKeyword("")}>

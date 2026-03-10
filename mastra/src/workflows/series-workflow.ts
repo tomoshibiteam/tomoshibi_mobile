@@ -19,6 +19,7 @@ import {
 import { generateSeriesCharacters } from "../lib/agents/seriesCharacterAgent";
 import { generateSeriesEpisodePlan } from "../lib/agents/seriesEpisodePlannerAgent";
 import { generateSeriesConsistency } from "../lib/agents/seriesConsistencyAgent";
+import { dryRunFirstEpisodeSeedRoute } from "../lib/agents/seriesRuntimeEpisodeAgent";
 import {
   buildCharacterPortraitPrompt,
   buildCoverImagePrompt,
@@ -127,17 +128,40 @@ const toScore = (value: unknown, fallback = 0) => {
   return clamp01(num);
 };
 
+const VISION_IMAGE_FETCH_TIMEOUT_MS = Math.max(
+  5_000,
+  Number.parseInt(clean(process.env.SERIES_VISION_IMAGE_FETCH_TIMEOUT_MS) || "45000", 10) || 45_000
+);
+const VISION_EVAL_TIMEOUT_MS = Math.max(
+  8_000,
+  Number.parseInt(clean(process.env.SERIES_VISION_EVAL_TIMEOUT_MS) || "45000", 10) || 45_000
+);
+const isAbortLikeError = (error: unknown) => {
+  const message = clean(error instanceof Error ? error.message : String(error ?? "")).toLowerCase();
+  if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) return true;
+  return /abort|aborted|timeout|timed out/.test(message);
+};
+
 const fetchImageForVision = async (url: string): Promise<VisionImagePayload> => {
   const normalized = clean(url);
   if (!normalized) {
     throw new Error("vision_image_url_missing");
   }
 
-  const response = await fetch(normalized, {
-    headers: {
-      "User-Agent": "tomoshibi-mastra/cover-identity-eval",
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(normalized, {
+      headers: {
+        "User-Agent": "tomoshibi-mastra/cover-identity-eval",
+      },
+      signal: AbortSignal.timeout(VISION_IMAGE_FETCH_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (isAbortLikeError(error)) {
+      throw new Error(`vision_image_fetch_timeout:${Math.floor(VISION_IMAGE_FETCH_TIMEOUT_MS / 1000)}s`);
+    }
+    throw new Error(`vision_image_fetch_error:${clean(error instanceof Error ? error.message : String(error ?? "")) || "unknown"}`);
+  }
   if (!response.ok) {
     throw new Error(`vision_image_fetch_failed:${response.status}`);
   }
@@ -213,24 +237,35 @@ const runVisionJsonEvaluation = async (parts: Array<Record<string, unknown>>) =>
     getGeminiVisionModel()
   )}:generateContent?key=${encodeURIComponent(geminiApiKey)}`;
 
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: "user",
-          parts,
-        },
-      ],
-      generationConfig: {
-        temperature: 0.1,
-        responseMimeType: "application/json",
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    }),
-  });
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts,
+          },
+        ],
+        generationConfig: {
+          temperature: 0.1,
+          responseMimeType: "application/json",
+        },
+      }),
+      signal: AbortSignal.timeout(VISION_EVAL_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (isAbortLikeError(error)) {
+      throw new Error(`cover_identity_eval_timeout:${Math.floor(VISION_EVAL_TIMEOUT_MS / 1000)}s`);
+    }
+    throw new Error(
+      `cover_identity_eval_network_error:${clean(error instanceof Error ? error.message : String(error ?? "")) || "unknown"}`
+    );
+  }
 
   if (!response.ok) {
     const errText = clean(await response.text()).slice(0, 400);
@@ -893,8 +928,14 @@ const ensureUniquePortraitUrls = (input: {
   });
 };
 
-const PORTRAIT_BINARY_DUPLICATE_RETRY_MAX = 2;
-const PORTRAIT_HASH_FETCH_TIMEOUT_MS = 90_000;
+const PORTRAIT_BINARY_DUPLICATE_RETRY_MAX = Math.max(
+  0,
+  Number.parseInt(clean(process.env.SERIES_PORTRAIT_BINARY_RETRY_MAX) || "1", 10) || 1
+);
+const PORTRAIT_HASH_FETCH_TIMEOUT_MS = Math.max(
+  5_000,
+  Number.parseInt(clean(process.env.SERIES_PORTRAIT_HASH_FETCH_TIMEOUT_MS) || "20000", 10) || 20_000
+);
 
 const fetchPortraitBinaryHash = async (url?: string | null): Promise<string | null> => {
   const normalized = clean(url);
@@ -993,6 +1034,11 @@ const enforceUniquePortraitBinaryHashes = async (input: {
 
 const PORTRAIT_DUPLICATE_THRESHOLD = 0.82;
 const PORTRAIT_DUPLICATE_RETRY_MAX = 2;
+const ENABLE_PORTRAIT_VISION_DEDUP = clean(process.env.SERIES_PORTRAIT_VISION_DEDUP).toLowerCase() === "on";
+const PORTRAIT_VISION_COMPARE_BUDGET_MS = Math.max(
+  20_000,
+  Number.parseInt(clean(process.env.SERIES_PORTRAIT_VISION_COMPARE_BUDGET_MS) || "60000", 10) || 60_000
+);
 
 const buildPortraitDistinctPrompt = (input: {
   current: WorkflowCharacter;
@@ -1037,8 +1083,13 @@ const enforceDistinctCharacterPortraits = async (input: {
 }) => {
   const warnings: string[] = [];
   const next = input.characters.slice();
+  const startedAt = Date.now();
 
   for (let index = 0; index < next.length; index += 1) {
+    if (Date.now() - startedAt > PORTRAIT_VISION_COMPARE_BUDGET_MS) {
+      warnings.push("portrait_identity_budget_exceeded");
+      break;
+    }
     let resolved = false;
     for (let attempt = 0; attempt <= PORTRAIT_DUPLICATE_RETRY_MAX; attempt += 1) {
       const current = next[index];
@@ -1049,6 +1100,11 @@ const enforceDistinctCharacterPortraits = async (input: {
       let conflictIndex = -1;
       let conflictScore = 0;
       for (let prev = 0; prev < index; prev += 1) {
+        if (Date.now() - startedAt > PORTRAIT_VISION_COMPARE_BUDGET_MS) {
+          warnings.push("portrait_identity_budget_exceeded");
+          conflictIndex = -1;
+          break;
+        }
         const previous = next[prev];
         if (!clean(previous.portrait_image_url)) continue;
         try {
@@ -1144,6 +1200,18 @@ const COVER_MIN_PASS_RATE = 0.75;
 const COVER_MIN_STYLE_SIMILARITY = 0.45;
 const COVER_MIN_WORLD_SIMILARITY = 0.55;
 const COVER_MAX_PEOPLE_SCORE = 0.18;
+const COVER_MAX_ROUNDS = Math.max(
+  1,
+  Number.parseInt(clean(process.env.SERIES_COVER_MAX_ROUNDS) || "2", 10) || 2
+);
+const COVER_CANDIDATES_PER_ROUND = Math.max(
+  1,
+  Number.parseInt(clean(process.env.SERIES_COVER_CANDIDATES_PER_ROUND) || "3", 10) || 3
+);
+const COVER_EVAL_BUDGET_MS = Math.max(
+  30_000,
+  Number.parseInt(clean(process.env.SERIES_COVER_EVAL_BUDGET_MS) || "240000", 10) || 240_000
+);
 
 type CoverCandidateReport = z.infer<typeof seriesCoverConsistencyReportSchema>["candidate_reports"][number];
 
@@ -1279,37 +1347,43 @@ const buildCoverWithConsistency = async (input: {
 
   const candidateReports: CoverCandidateReport[] = [];
   let retryFeedback = "";
+  const startedAt = Date.now();
 
-  for (let round = 1; round <= 3; round += 1) {
-    const roundReports: CoverCandidateReport[] = [];
-    for (let slot = 1; slot <= 4; slot += 1) {
-      const candidateIndex = (round - 1) * 4 + slot;
-      const prompt = buildCandidatePrompt(basePrompt, round, slot, retryFeedback);
-      const imageUrl = buildSeriesImageUrl({
-        prompt,
-        seedKey: `${input.title}:cover:r${round}:s${slot}`,
-        width: 1024,
-        height: 1365,
-        purpose: "cover",
-        styleReference: input.styleGuide,
-      });
-
-      const report = await evaluateCoverCandidate({
-        candidateIndex,
-        roundIndex: round,
-        imageUrl,
-        prompt,
-        title: input.title,
-        genre: input.genre,
-        tone: input.tone,
-        premise: input.premise,
-        setting: input.setting,
-        recurringMotifs: input.recurringMotifs,
-        styleGuide: input.styleGuide,
-      });
-      roundReports.push(report);
-      candidateReports.push(report);
+  for (let round = 1; round <= COVER_MAX_ROUNDS; round += 1) {
+    if (Date.now() - startedAt > COVER_EVAL_BUDGET_MS) {
+      break;
     }
+
+    const slots = Array.from({ length: COVER_CANDIDATES_PER_ROUND }, (_, index) => index + 1);
+    const roundReports = await Promise.all(
+      slots.map(async (slot) => {
+        const candidateIndex = (round - 1) * COVER_CANDIDATES_PER_ROUND + slot;
+        const prompt = buildCandidatePrompt(basePrompt, round, slot, retryFeedback);
+        const imageUrl = buildSeriesImageUrl({
+          prompt,
+          seedKey: `${input.title}:cover:r${round}:s${slot}`,
+          width: 1024,
+          height: 1365,
+          purpose: "cover",
+          styleReference: input.styleGuide,
+        });
+
+        return await evaluateCoverCandidate({
+          candidateIndex,
+          roundIndex: round,
+          imageUrl,
+          prompt,
+          title: input.title,
+          genre: input.genre,
+          tone: input.tone,
+          premise: input.premise,
+          setting: input.setting,
+          recurringMotifs: input.recurringMotifs,
+          styleGuide: input.styleGuide,
+        });
+      })
+    );
+    candidateReports.push(...roundReports);
 
     const passed = roundReports.find((row) => row.passed);
     if (passed) {
@@ -1340,6 +1414,52 @@ const buildCoverWithConsistency = async (input: {
     retryFeedback = buildRetryFeedback(roundBest);
   }
 
+  if (candidateReports.length === 0) {
+    const prompt = buildCandidatePrompt(basePrompt, 1, 1, retryFeedback);
+    const imageUrl = buildSeriesImageUrl({
+      prompt,
+      seedKey: `${input.title}:cover:r1:s1:fallback`,
+      width: 1024,
+      height: 1365,
+      purpose: "cover",
+      styleReference: input.styleGuide,
+    });
+    const fallbackCandidate: CoverCandidateReport = {
+      candidate_index: 1,
+      round_index: 1,
+      image_url: imageUrl,
+      provider: "unknown",
+      prompt,
+      arcface_avg: 1,
+      clip_avg: 0,
+      vision_anchor_avg: 0,
+      style_similarity: 0,
+      pass_rate: 0,
+      passed: false,
+      character_scores: [],
+    };
+    return {
+      coverImagePrompt: prompt,
+      coverImageUrl: imageUrl,
+      coverConsistencyReport: {
+        mode: "quality_first",
+        thresholds: {
+          required_axes_per_character: COVER_REQUIRED_AXES,
+          min_average_pass_rate: COVER_MIN_PASS_RATE,
+          min_style_similarity: COVER_MIN_STYLE_SIMILARITY,
+        },
+        validation_rounds: 1,
+        selected_candidate_index: 1,
+        selected_cover_image_url: imageUrl,
+        selected_cover_image_prompt: prompt,
+        selected_provider: "unknown",
+        passed: false,
+        summary: "カバー評価時間の上限に達したため、最初の候補を採用しました。",
+        candidate_reports: [fallbackCandidate],
+      } satisfies WorkflowCoverConsistencyReport,
+    };
+  }
+
   const best = resolveBestCandidate(candidateReports);
   const summary =
     `全ラウンドで世界観ポスター閾値未達のため最良候補を採用（pass_rate=${best.pass_rate.toFixed(2)}, style=${best.style_similarity.toFixed(2)}）`;
@@ -1353,7 +1473,7 @@ const buildCoverWithConsistency = async (input: {
         min_average_pass_rate: COVER_MIN_PASS_RATE,
         min_style_similarity: COVER_MIN_STYLE_SIMILARITY,
       },
-      validation_rounds: 3,
+      validation_rounds: Math.max(1, Math.min(COVER_MAX_ROUNDS, Math.ceil(candidateReports.length / COVER_CANDIDATES_PER_ROUND))),
       selected_candidate_index: best.candidate_index,
       selected_cover_image_url: best.image_url,
       selected_cover_image_prompt: best.prompt,
@@ -1365,12 +1485,89 @@ const buildCoverWithConsistency = async (input: {
   };
 };
 
+const buildProposalCoverFast = (input: {
+  title: string;
+  genre: string;
+  tone: string;
+  premise: string;
+  setting: string;
+  styleGuide: string;
+  dominantColors: string[];
+  recurringMotifs: string[];
+  additionalDirection?: string;
+}) => {
+  const worldPosterDirection = dedupeStrings([
+    clean(input.additionalDirection),
+    "world concept poster only",
+    "no people",
+    "no human silhouettes",
+    "no character portraits",
+  ]).join(", ");
+
+  const prompt = buildCoverImagePrompt({
+    title: input.title,
+    genre: input.genre,
+    tone: input.tone,
+    premise: input.premise,
+    setting: input.setting,
+    styleGuide: input.styleGuide,
+    dominantColors: input.dominantColors,
+    recurringMotifs: input.recurringMotifs,
+    focusCharacters: [],
+    additionalDirection: worldPosterDirection,
+    excludeCharacters: true,
+  });
+  const imageUrl = buildSeriesImageUrl({
+    prompt,
+    seedKey: `${input.title}:cover:proposal:fast`,
+    width: 1024,
+    height: 1365,
+    purpose: "cover",
+    styleReference: input.styleGuide,
+  });
+  const candidate: CoverCandidateReport = {
+    candidate_index: 1,
+    round_index: 1,
+    image_url: imageUrl,
+    provider: "fast-proposal",
+    prompt,
+    arcface_avg: 1,
+    clip_avg: 0.72,
+    vision_anchor_avg: 0.72,
+    style_similarity: 0.72,
+    pass_rate: 1,
+    passed: true,
+    character_scores: [],
+  };
+  return {
+    coverImagePrompt: prompt,
+    coverImageUrl: imageUrl,
+    coverConsistencyReport: {
+      mode: "quality_first",
+      thresholds: {
+        required_axes_per_character: COVER_REQUIRED_AXES,
+        min_average_pass_rate: COVER_MIN_PASS_RATE,
+        min_style_similarity: COVER_MIN_STYLE_SIMILARITY,
+      },
+      validation_rounds: 1,
+      selected_candidate_index: 1,
+      selected_cover_image_url: imageUrl,
+      selected_cover_image_prompt: prompt,
+      selected_provider: "fast-proposal",
+      passed: true,
+      summary: "提案モードのため高速カバー生成を適用しました。",
+      candidate_reports: [candidate],
+    } satisfies WorkflowCoverConsistencyReport,
+  };
+};
+
 const resolvedSeriesRequestSchema = z.object({
   interview: seriesInterviewSchema,
   desired_episode_count: z.number().int().min(3).max(24),
   prompt: z.string().optional(),
   creator_id: z.string().uuid().optional(),
   language: z.string(),
+  generation_mode: z.enum(["proposal", "full"]).default("full"),
   existing_identity_pack: seriesIdentityPackSchema.optional(),
   identity_retcon: z.boolean().optional(),
 });
@@ -1383,6 +1580,7 @@ const sanitizeSeriesRequestInputSchema = z.object({
   prompt: z.string().optional(),
   creator_id: z.string().uuid().optional(),
   language: z.string().optional(),
+  generation_mode: z.enum(["proposal", "full"]).optional(),
   existing_identity_pack: z.unknown().optional(),
   identity_retcon: z.boolean().optional(),
 });
@@ -1394,7 +1592,7 @@ const sanitizeRequestStep = createStep({
   inputSchema: sanitizeSeriesRequestInputSchema,
   outputSchema: resolvedSeriesRequestSchema,
   execute: async ({ inputData }) => {
-    console.log(`${LOG_PREFIX} step 1/6: sanitize-series-request 開始`);
+    console.log(`${LOG_PREFIX} step 1/7: sanitize-series-request 開始`);
     try {
       const parsedIdentityPack = inputData.existing_identity_pack
         ? seriesIdentityPackSchema.safeParse(inputData.existing_identity_pack)
@@ -1403,6 +1601,7 @@ const sanitizeRequestStep = createStep({
         desired_episode_count: inputData.desired_episode_count ?? 8,
         prompt: clean(inputData.prompt),
         language: clean(inputData.language) || "ja",
+        generation_mode: inputData.generation_mode === "proposal" ? "proposal" : "full",
         creator_id: inputData.creator_id,
         existing_identity_pack: parsedIdentityPack?.success ? parsedIdentityPack.data : undefined,
         identity_retcon: Boolean(inputData.identity_retcon),
@@ -1420,10 +1619,10 @@ const sanitizeRequestStep = createStep({
           partner_description: clean(inputData.interview.partner_description),
         },
       };
-      console.log(`${LOG_PREFIX} step 1/6: sanitize-series-request 完了`);
+      console.log(`${LOG_PREFIX} step 1/7: sanitize-series-request 完了`);
       return resolved;
     } catch (e: any) {
-      console.error(`${LOG_PREFIX} step 1/6: sanitize-series-request 失敗`, e?.message ?? e);
+      console.error(`${LOG_PREFIX} step 1/7: sanitize-series-request 失敗`, e?.message ?? e);
       throw e;
     }
   },
@@ -1439,7 +1638,7 @@ const generateConceptStep = createStep({
   inputSchema: resolvedSeriesRequestSchema,
   outputSchema: conceptStepOutputSchema,
   execute: async ({ inputData }) => {
-    console.log(`${LOG_PREFIX} step 2/6: generate-series-concept 開始`);
+    console.log(`${LOG_PREFIX} step 2/7: generate-series-concept 開始`);
     try {
       const concept = await generateSeriesConcept({
         interview: inputData.interview,
@@ -1447,13 +1646,13 @@ const generateConceptStep = createStep({
         desiredEpisodeCount: inputData.desired_episode_count,
         language: inputData.language,
       });
-      console.log(`${LOG_PREFIX} step 2/6: generate-series-concept 完了 (title: ${concept?.title ?? "—"})`);
+      console.log(`${LOG_PREFIX} step 2/7: generate-series-concept 完了 (title: ${concept?.title ?? "—"})`);
       return {
         request: inputData,
         concept,
       };
     } catch (e: any) {
-      console.error(`${LOG_PREFIX} step 2/6: generate-series-concept 失敗`, e?.message ?? e);
+      console.error(`${LOG_PREFIX} step 2/7: generate-series-concept 失敗`, e?.message ?? e);
       throw e;
     }
   },
@@ -1468,9 +1667,9 @@ const generateCharactersStep = createStep({
   inputSchema: conceptStepOutputSchema,
   outputSchema: charactersStepOutputSchema,
   execute: async ({ inputData }) => {
-    console.log(`${LOG_PREFIX} step 3/6: generate-series-characters 開始`);
+    console.log(`${LOG_PREFIX} step 3/7: generate-series-characters 開始`);
     try {
-      const targetCount = Math.max(3, Math.min(8, Math.ceil(inputData.request.desired_episode_count / 2)));
+      const targetCount = Math.max(3, Math.min(5, Math.ceil(inputData.request.desired_episode_count / 2)));
       const styleGuide = buildSeriesVisualStyleGuide({
         seriesTitle: inputData.concept.title,
         genre: inputData.concept.genre,
@@ -1495,13 +1694,13 @@ const generateCharactersStep = createStep({
         target_count: targetCount,
       });
       const count = characterResult?.characters?.length ?? 0;
-      console.log(`${LOG_PREFIX} step 3/6: generate-series-characters 完了 (${count}人)`);
+      console.log(`${LOG_PREFIX} step 3/7: generate-series-characters 完了 (${count}人)`);
       return {
         ...inputData,
         characters: characterResult.characters,
       };
     } catch (e: any) {
-      console.error(`${LOG_PREFIX} step 3/6: generate-series-characters 失敗`, e?.message ?? e);
+      console.error(`${LOG_PREFIX} step 3/7: generate-series-characters 失敗`, e?.message ?? e);
       throw e;
     }
   },
@@ -1517,7 +1716,7 @@ const buildIdentityPackStep = createStep({
   inputSchema: charactersStepOutputSchema,
   outputSchema: identityStepOutputSchema,
   execute: async ({ inputData }) => {
-    console.log(`${LOG_PREFIX} step 4/6: build-series-identity-pack 開始`);
+    console.log(`${LOG_PREFIX} step 4/7: build-series-identity-pack 開始`);
     try {
       const styleGuide =
         clean(inputData.request.existing_identity_pack?.style_bible) ||
@@ -1537,14 +1736,14 @@ const buildIdentityPackStep = createStep({
         existingIdentityPack: inputData.request.existing_identity_pack,
         identityRetcon: inputData.request.identity_retcon,
       });
-      console.log(`${LOG_PREFIX} step 4/6: build-series-identity-pack 完了 (key: ${identity.identityPack.key_person_character_ids.join(",")})`);
+      console.log(`${LOG_PREFIX} step 4/7: build-series-identity-pack 完了 (key: ${identity.identityPack.key_person_character_ids.join(",")})`);
       return {
         ...inputData,
         characters: identity.characters,
         identity_pack: identity.identityPack,
       };
     } catch (e: any) {
-      console.error(`${LOG_PREFIX} step 4/6: build-series-identity-pack 失敗`, e?.message ?? e);
+      console.error(`${LOG_PREFIX} step 4/7: build-series-identity-pack 失敗`, e?.message ?? e);
       throw e;
     }
   },
@@ -1555,12 +1754,37 @@ const episodeStepOutputSchema = identityStepOutputSchema.extend({
   first_episode_seed: seriesEpisodeSeedSchema,
 });
 
+const seedRouteMetricsSchema = z.object({
+  optimizer: z.string(),
+  total_estimated_walk_minutes: z.number().int().min(0),
+  transfer_minutes: z.number().int().min(0),
+  max_leg_minutes: z.number().int().min(0),
+  max_total_walk_minutes: z.number().int().min(0),
+  feasible: z.boolean(),
+  failure_reasons: z.array(z.string()).max(20),
+  optimized_order_indices: z.array(z.number().int().min(0)).max(6),
+  optimized_order_spot_names: z.array(z.string()).max(6),
+});
+
+const seedRouteDryRunSchema = z.object({
+  feasible: z.boolean(),
+  selected_spots: z.array(z.string()).max(4),
+  failure_reasons: z.array(z.string()).max(20),
+  route_metrics: seedRouteMetricsSchema,
+  route_score: z.number().min(0).max(1),
+  continuity_score: z.number().min(0).max(1),
+});
+
+const seedDryRunStepOutputSchema = episodeStepOutputSchema.extend({
+  seed_route_dry_run: seedRouteDryRunSchema,
+});
+
 const generateEpisodesStep = createStep({
   id: "generate-series-checkpoints",
   inputSchema: identityStepOutputSchema,
   outputSchema: episodeStepOutputSchema,
   execute: async ({ inputData }) => {
-    console.log(`${LOG_PREFIX} step 5/6: generate-series-checkpoints 開始`);
+    console.log(`${LOG_PREFIX} step 5/7: generate-series-checkpoints 開始`);
     try {
       const plan = await generateSeriesEpisodePlan({
         title: inputData.concept.title,
@@ -1573,15 +1797,93 @@ const generateEpisodesStep = createStep({
         desired_episode_count: inputData.request.desired_episode_count,
       });
       const cpCount = plan?.checkpoints?.length ?? 0;
-      console.log(`${LOG_PREFIX} step 5/6: generate-series-checkpoints 完了 (checkpoints: ${cpCount})`);
+      console.log(`${LOG_PREFIX} step 5/7: generate-series-checkpoints 完了 (checkpoints: ${cpCount})`);
       return {
         ...inputData,
         checkpoints: plan.checkpoints,
         first_episode_seed: plan.first_episode_seed,
       };
     } catch (e: any) {
-      console.error(`${LOG_PREFIX} step 5/6: generate-series-checkpoints 失敗`, e?.message ?? e);
+      console.error(`${LOG_PREFIX} step 5/7: generate-series-checkpoints 失敗`, e?.message ?? e);
       throw e;
+    }
+  },
+});
+
+const dryRunFirstEpisodeSeedStep = createStep({
+  id: "dry-run-first-episode-seed-route",
+  inputSchema: episodeStepOutputSchema,
+  outputSchema: seedDryRunStepOutputSchema,
+  execute: async ({ inputData }) => {
+    console.log(`${LOG_PREFIX} step 6/7: dry-run-first-episode-seed-route 開始`);
+    const defaultDryRun = {
+      feasible: false,
+      selected_spots: [] as string[],
+      failure_reasons: ["seed_route_dry_run_not_executed"],
+      route_metrics: {
+        optimizer: "seed_dry_run_unavailable",
+        total_estimated_walk_minutes: 0,
+        transfer_minutes: 0,
+        max_leg_minutes: 0,
+        max_total_walk_minutes: 0,
+        feasible: false,
+        failure_reasons: ["seed_route_dry_run_not_executed"],
+        optimized_order_indices: [] as number[],
+        optimized_order_spot_names: [] as string[],
+      },
+      route_score: 0,
+      continuity_score: 0,
+    };
+
+    try {
+      const dryRun = await dryRunFirstEpisodeSeedRoute({
+        stage_location: clean(inputData.concept.world.setting) || clean(inputData.request.interview.genre_world) || "街",
+        world_setting: clean(inputData.concept.world.setting),
+        purpose: "シリーズ第1話導線の成立性検証",
+        expected_duration_minutes: inputData.first_episode_seed.expected_duration_minutes,
+        suggested_spots: inputData.first_episode_seed.suggested_spots || [],
+        spot_requirements: inputData.first_episode_seed.spot_requirements.map((requirement) => ({
+          requirement_id: requirement.requirement_id,
+          scene_role: requirement.scene_role,
+          spot_role: requirement.spot_role,
+          required_attributes: requirement.required_attributes,
+          visit_constraints: requirement.visit_constraints,
+          tourism_value_type: requirement.tourism_value_type,
+        })),
+      });
+      console.log(
+        `${LOG_PREFIX} step 6/7: dry-run-first-episode-seed-route 完了 (feasible=${dryRun.feasible}, selected=${dryRun.selected_spots.length})`
+      );
+      return {
+        ...inputData,
+        seed_route_dry_run: {
+          feasible: dryRun.feasible,
+          selected_spots: dryRun.selected_spots.slice(0, 4),
+          failure_reasons: dryRun.failure_reasons.slice(0, 20),
+          route_metrics: {
+            ...dryRun.route_metrics,
+            failure_reasons: dryRun.route_metrics.failure_reasons.slice(0, 20),
+            optimized_order_indices: dryRun.route_metrics.optimized_order_indices.slice(0, 6),
+            optimized_order_spot_names: dryRun.route_metrics.optimized_order_spot_names.slice(0, 6),
+          },
+          route_score: dryRun.route_score,
+          continuity_score: dryRun.continuity_score,
+        },
+      };
+    } catch (error: any) {
+      const reason = clean(error?.message || String(error || "seed_route_dry_run_failed"));
+      console.warn(`${LOG_PREFIX} step 6/7: dry-run-first-episode-seed-route 失敗`, reason);
+      return {
+        ...inputData,
+        seed_route_dry_run: {
+          ...defaultDryRun,
+          failure_reasons: [reason || "seed_route_dry_run_failed"],
+          route_metrics: {
+            ...defaultDryRun.route_metrics,
+            failure_reasons: [reason || "seed_route_dry_run_failed"],
+          },
+        },
+      };
     }
   },
 });
@@ -1593,6 +1895,7 @@ const assembleSeriesBlueprint = async (input: {
   identityPack: WorkflowIdentityPack;
   checkpoints: z.infer<typeof seriesCheckpointSchema>[];
   firstEpisodeSeed: z.infer<typeof seriesEpisodeSeedSchema>;
+  seedRouteDryRun: z.infer<typeof seedRouteDryRunSchema>;
   onProgress?: SeriesGenerationProgressReporter;
 }) => {
   const consistency = await generateSeriesConsistency({
@@ -1611,6 +1914,13 @@ const assembleSeriesBlueprint = async (input: {
   if (consistency.warnings && consistency.warnings.length > 0) {
     warnings.push(...consistency.warnings);
   }
+  if (!input.seedRouteDryRun.feasible) {
+    warnings.push(
+      `first_episode_seed_dry_run_unfeasible:${
+        input.seedRouteDryRun.failure_reasons.join(",") || "unknown_reason"
+      }`
+    );
+  }
 
   const dominantColors = collectDominantColors(input.characters);
   const visualStyleGuide =
@@ -1625,6 +1935,7 @@ const assembleSeriesBlueprint = async (input: {
       stylePreset: input.request.interview.visual_style_preset,
       styleDirection: input.request.interview.visual_style_notes,
     });
+  const isProposalMode = input.request.generation_mode === "proposal";
 
   const harmonizedCharacters = ensureUniquePortraitUrls({
     title: input.concept.title,
@@ -1638,19 +1949,29 @@ const assembleSeriesBlueprint = async (input: {
       characters: input.characters,
     }),
   });
-  const binaryUniqueInitial = await enforceUniquePortraitBinaryHashes({
-    title: input.concept.title,
-    styleGuide: visualStyleGuide,
-    characters: harmonizedCharacters,
-  });
+  const binaryUniqueInitial = isProposalMode
+    ? {
+      characters: harmonizedCharacters,
+      warnings: [] as string[],
+    }
+    : await enforceUniquePortraitBinaryHashes({
+      title: input.concept.title,
+      styleGuide: visualStyleGuide,
+      characters: harmonizedCharacters,
+    });
   if (binaryUniqueInitial.warnings.length > 0) {
     warnings.push(...binaryUniqueInitial.warnings);
   }
-  const distinctPortraitResult = await enforceDistinctCharacterPortraits({
-    title: input.concept.title,
-    styleGuide: visualStyleGuide,
-    characters: binaryUniqueInitial.characters,
-  });
+  const distinctPortraitResult = !isProposalMode && ENABLE_PORTRAIT_VISION_DEDUP
+    ? await enforceDistinctCharacterPortraits({
+      title: input.concept.title,
+      styleGuide: visualStyleGuide,
+      characters: binaryUniqueInitial.characters,
+    })
+    : {
+      characters: binaryUniqueInitial.characters,
+      warnings: [] as string[],
+    };
   if (distinctPortraitResult.warnings.length > 0) {
     warnings.push(...distinctPortraitResult.warnings);
   }
@@ -1660,11 +1981,16 @@ const assembleSeriesBlueprint = async (input: {
     styleGuide: visualStyleGuide,
     characters: distinctPortraitResult.characters,
   });
-  const binaryUniqueFinal = await enforceUniquePortraitBinaryHashes({
-    title: input.concept.title,
-    styleGuide: visualStyleGuide,
-    characters: uniquePortraitCharacters,
-  });
+  const binaryUniqueFinal = isProposalMode
+    ? {
+      characters: uniquePortraitCharacters,
+      warnings: [] as string[],
+    }
+    : await enforceUniquePortraitBinaryHashes({
+      title: input.concept.title,
+      styleGuide: visualStyleGuide,
+      characters: uniquePortraitCharacters,
+    });
   if (binaryUniqueFinal.warnings.length > 0) {
     warnings.push(...binaryUniqueFinal.warnings);
   }
@@ -1689,16 +2015,27 @@ const assembleSeriesBlueprint = async (input: {
     detail: "カバー候補を複数パターン生成しています",
   });
 
-  const coverBundle = await buildCoverWithConsistency({
-    title: input.concept.title,
-    genre: input.concept.genre,
-    tone: input.concept.tone,
-    premise: input.concept.premise,
-    setting: input.concept.world.setting,
-    styleGuide: visualStyleGuide,
-    dominantColors,
-    recurringMotifs: input.concept.world.recurring_motifs,
-  });
+  const coverBundle = isProposalMode
+    ? buildProposalCoverFast({
+      title: input.concept.title,
+      genre: input.concept.genre,
+      tone: input.concept.tone,
+      premise: input.concept.premise,
+      setting: input.concept.world.setting,
+      styleGuide: visualStyleGuide,
+      dominantColors,
+      recurringMotifs: input.concept.world.recurring_motifs,
+    })
+    : await buildCoverWithConsistency({
+      title: input.concept.title,
+      genre: input.concept.genre,
+      tone: input.concept.tone,
+      premise: input.concept.premise,
+      setting: input.concept.world.setting,
+      styleGuide: visualStyleGuide,
+      dominantColors,
+      recurringMotifs: input.concept.world.recurring_motifs,
+    });
 
   await emitSeriesGenerationProgress(input.onProgress, {
     phase: "generate_series_cover_candidates_done",
@@ -1789,6 +2126,9 @@ const assembleSeriesBlueprint = async (input: {
           last_completed_episode_no: 0,
           unresolved_threads: [consistency.continuity.global_mystery].filter((item) => clean(item).length > 0),
           revealed_facts: [],
+          relationship_state_summary: "主要キャラクターとの関係は導入段階。",
+          relationship_flags: [],
+          recent_relation_shift: [],
           companion_trust_level: 40,
           next_hook: clean(input.firstEpisodeSeed.carry_over_hint) || "次回につながる問いが残る。",
         },
@@ -1799,8 +2139,9 @@ const assembleSeriesBlueprint = async (input: {
       meta: {
         desired_episode_count: input.request.desired_episode_count,
         generated_checkpoint_count: input.checkpoints.length,
-        workflow_version: "series-workflow-v6-style-lock",
+        workflow_version: "series-workflow-v7-role-planner",
         warnings,
+        first_episode_seed_dry_run: input.seedRouteDryRun,
       },
     } satisfies z.infer<typeof seriesWorkflowOutputSchema>,
     warnings,
@@ -1809,10 +2150,10 @@ const assembleSeriesBlueprint = async (input: {
 
 const finalizeSeriesStep = createStep({
   id: "finalize-series-blueprint",
-  inputSchema: episodeStepOutputSchema,
+  inputSchema: seedDryRunStepOutputSchema,
   outputSchema: seriesWorkflowOutputSchema,
   execute: async ({ inputData }) => {
-    console.log(`${LOG_PREFIX} step 6/6: finalize-series-blueprint 開始`);
+    console.log(`${LOG_PREFIX} step 7/7: finalize-series-blueprint 開始`);
     try {
       const result = await assembleSeriesBlueprint({
         request: inputData.request,
@@ -1821,11 +2162,12 @@ const finalizeSeriesStep = createStep({
         identityPack: inputData.identity_pack,
         checkpoints: inputData.checkpoints,
         firstEpisodeSeed: inputData.first_episode_seed,
+        seedRouteDryRun: inputData.seed_route_dry_run,
       });
-      console.log(`${LOG_PREFIX} step 6/6: finalize-series-blueprint 完了`);
+      console.log(`${LOG_PREFIX} step 7/7: finalize-series-blueprint 完了`);
       return result.output;
     } catch (e: any) {
-      console.error(`${LOG_PREFIX} step 6/6: finalize-series-blueprint 失敗`, e?.message ?? e);
+      console.error(`${LOG_PREFIX} step 7/7: finalize-series-blueprint 失敗`, e?.message ?? e);
       throw e;
     }
   },
@@ -1841,6 +2183,7 @@ export const seriesWorkflow = createWorkflow({
   .then(generateCharactersStep)
   .then(buildIdentityPackStep)
   .then(generateEpisodesStep)
+  .then(dryRunFirstEpisodeSeedStep)
   .then(finalizeSeriesStep)
   .commit();
 
@@ -1855,6 +2198,8 @@ export type SeriesGenerationProgressPhase =
   | "build_series_identity_pack_done"
   | "generate_series_checkpoints_start"
   | "generate_series_checkpoints_done"
+  | "seed_route_dry_run_start"
+  | "seed_route_dry_run_done"
   | "finalize_series_blueprint_start"
   | "generate_series_cover_candidates_start"
   | "generate_series_cover_candidates_done"
@@ -1902,6 +2247,7 @@ export const generateSeriesWorkflowWithProgress = async (
     desired_episode_count: rawInput.desired_episode_count ?? 8,
     prompt: clean(rawInput.prompt),
     language: clean(rawInput.language) || "ja",
+    generation_mode: rawInput.generation_mode === "proposal" ? "proposal" : "full",
     creator_id: rawInput.creator_id,
     existing_identity_pack: parsedIdentityPack?.success ? parsedIdentityPack.data : undefined,
     identity_retcon: Boolean(rawInput.identity_retcon),
@@ -1943,7 +2289,7 @@ export const generateSeriesWorkflowWithProgress = async (
     phase: "generate_series_characters_start",
     detail: "主要キャラクターを設計しています",
   });
-  const targetCount = Math.max(3, Math.min(8, Math.ceil(request.desired_episode_count / 2)));
+      const targetCount = Math.max(3, Math.min(5, Math.ceil(request.desired_episode_count / 2)));
   const styleGuideForCharacters = buildSeriesVisualStyleGuide({
     seriesTitle: concept.title,
     genre: concept.genre,
@@ -2022,6 +2368,68 @@ export const generateSeriesWorkflowWithProgress = async (
   });
 
   await emitSeriesGenerationProgress(onProgress, {
+    phase: "seed_route_dry_run_start",
+    detail: "第1話seedの候補検索ドライランと適格性検証を行っています",
+  });
+  let seedRouteDryRun: z.infer<typeof seedRouteDryRunSchema>;
+  try {
+    const dryRun = await dryRunFirstEpisodeSeedRoute({
+      stage_location: clean(concept.world.setting) || clean(request.interview.genre_world) || "街",
+      world_setting: clean(concept.world.setting),
+      purpose: "シリーズ第1話導線の成立性検証",
+      expected_duration_minutes: firstEpisodeSeed.expected_duration_minutes,
+      suggested_spots: firstEpisodeSeed.suggested_spots || [],
+      spot_requirements: firstEpisodeSeed.spot_requirements.map((requirement) => ({
+        requirement_id: requirement.requirement_id,
+        scene_role: requirement.scene_role,
+        spot_role: requirement.spot_role,
+        required_attributes: requirement.required_attributes,
+        visit_constraints: requirement.visit_constraints,
+        tourism_value_type: requirement.tourism_value_type,
+      })),
+    });
+    seedRouteDryRun = {
+      feasible: dryRun.feasible,
+      selected_spots: dryRun.selected_spots.slice(0, 4),
+      failure_reasons: dryRun.failure_reasons.slice(0, 20),
+      route_metrics: {
+        ...dryRun.route_metrics,
+        failure_reasons: dryRun.route_metrics.failure_reasons.slice(0, 20),
+        optimized_order_indices: dryRun.route_metrics.optimized_order_indices.slice(0, 6),
+        optimized_order_spot_names: dryRun.route_metrics.optimized_order_spot_names.slice(0, 6),
+      },
+      route_score: dryRun.route_score,
+      continuity_score: dryRun.continuity_score,
+    };
+  } catch (error: any) {
+    const reason = clean(error?.message || String(error || "seed_route_dry_run_failed"));
+    seedRouteDryRun = {
+      feasible: false,
+      selected_spots: [],
+      failure_reasons: [reason || "seed_route_dry_run_failed"],
+      route_metrics: {
+        optimizer: "seed_dry_run_unavailable",
+        total_estimated_walk_minutes: 0,
+        transfer_minutes: 0,
+        max_leg_minutes: 0,
+        max_total_walk_minutes: 0,
+        feasible: false,
+        failure_reasons: [reason || "seed_route_dry_run_failed"],
+        optimized_order_indices: [],
+        optimized_order_spot_names: [],
+      },
+      route_score: 0,
+      continuity_score: 0,
+    };
+  }
+  await emitSeriesGenerationProgress(onProgress, {
+    phase: "seed_route_dry_run_done",
+    detail: seedRouteDryRun.feasible
+      ? `seed導線の成立性を確認しました（候補${seedRouteDryRun.selected_spots.length}件）`
+      : "seed導線の成立性確認で要改善ポイントを検出しました",
+  });
+
+  await emitSeriesGenerationProgress(onProgress, {
     phase: "finalize_series_blueprint_start",
     detail: "整合性チェックと最終統合を実施しています",
   });
@@ -2033,6 +2441,7 @@ export const generateSeriesWorkflowWithProgress = async (
     identityPack: identity.identityPack,
     checkpoints,
     firstEpisodeSeed,
+    seedRouteDryRun,
     onProgress,
   });
 

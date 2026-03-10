@@ -12,7 +12,6 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  useWindowDimensions,
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -30,54 +29,169 @@ import {
   type GeneratedSeriesDraft,
   type GeneratedSeriesIdentityPack,
   type SeriesInterviewInput,
+  type SeriesDraftGenerationPhase,
 } from "@/services/seriesAi";
 
 const SERIES_DRAFTS_KEY = "tomoshibi.seriesDrafts";
 
-const SERIES_INTERVIEW_STEPS = [
+type SeriesInterviewStep = {
+  id: "q1" | "q2" | "q3" | "q4" | "q5";
+  label: string;
+  question: string;
+  placeholder: string;
+  chips: string[];
+  minSelect: number;
+  maxSelect: number;
+  optional?: boolean;
+  helper: string;
+};
+
+const SERIES_INTERVIEW_STEPS: readonly SeriesInterviewStep[] = [
   {
-    question: "最初の舞台は、どんなジャンルや世界観にしましょう？",
-    placeholder: "例: 夕暮れの港町で進むミステリー",
-    chips: ["日常系", "冒険", "ミステリー"],
+    id: "q1",
+    label: "シリーズQ1",
+    question: "このシリーズでは、どんな気持ちを味わいたいですか？",
+    placeholder: "必要なら補足を入力（任意）",
+    chips: ["ワクワク", "ドキドキ", "ときめき", "じんわり", "癒やし", "切なさ", "不思議", "緊張感", "没入感", "安心感"],
+    minSelect: 1,
+    maxSelect: 2,
+    helper: "1〜2個選ぶのがおすすめです",
   },
   {
-    question: "この物語を進めたあと、どんな気持ちを持ち帰りたいですか？",
-    placeholder: "例: じんわり癒されたい",
-    chips: ["癒されたい", "ワクワクしたい", "前向き"],
+    id: "q2",
+    label: "シリーズQ2",
+    question: "どんな相手と一緒に旅したいですか？",
+    placeholder: "必要なら補足を入力（任意）",
+    chips: [
+      "信頼できる相棒",
+      "気になる相手",
+      "頼れる先輩",
+      "不思議な案内人",
+      "ミステリアスな相手",
+      "優しい相手",
+      "からかってくる相手",
+      "落ち着いた相手",
+      "一緒に謎を追う相手",
+      "おまかせ",
+    ],
+    minSelect: 1,
+    maxSelect: 1,
+    helper: "基本は1つ選択。旅を共にする相手の雰囲気が決まります",
   },
   {
-    question: "旅をともにする相棒は、どんな存在が理想ですか？",
-    placeholder: "例: 静かに背中を押してくれる相棒",
-    chips: ["優しい相棒", "クールなバディ", "友達っぽい距離感"],
+    id: "q3",
+    label: "シリーズQ3",
+    question: "物語の雰囲気は、どれくらい現実に近い方がいいですか？",
+    placeholder: "必要なら補足を入力（任意）",
+    chips: [
+      "かなり現実的",
+      "現実の延長",
+      "現実の中に少し秘密",
+      "少し不思議",
+      "都市伝説っぽい",
+      "謎が潜んでいる",
+      "少し幻想的",
+      "おまかせ",
+    ],
+    minSelect: 1,
+    maxSelect: 1,
+    helper: "世界観のリアリティラインをここで決めます",
   },
   {
-    question: "次が気になるのは、どんな余韻が残るときですか？",
-    placeholder: "例: 謎がひとつ残る終わり方",
-    chips: ["謎が残る", "伏線が張られる", "達成感と余韻"],
+    id: "q4",
+    label: "シリーズQ4",
+    question: "物語は、どんなふうに進んでいくのが好きですか？",
+    placeholder: "必要なら補足を入力（任意）",
+    chips: [
+      "明るくテンポよく",
+      "少しずつ深まる",
+      "毎回小さな発見がある",
+      "謎がつながっていく",
+      "関係がじわじわ変わる",
+      "最後に大きく動く",
+      "会話を楽しみたい",
+      "余韻が残る感じ",
+      "おまかせ",
+    ],
+    minSelect: 1,
+    maxSelect: 2,
+    helper: "1〜2個選ぶと、進行のテンポがはっきりします",
   },
   {
-    question: "避けたい展開や表現があれば教えてください。",
-    placeholder: "例: 怖すぎる演出は避けたい",
-    chips: ["グロい表現NG", "怖すぎる演出NG", "救いなしNG"],
-  },
-  {
-    question: "画風はどれにしますか？（カバー・世界観・登場人物で統一されます）",
-    placeholder: "例: レトロ漫画 / シネマティックアニメ / 水彩イラスト",
-    chips: ["シネマティックアニメ", "レトロ漫画", "水彩イラスト"],
+    id: "q5",
+    label: "シリーズQ5（任意）",
+    question: "好きな雰囲気や、逆に苦手なものがあれば教えてください。",
+    placeholder: "例: 不思議さは欲しいけど怖いのは避けたい",
+    chips: [
+      "甘すぎない",
+      "怖すぎない",
+      "重すぎない",
+      "会話多めがいい",
+      "ロマンチック寄り",
+      "友情寄り",
+      "ミステリー寄り",
+      "落ち着いた雰囲気",
+      "景色を味わいたい",
+      "おまかせ",
+    ],
+    minSelect: 0,
+    maxSelect: 3,
+    optional: true,
+    helper: "任意です。キーワードだけでもOKです",
   },
 ] as const;
 
-const VISUAL_STYLE_STEP_INDEX = 5;
-const VISUAL_STYLE_BADGE_SET = new Set(SERIES_INTERVIEW_STEPS[VISUAL_STYLE_STEP_INDEX].chips.map((chip) => chip.trim()));
-
 const SERIES_INTERVIEW_DONE_MESSAGE =
-  "ありがとうございます。世界の輪郭が見えてきました。準備ができたら「物語を紡ぐ」で幕を開けましょう。";
+  "ありがとうございます。回答をもとにシリーズ案を3つ生成します。気になる案を選んで次へ進みましょう。";
 
 const FORGING_STATUS_MESSAGES = [
-  "世界観を構築中...",
-  "相棒を呼び出しています...",
-  "物語の導線を編み込んでいます...",
-  "余韻と伏線を調律しています...",
+  "質問回答を整理しています...",
+  "シリーズ案Aを構築中...",
+  "シリーズ案Bを構築中...",
+  "シリーズ案Cを構築中...",
+] as const;
+
+const SERIES_PHASE_USER_COPY: Record<SeriesDraftGenerationPhase, string> = {
+  request_received: "生成リクエストを受け取りました",
+  input_validated: "入力内容を確認しています",
+  sanitize_series_request_start: "生成条件を整えています",
+  sanitize_series_request_done: "生成条件の準備ができました",
+  generate_series_concept_start: "世界観と物語コンセプトを設計しています",
+  generate_series_concept_done: "世界観コンセプトを整えています",
+  generate_series_characters_start: "主要キャラクターを設計しています",
+  generate_series_characters_done: "主要キャラクター設計が完了しました",
+  build_series_identity_pack_start: "キーパーソンと人物同一性を固定しています",
+  build_series_identity_pack_done: "人物同一性の固定が完了しました",
+  generate_series_checkpoints_start: "エピソード進行を設計しています",
+  generate_series_checkpoints_done: "エピソード進行設計が完了しました",
+  seed_route_dry_run_start: "第1話導線の成立性を検証しています",
+  seed_route_dry_run_done: "第1話導線の検証が完了しました",
+  finalize_series_blueprint_start: "シリーズ全体を統合しています",
+  generate_series_cover_candidates_start: "世界観ポスターのカバー候補を生成しています",
+  generate_series_cover_candidates_done: "カバー候補の生成が完了しました",
+  validate_cover_identity_start: "カバーと画風の整合を確認しています",
+  validate_cover_identity_done: "カバー整合チェックが完了しました",
+  finalize_series_blueprint_done: "シリーズ案の最終調整をしています",
+  response_preparing: "結果を整えています",
+  completed: "シリーズ案の準備ができました",
+};
+
+const SERIES_PROPOSAL_VARIANTS = [
+  {
+    id: "romantic",
+    label: "感情重視",
+    direction: "キャラクター同士の関係性と感情の機微を強めたシリーズ案にしてください。",
+  },
+  {
+    id: "mystery",
+    label: "謎重視",
+    direction: "不思議さと謎解きの連続性を強めたシリーズ案にしてください。",
+  },
+  {
+    id: "balanced",
+    label: "バランス型",
+    direction: "感情・謎・日常のバランスが取れたシリーズ案にしてください。",
+  },
 ] as const;
 
 const FORGING_LOTTIE_URI = "https://assets10.lottiefiles.com/packages/lf20_iwmd6pyr.json";
@@ -88,6 +202,12 @@ type ChatMessage = {
   id: string;
   role: "assistant" | "user";
   text: string;
+};
+
+type SeriesProposalCandidate = {
+  id: string;
+  axisLabel: string;
+  draft: GeneratedSeriesDraft;
 };
 
 const GENRE_THEMES: Record<GenreThemeKey, { colors: [string, string, string]; orb: string; spark: string }> = {
@@ -131,7 +251,10 @@ const generateId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10
 const buildInterviewQuestionMessage = (index: number): ChatMessage => ({
   id: generateId(),
   role: "assistant",
-  text: SERIES_INTERVIEW_STEPS[Math.max(0, Math.min(index, SERIES_INTERVIEW_STEPS.length - 1))].question,
+  text: (() => {
+    const step = SERIES_INTERVIEW_STEPS[Math.max(0, Math.min(index, SERIES_INTERVIEW_STEPS.length - 1))];
+    return `${step.label}\n${step.question}`;
+  })(),
 });
 
 const buildInterviewDoneMessage = (): ChatMessage => ({
@@ -141,6 +264,17 @@ const buildInterviewDoneMessage = (): ChatMessage => ({
 });
 
 const containsAny = (source: string, keywords: string[]) => keywords.some((keyword) => source.includes(keyword));
+const normalizeCopy = (value?: string | null, fallback = "") => {
+  const cleaned = (value || "").replace(/\s+/g, " ").trim();
+  return cleaned || fallback;
+};
+
+const toSeriesPhaseMessage = (phase: SeriesDraftGenerationPhase, detail?: string, variantLabel?: string) => {
+  const phaseCopy = SERIES_PHASE_USER_COPY[phase];
+  const normalizedDetail = normalizeCopy(detail);
+  const merged = normalizedDetail && normalizedDetail !== phaseCopy ? `${phaseCopy}\n${normalizedDetail}` : phaseCopy;
+  return variantLabel ? `${variantLabel}案: ${merged}` : merged;
+};
 
 const deriveSeriesTitle = (prompt: string) => {
   const cleaned = prompt.replace(/\s+/g, " ").trim();
@@ -434,7 +568,7 @@ const AssistantBubble = ({
       </Text>
       <Text
         className="text-[15px] text-[#2B1E16] leading-7"
-        style={{ fontFamily: fonts.storySerifRegular, letterSpacing: 0.3 }}
+        style={{ fontFamily: fonts.bodyRegular, letterSpacing: 0.3 }}
       >
         {visibleText}
       </Text>
@@ -478,7 +612,7 @@ const StoryKeywordChip = ({
   };
 
   return (
-    <Animated.View style={{ transform: [{ scale }], width: "100%" }}>
+    <Animated.View style={{ transform: [{ scale }] }}>
       <Pressable
         disabled={disabled}
         onPress={handlePress}
@@ -496,7 +630,7 @@ const StoryKeywordChip = ({
             useNativeDriver: true,
           }).start();
         }}
-        className={`w-full h-10 overflow-hidden rounded-full border px-2 items-center justify-center ${
+        className={`h-9 overflow-hidden rounded-full border px-3 items-center justify-center ${
           active ? "bg-[#EE8C2B] border-[#EE8C2B]" : "bg-white border-[#E6DED5]"
         }`}
       >
@@ -514,11 +648,11 @@ const StoryKeywordChip = ({
           }}
         />
         <Text
-          className={`text-sm ${active ? "text-white" : "text-[#5E4A39]"}`}
+          className={`text-[12px] ${active ? "text-white" : "text-[#5E4A39]"}`}
           style={{ fontFamily: active ? fonts.bodyBold : fonts.bodyMedium }}
           numberOfLines={1}
           adjustsFontSizeToFit
-          minimumFontScale={0.78}
+          minimumFontScale={0.74}
         >
           {label}
         </Text>
@@ -527,7 +661,7 @@ const StoryKeywordChip = ({
   );
 };
 
-const StoryForgeLoadingOverlay = ({ message }: { message: string }) => {
+const StoryForgeLoadingOverlay = ({ message, onCancel }: { message: string; onCancel?: () => void }) => {
   const pulse = useRef(new Animated.Value(0.4)).current;
 
   useEffect(() => {
@@ -537,13 +671,13 @@ const StoryForgeLoadingOverlay = ({ message }: { message: string }) => {
           toValue: 1,
           duration: 900,
           easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
         Animated.timing(pulse, {
           toValue: 0.4,
           duration: 900,
           easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
       ])
     );
@@ -571,7 +705,7 @@ const StoryForgeLoadingOverlay = ({ message }: { message: string }) => {
 
           <Text
             className="text-[25px] text-[#F8E7D4]"
-            style={{ fontFamily: fonts.storySerifSemiBold, letterSpacing: 1.2 }}
+            style={{ fontFamily: fonts.displayBold, letterSpacing: 1.2 }}
           >
             物語を紡いでいます
           </Text>
@@ -582,13 +716,25 @@ const StoryForgeLoadingOverlay = ({ message }: { message: string }) => {
             <Animated.View
               className="h-full bg-[#F59E0B]"
               style={{
-                width: pulse.interpolate({
-                  inputRange: [0.4, 1],
-                  outputRange: ["38%", "85%"],
-                }),
+                width: "100%",
+                transform: [
+                  {
+                    scaleX: pulse.interpolate({
+                      inputRange: [0.4, 1],
+                      outputRange: [0.38, 0.85],
+                    }),
+                  },
+                ],
               }}
             />
           </View>
+          {onCancel ? (
+            <Pressable onPress={onCancel} className="mt-5 rounded-full border border-white/35 px-4 py-2">
+              <Text className="text-[12px] text-[#F7D9B8]" style={{ fontFamily: fonts.bodyMedium, letterSpacing: 0.6 }}>
+                生成を中止
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
       </SafeAreaView>
     </View>
@@ -600,7 +746,6 @@ type Props = NativeStackScreenProps<RootStackParamList, "CreateSeries">;
 export const CreateSeriesScreen = ({ route }: Props) => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { userId } = useSessionUserId();
-  const { width: screenWidth } = useWindowDimensions();
   const prefillPrompt = route.params?.prefillPrompt?.trim() || "";
 
   const [initialAssistant] = useState<ChatMessage>(() => buildInterviewQuestionMessage(0));
@@ -613,43 +758,57 @@ export const CreateSeriesScreen = ({ route }: Props) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isAutoAdvancing, setIsAutoAdvancing] = useState(false);
-  const [activeKeyword, setActiveKeyword] = useState<string | null>(null);
+  const [selectedKeywords, setSelectedKeywords] = useState<string[]>([]);
+  const [stepAnswers, setStepAnswers] = useState<Partial<Record<SeriesInterviewStep["id"], string>>>({});
+  const [proposalCandidates, setProposalCandidates] = useState<SeriesProposalCandidate[]>([]);
+  const [proposalHint, setProposalHint] = useState("");
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
+  const [liveGenerationMessage, setLiveGenerationMessage] = useState<string>(FORGING_STATUS_MESSAGES[0]);
 
   const isMountedRef = useRef(true);
   const seriesChatScrollRef = useRef<ScrollView | null>(null);
   const generationAbortRef = useRef<AbortController | null>(null);
   const hasInjectedPrefillRef = useRef(false);
 
-  const userAnswers = useMemo(
+  const sourcePrompt = useMemo(
     () =>
-      seriesChatMessages
-        .filter((message) => message.role === "user")
-        .map((message) => message.text.trim())
-        .filter(Boolean),
-    [seriesChatMessages]
+      SERIES_INTERVIEW_STEPS.map((step) => {
+        const answer = (stepAnswers[step.id] || "").trim();
+        return answer ? `${step.label}: ${answer}` : "";
+      })
+        .filter(Boolean)
+        .join("\n"),
+    [stepAnswers]
   );
 
-  const latestUserMessage = useMemo(() => userAnswers[userAnswers.length - 1] || "", [userAnswers]);
-
-  const sourcePrompt = useMemo(() => userAnswers.join("\n").trim(), [userAnswers]);
-
   const interviewInput = useMemo<SeriesInterviewInput>(() => {
-    const styleAnswer = userAnswers[VISUAL_STYLE_STEP_INDEX] || "シネマティックアニメ";
-    const styleNotes = !VISUAL_STYLE_BADGE_SET.has(styleAnswer.trim()) ? styleAnswer : undefined;
+    const q1 = (stepAnswers.q1 || "").trim();
+    const q2 = (stepAnswers.q2 || "").trim();
+    const q3 = (stepAnswers.q3 || "").trim();
+    const q4 = (stepAnswers.q4 || "").trim();
+    const q5 = (stepAnswers.q5 || "").trim();
+    const additional = [sourcePrompt, proposalHint ? `再生成調整: ${proposalHint}` : ""]
+      .map((row) => row.trim())
+      .filter(Boolean)
+      .join("\n");
     return {
-      genreWorld: userAnswers[0] || latestUserMessage || "現代日本が舞台の少し不思議な物語",
-      desiredEmotion: userAnswers[1] || "ワクワクしつつ前向きな気持ちになりたい",
-      companionPreference: userAnswers[2] || "落ち着いていて安心できる相棒",
-      continuationTrigger: userAnswers[3] || "謎が残って次回で答え合わせがありそうな終わり方",
-      avoidExpressions: userAnswers[4] || "グロい表現や救いのない結末は避けたい",
-      visualStylePreset: styleAnswer,
-      visualStyleNotes: styleNotes,
-      additionalNotes: userAnswers.slice(VISUAL_STYLE_STEP_INDEX + 1).join("\n").trim() || undefined,
+      genreWorld: q3 || "現実の中に少し秘密が潜む、徒歩で巡れる現代日本の物語",
+      desiredEmotion: q1 || "ワクワクとじんわりが共存する体験",
+      companionPreference: q2 || "信頼できる相棒",
+      continuationTrigger: q4 || "毎回小さな発見があり、謎がつながっていく進行",
+      avoidExpressions: q5 || "怖すぎる・重すぎる展開は避ける",
+      visualStylePreset: "シネマティックアニメ",
+      visualStyleNotes: undefined,
+      additionalNotes: additional || undefined,
     };
-  }, [latestUserMessage, userAnswers]);
+  }, [proposalHint, sourcePrompt, stepAnswers]);
 
-  const canSubmit = sourcePrompt.length > 0;
+  const requiredAnswered = useMemo(
+    () => SERIES_INTERVIEW_STEPS.filter((step) => !step.optional).every((step) => Boolean((stepAnswers[step.id] || "").trim())),
+    [stepAnswers]
+  );
+
+  const canSubmit = requiredAnswered;
 
   const currentStep = SERIES_INTERVIEW_STEPS[Math.max(0, Math.min(activeQuestionIndex, SERIES_INTERVIEW_STEPS.length - 1))];
   const inputPlaceholder =
@@ -659,11 +818,10 @@ export const CreateSeriesScreen = ({ route }: Props) => {
 
   const progressRatio = useMemo(() => {
     if (isInterviewComplete) return 1;
-    return Math.min(0.95, activeQuestionIndex / SERIES_INTERVIEW_STEPS.length);
+    return Math.max(0.08, Math.min(0.95, (activeQuestionIndex + 1) / SERIES_INTERVIEW_STEPS.length));
   }, [activeQuestionIndex, isInterviewComplete]);
 
   const interactionLocked = isSaving || isGenerating || isAutoAdvancing || !!typingMessageId;
-  const keywordChipWidth = useMemo(() => Math.max(132, Math.floor(screenWidth * 0.48)), [screenWidth]);
 
   const scrollToBottom = useCallback((delay = 24) => {
     setTimeout(() => {
@@ -682,9 +840,13 @@ export const CreateSeriesScreen = ({ route }: Props) => {
   }, []);
 
   useEffect(() => {
-    if (!isGenerating) return;
+    if (!isGenerating) {
+      setLiveGenerationMessage(FORGING_STATUS_MESSAGES[0]);
+      return;
+    }
 
     setLoadingMessageIndex(0);
+    setLiveGenerationMessage(FORGING_STATUS_MESSAGES[0]);
     const timer = setInterval(() => {
       setLoadingMessageIndex((prev) => (prev + 1) % FORGING_STATUS_MESSAGES.length);
     }, 2300);
@@ -698,63 +860,94 @@ export const CreateSeriesScreen = ({ route }: Props) => {
 
   useEffect(() => {
     if (!prefillPrompt || hasInjectedPrefillRef.current) return;
-    if (seriesChatMessages.length !== 1 || seriesChatMessages[0]?.role !== "assistant") return;
-
     hasInjectedPrefillRef.current = true;
-
-    const firstAnswer: ChatMessage = { id: generateId(), role: "user", text: prefillPrompt };
-    const inferred = inferSeriesName(prefillPrompt);
-    const fallback = inferred || deriveSeriesTitle(prefillPrompt);
-
-    if (fallback && fallback !== "新しいシリーズ") {
-      setSeriesNameCandidate(fallback);
+    const inferred = inferSeriesName(prefillPrompt) || deriveSeriesTitle(prefillPrompt);
+    if (inferred && inferred !== "新しいシリーズ") {
+      setSeriesNameCandidate(inferred);
     }
-
-    const nextQuestionIndex = 1;
-    if (nextQuestionIndex >= SERIES_INTERVIEW_STEPS.length) {
-      const doneMessage = buildInterviewDoneMessage();
-      setSeriesChatMessages((prev) => [...prev, firstAnswer, doneMessage]);
-      setTypingMessageId(doneMessage.id);
-      setIsInterviewComplete(true);
-      setActiveQuestionIndex(SERIES_INTERVIEW_STEPS.length);
-      return;
-    }
-
-    const nextQuestion = buildInterviewQuestionMessage(nextQuestionIndex);
-    setSeriesChatMessages((prev) => [...prev, firstAnswer, nextQuestion]);
-    setTypingMessageId(nextQuestion.id);
-    setActiveQuestionIndex(nextQuestionIndex);
-  }, [prefillPrompt, seriesChatMessages]);
+    setProposalHint(prefillPrompt);
+  }, [prefillPrompt]);
 
   const handleAssistantTypingDone = useCallback((messageId: string) => {
     setTypingMessageId((prev) => (prev === messageId ? null : prev));
   }, []);
 
+  const toggleKeyword = useCallback(
+    (keyword: string) => {
+      if (!currentStep || interactionLocked) return;
+      setSelectedKeywords((prev) => {
+        const exists = prev.includes(keyword);
+        if (exists) return prev.filter((item) => item !== keyword);
+        if (currentStep.maxSelect <= 1) return [keyword];
+        if (prev.length >= currentStep.maxSelect) {
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          return prev;
+        }
+        return [...prev, keyword];
+      });
+      void Haptics.selectionAsync();
+    },
+    [currentStep, interactionLocked]
+  );
+
+  const buildCurrentAnswerText = useCallback(
+    (skipOptional = false) => {
+      if (!currentStep) return "";
+      if (skipOptional && currentStep.optional) return "";
+
+      const selected = selectedKeywords.map((item) => item.trim()).filter(Boolean);
+      const free = seriesChatInput.trim();
+      if (selected.length > 0 && free) return `${selected.join(" / ")}（補足: ${free}）`;
+      if (selected.length > 0) return selected.join(" / ");
+      return free;
+    },
+    [currentStep, selectedKeywords, seriesChatInput]
+  );
+
   const submitSeriesAnswer = useCallback(
-    async (rawText?: string, source: "input" | "chip" = "input") => {
-      const text = (rawText ?? seriesChatInput).trim();
-      if (!text || interactionLocked) return;
-
+    async (skipOptional = false) => {
+      if (!currentStep || interactionLocked) return;
       setIsAutoAdvancing(true);
+      const text = buildCurrentAnswerText(skipOptional);
+      const selectedCount = selectedKeywords.length;
+      const hasFreeInput = seriesChatInput.trim().length > 0;
+      const hasAnswer = text.length > 0;
 
-      if (source === "chip") {
-        setActiveKeyword(text);
-        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      } else {
-        void Haptics.selectionAsync();
+      if (!skipOptional && currentStep.minSelect > 0 && selectedCount < currentStep.minSelect && !hasFreeInput) {
+        Alert.alert("回答が必要です", `${currentStep.minSelect}個以上選ぶか、補足を入力してください。`);
+        setIsAutoAdvancing(false);
+        return;
       }
 
-      const inferred = inferSeriesName(text);
-      const fallback = inferred || seriesNameCandidate.trim() || deriveSeriesTitle(text);
-      if (inferred) {
-        setSeriesNameCandidate(inferred);
-      } else if (!seriesNameCandidate.trim() && fallback && fallback !== "新しいシリーズ") {
-        setSeriesNameCandidate(fallback);
+      if (!currentStep.optional && !hasAnswer) {
+        Alert.alert("回答が必要です", "この質問は回答が必要です。");
+        setIsAutoAdvancing(false);
+        return;
       }
 
-      const userMessage: ChatMessage = { id: generateId(), role: "user", text };
+      if (text) {
+        const inferred = inferSeriesName(text);
+        const fallback = inferred || seriesNameCandidate.trim() || deriveSeriesTitle(text);
+        if (inferred) {
+          setSeriesNameCandidate(inferred);
+        } else if (!seriesNameCandidate.trim() && fallback && fallback !== "新しいシリーズ") {
+          setSeriesNameCandidate(fallback);
+        }
+      }
+
+      setStepAnswers((prev) => ({
+        ...prev,
+        [currentStep.id]: text,
+      }));
+      setProposalCandidates([]);
+      setProposalHint("");
+
+      const userMessage: ChatMessage = {
+        id: generateId(),
+        role: "user",
+        text: text || "（この質問はスキップ）",
+      };
       setSeriesChatMessages((prev) => [...prev, userMessage]);
-      setSeriesChatInput("");
 
       const nextQuestionIndex = activeQuestionIndex + 1;
       await wait(140);
@@ -774,67 +967,127 @@ export const CreateSeriesScreen = ({ route }: Props) => {
           setActiveQuestionIndex(SERIES_INTERVIEW_STEPS.length);
         }
       }
-
-      if (source === "chip") {
-        setTimeout(() => {
-          if (!isMountedRef.current) return;
-          setActiveKeyword((prev) => (prev === text ? null : prev));
-        }, 360);
-      }
+      setSelectedKeywords([]);
+      setSeriesChatInput("");
 
       if (isMountedRef.current) {
         setIsAutoAdvancing(false);
       }
     },
-    [activeQuestionIndex, interactionLocked, isInterviewComplete, seriesChatInput, seriesNameCandidate]
+    [
+      activeQuestionIndex,
+      buildCurrentAnswerText,
+      currentStep,
+      interactionLocked,
+      isInterviewComplete,
+      selectedKeywords.length,
+      seriesChatInput,
+      seriesNameCandidate,
+    ]
   );
 
-  const handleGenerateSeries = useCallback(async () => {
+  const handleGenerateSeries = useCallback(async (hint = "") => {
     if (!canSubmit || isSaving) {
-      Alert.alert("入力が必要です", "どんなシリーズを作りたいかチャットで教えてください。");
+      Alert.alert("入力が必要です", "Q1〜Q4への回答を完了してください。");
       return;
     }
 
-    const promptForGeneration = (sourcePrompt || latestUserMessage).trim();
+    const promptForGeneration = sourcePrompt.trim();
     if (!promptForGeneration) return;
 
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
+    const normalizedHint = hint.trim();
     setIsSaving(true);
     setIsGenerating(true);
+    setProposalCandidates([]);
+    setProposalHint(normalizedHint);
+    setLiveGenerationMessage(FORGING_STATUS_MESSAGES[0]);
     const generationAbortController = new AbortController();
     generationAbortRef.current = generationAbortController;
 
     try {
-      const titleCandidate = seriesNameCandidate.trim();
+      const titleCandidate = (seriesNameCandidate.trim() || deriveSeriesTitle(promptForGeneration)).trim();
       const existingIdentityPack = await loadExistingIdentityPack(titleCandidate);
 
-      const aiDraft = await generateSeriesDraftViaMastra(
-        {
-          interview: interviewInput,
-          prompt: promptForGeneration,
-          desiredEpisodeCount: 8,
-          creatorId: userId || undefined,
-          existingIdentityPack,
-          identityRetcon: false,
-        },
-        {
-          signal: generationAbortController.signal,
-        }
+      const settled = await Promise.allSettled(
+        SERIES_PROPOSAL_VARIANTS.map(async (variant) => {
+          const variantPrompt = [
+            promptForGeneration,
+            `【シリーズ案バリエーション】${variant.direction}`,
+            normalizedHint ? `【再生成の要望】${normalizedHint}` : "",
+            "出力は必ず同じ回答意図を守りつつ、差分が明確な別案にしてください。",
+          ]
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .join("\n");
+
+          const aiDraft = await generateSeriesDraftViaMastra(
+            {
+              interview: interviewInput,
+              prompt: variantPrompt,
+              desiredEpisodeCount: 8,
+              generationMode: "proposal",
+              creatorId: userId || undefined,
+              existingIdentityPack,
+              identityRetcon: false,
+            },
+            {
+              signal: generationAbortController.signal,
+              timeoutMs: 210_000,
+              onProgress: (event) => {
+                if (!isMountedRef.current) return;
+                setLiveGenerationMessage(toSeriesPhaseMessage(event.phase, event.detail, variant.label));
+              },
+            }
+          );
+
+          const normalizedDraft: GeneratedSeriesDraft = {
+            ...aiDraft,
+            title: (aiDraft.title || titleCandidate || "新しいシリーズ").trim(),
+            aiRules:
+              aiDraft.aiRules?.trim() ||
+              "キャラクターと伏線の整合性を保ち、各話の結果を次話へ引き継ぐこと。",
+          };
+
+          return {
+            id: `${variant.id}-${generateId()}`,
+            axisLabel: variant.label,
+            draft: normalizedDraft,
+          } satisfies SeriesProposalCandidate;
+        })
       );
 
-      const normalizedDraft: GeneratedSeriesDraft = {
-        ...aiDraft,
-        title: (aiDraft.title || titleCandidate || "新しいシリーズ").trim(),
-        aiRules:
-          aiDraft.aiRules?.trim() ||
-          "キャラクターと伏線の整合性を保ち、各話の結果を次話へ引き継ぐこと。",
-      };
+      const candidates: SeriesProposalCandidate[] = [];
+      const errors: string[] = [];
 
-      navigation.replace("SeriesGenerationResult", {
-        generated: normalizedDraft,
-        sourcePrompt: promptForGeneration,
-      });
+      for (let index = 0; index < settled.length; index += 1) {
+        const result = settled[index];
+        if (result.status === "fulfilled") {
+          candidates.push(result.value);
+          continue;
+        }
+        const reason = result.reason;
+        if (reason instanceof Error && reason.name === "AbortError") {
+          continue;
+        }
+        const message = reason instanceof Error ? reason.message : String(reason);
+        errors.push(`${SERIES_PROPOSAL_VARIANTS[index].label}: ${message}`);
+      }
+
+      if (candidates.length === 0) {
+        if (generationAbortController.signal.aborted) {
+          const abortError = new Error("生成を中止しました。");
+          (abortError as Error & { name: string }).name = "AbortError";
+          throw abortError;
+        }
+        throw new Error(errors[0] || "シリーズ案の生成に失敗しました。");
+      }
+
+      setProposalCandidates(candidates);
+      if (errors.length > 0) {
+        Alert.alert("一部のシリーズ案を生成できませんでした", errors.slice(0, 2).join("\n"));
+      }
     } catch (error: any) {
       if (error instanceof Error && error.name === "AbortError") {
         return;
@@ -853,16 +1106,67 @@ export const CreateSeriesScreen = ({ route }: Props) => {
         setIsGenerating(false);
       }
     }
-  }, [
-    canSubmit,
-    interviewInput,
-    isSaving,
-    latestUserMessage,
-    navigation,
-    seriesNameCandidate,
-    sourcePrompt,
-    userId,
-  ]);
+  }, [canSubmit, interviewInput, isSaving, seriesNameCandidate, sourcePrompt, userId]);
+
+  const handleCancelGeneration = useCallback(() => {
+    generationAbortRef.current?.abort();
+    generationAbortRef.current = null;
+    if (isMountedRef.current) {
+      setIsSaving(false);
+      setIsGenerating(false);
+      setLiveGenerationMessage(FORGING_STATUS_MESSAGES[0]);
+    }
+  }, []);
+
+  const handleSelectProposal = useCallback(
+    (candidate: SeriesProposalCandidate) => {
+      navigation.replace("SeriesGenerationResult", {
+        generated: candidate.draft,
+        sourcePrompt,
+      });
+    },
+    [navigation, sourcePrompt]
+  );
+
+  const currentSelectionCount = selectedKeywords.length;
+  const canAdvanceCurrentStep = useMemo(() => {
+    if (!currentStep) return false;
+    const hasText = seriesChatInput.trim().length > 0;
+    if (currentStep.optional) {
+      return true;
+    }
+    if (currentSelectionCount >= currentStep.minSelect) return true;
+    return hasText;
+  }, [currentSelectionCount, currentStep, seriesChatInput]);
+
+  const summarizeProposalConcept = useCallback((draft: GeneratedSeriesDraft) => {
+    const premise = (draft.premise || "").trim();
+    if (premise) return premise;
+    const firstLine = (draft.overview || "").split(/[。.!?]/)[0]?.trim() || "";
+    return firstLine || "一言コンセプトを生成中";
+  }, []);
+
+  const summarizeProposalCharacters = useCallback((draft: GeneratedSeriesDraft) => {
+    const seeds = (draft.characters || []).slice(0, 2);
+    if (seeds.length === 0) return "固定キャラ情報を生成中";
+    return seeds.map((character) => `${character.name}（${character.role}）`).join(" / ");
+  }, []);
+
+  const summarizeProposalFlow = useCallback((draft: GeneratedSeriesDraft) => {
+    const checkpoints = (draft.checkpoints || []).slice(0, 3);
+    if (checkpoints.length > 0) {
+      return checkpoints
+        .map((checkpoint, index) => `${index + 1}. ${checkpoint.title}`)
+        .join("  →  ");
+    }
+    const episodes = (draft.episodeBlueprints || []).slice(0, 3);
+    if (episodes.length > 0) {
+      return episodes
+        .map((episode, index) => `${index + 1}. ${episode.title}`)
+        .join("  →  ");
+    }
+    return "3話分の進行を生成中";
+  }, []);
 
   return (
     <View className="flex-1 bg-[#F8F7F6]">
@@ -880,7 +1184,7 @@ export const CreateSeriesScreen = ({ route }: Props) => {
               <Text className="text-[12px] text-[#8D745F]" style={{ fontFamily: fonts.bodyMedium, letterSpacing: 1.1 }}>
                 シリーズ新規作成
               </Text>
-              <Text className="text-[20px] text-[#2B1E16]" style={{ fontFamily: fonts.storySerifSemiBold, letterSpacing: 0.8 }}>
+              <Text className="text-[20px] text-[#2B1E16]" style={{ fontFamily: fonts.displayBold, letterSpacing: 0.8 }}>
                 物語の種を集める
               </Text>
             </View>
@@ -944,80 +1248,151 @@ export const CreateSeriesScreen = ({ route }: Props) => {
                 </View>
               )
             )}
+
+            {proposalCandidates.length > 0 ? (
+              <View className="mt-3 gap-3">
+                <View className="px-1">
+                  <Text className="text-[12px] text-[#7A6855]" style={{ fontFamily: fonts.bodyMedium, letterSpacing: 0.6 }}>
+                    シリーズ案を3つ生成しました。気になる案を選んでください。
+                  </Text>
+                </View>
+                {proposalCandidates.map((candidate) => (
+                  <View key={candidate.id} className="rounded-2xl border border-[#E7DDCF] bg-white px-4 py-4">
+                    <View className="flex-row items-center justify-between mb-2">
+                      <Text className="text-[11px] text-[#EE8C2B]" style={{ fontFamily: fonts.displayBold, letterSpacing: 0.8 }}>
+                        {candidate.axisLabel}
+                      </Text>
+                      <Text className="text-[11px] text-[#8E7B69]" style={{ fontFamily: fonts.bodyMedium }}>
+                        {normalizeCopy(candidate.draft.tone, "トーン未設定")}
+                      </Text>
+                    </View>
+                    <Text className="text-[18px] text-[#2B1E16] mb-2" style={{ fontFamily: fonts.displayBold }}>
+                      {normalizeCopy(candidate.draft.title, "新しいシリーズ")}
+                    </Text>
+                    <Text className="text-[12px] text-[#5E4A39] leading-5 mb-2" style={{ fontFamily: fonts.bodyRegular }}>
+                      一言コンセプト: {summarizeProposalConcept(candidate.draft)}
+                    </Text>
+                    <Text className="text-[12px] text-[#5E4A39] leading-5 mb-2" style={{ fontFamily: fonts.bodyRegular }}>
+                      固定キャラ: {summarizeProposalCharacters(candidate.draft)}
+                    </Text>
+                    <Text className="text-[12px] text-[#5E4A39] leading-5 mb-3" style={{ fontFamily: fonts.bodyRegular }}>
+                      3話の進み方: {summarizeProposalFlow(candidate.draft)}
+                    </Text>
+                    <Pressable
+                      onPress={() => handleSelectProposal(candidate)}
+                      className="h-10 rounded-xl bg-[#EE8C2B] items-center justify-center"
+                    >
+                      <Text className="text-white text-[13px]" style={{ fontFamily: fonts.displayBold }}>
+                        この案で進む
+                      </Text>
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            ) : null}
           </View>
         </ScrollView>
 
         <SafeAreaView edges={["bottom"]} className="bg-[#F8F7F6]">
           <View className="px-4 pt-2 pb-3">
             {isInterviewComplete ? (
-              <Pressable
-                onPress={() => {
-                  void handleGenerateSeries();
-                }}
-                disabled={!canSubmit || interactionLocked}
-                className={`h-12 rounded-2xl items-center justify-center flex-row gap-2 ${
-                  canSubmit && !interactionLocked ? "bg-[#EE8C2B]" : "bg-[#C8BDB0]"
-                }`}
-                style={
-                  canSubmit && !interactionLocked
-                    ? {
-                        shadowColor: "#EE8C2B",
-                        shadowOffset: { width: 0, height: 6 },
-                        shadowOpacity: 0.34,
-                        shadowRadius: 14,
-                        elevation: 6,
-                      }
-                    : undefined
-                }
-              >
-                {isSaving ? (
-                  <>
-                    <ActivityIndicator color="#FFFFFF" />
-                    <Text className="text-base text-white" style={{ fontFamily: fonts.storySerifSemiBold }}>
-                      紡いでいます...
-                    </Text>
-                  </>
-                ) : (
-                  <>
-                    <Ionicons name="sparkles" size={18} color="#FFFFFF" />
-                    <Text className="text-base text-white" style={{ fontFamily: fonts.storySerifSemiBold, letterSpacing: 0.5 }}>
-                      物語を紡ぐ
-                    </Text>
-                  </>
-                )}
-              </Pressable>
+              <View className="w-full gap-2">
+                <Pressable
+                  onPress={() => {
+                    void handleGenerateSeries();
+                  }}
+                  disabled={!canSubmit || interactionLocked}
+                  className={`h-12 rounded-2xl items-center justify-center flex-row gap-2 ${
+                    canSubmit && !interactionLocked ? "bg-[#EE8C2B]" : "bg-[#C8BDB0]"
+                  }`}
+                  style={
+                    canSubmit && !interactionLocked
+                      ? {
+                          shadowColor: "#EE8C2B",
+                          shadowOffset: { width: 0, height: 6 },
+                          shadowOpacity: 0.34,
+                          shadowRadius: 14,
+                          elevation: 6,
+                        }
+                      : undefined
+                  }
+                >
+                  {isSaving ? (
+                    <>
+                      <ActivityIndicator color="#FFFFFF" />
+                      <Text className="text-base text-white" style={{ fontFamily: fonts.displayBold }}>
+                        3案を生成中...
+                      </Text>
+                    </>
+                  ) : (
+                    <>
+                      <Ionicons name="sparkles" size={18} color="#FFFFFF" />
+                      <Text className="text-base text-white" style={{ fontFamily: fonts.displayBold, letterSpacing: 0.5 }}>
+                        {proposalCandidates.length > 0 ? "3案をもう一度生成" : "シリーズ案を3つ生成"}
+                      </Text>
+                    </>
+                  )}
+                </Pressable>
+
+                {proposalCandidates.length > 0 ? (
+                  <View className="flex-row gap-2">
+                    <Pressable
+                      onPress={() => {
+                        void handleGenerateSeries("もう少し恋愛寄り");
+                      }}
+                      disabled={interactionLocked}
+                      className={`flex-1 h-10 rounded-xl items-center justify-center ${interactionLocked ? "bg-[#D9D1C8]" : "bg-white border border-[#E7DDCF]"}`}
+                    >
+                      <Text className="text-[12px] text-[#6B5846]" style={{ fontFamily: fonts.bodyMedium }}>
+                        もう少し恋愛寄り
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        void handleGenerateSeries("もっと不思議寄り");
+                      }}
+                      disabled={interactionLocked}
+                      className={`flex-1 h-10 rounded-xl items-center justify-center ${interactionLocked ? "bg-[#D9D1C8]" : "bg-white border border-[#E7DDCF]"}`}
+                    >
+                      <Text className="text-[12px] text-[#6B5846]" style={{ fontFamily: fonts.bodyMedium }}>
+                        もっと不思議寄り
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+              </View>
             ) : (
               <View className="w-full">
                 <View className="mb-2 px-1 flex-row items-center justify-between">
-                  <Text className="text-[12px] text-[#6F5C4A]" style={{ fontFamily: fonts.bodyMedium, letterSpacing: 0.7 }}>
-                    ひらめきの欠片を選ぶと、すぐ次へ進みます
-                  </Text>
+                  <View className="flex-1 pr-3">
+                    <Text className="text-[12px] text-[#6F5C4A]" style={{ fontFamily: fonts.displayBold, letterSpacing: 0.7 }}>
+                      {currentStep.label}
+                    </Text>
+                    <Text className="text-[11px] text-[#8E7B69] mt-0.5" style={{ fontFamily: fonts.bodyRegular }}>
+                      {currentStep.helper}
+                    </Text>
+                    <Text className="text-[11px] text-[#8E7B69] mt-0.5" style={{ fontFamily: fonts.bodyRegular }}>
+                      選択中: {currentSelectionCount} / {currentStep.maxSelect}
+                    </Text>
+                  </View>
                   <Text className="text-[11px] text-[#8E7B69]" style={{ fontFamily: fonts.bodyRegular }}>
                     {activeQuestionIndex + 1} / {SERIES_INTERVIEW_STEPS.length}
                   </Text>
                 </View>
 
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={{ paddingRight: 8 }}
-                  className="mb-1"
-                >
-                  <View className="flex-row gap-2">
+                <View className="mb-1 flex-row flex-wrap gap-2">
                     {(currentStep?.chips || []).map((keyword) => (
-                      <View key={keyword} style={{ width: keywordChipWidth }}>
-                        <StoryKeywordChip
-                          label={keyword}
-                          active={activeKeyword === keyword}
-                          disabled={interactionLocked}
-                          onPress={() => {
-                            void submitSeriesAnswer(keyword, "chip");
-                          }}
-                        />
-                      </View>
+                      <StoryKeywordChip
+                        key={keyword}
+                        label={keyword}
+                        active={selectedKeywords.includes(keyword)}
+                        disabled={interactionLocked}
+                        onPress={() => {
+                          toggleKeyword(keyword);
+                        }}
+                      />
                     ))}
-                  </View>
-                </ScrollView>
+                </View>
 
                 <View className="mt-2 rounded-3xl border border-[#E6DED5] bg-white px-2 py-1.5 flex-row items-end gap-2">
                   <TextInput
@@ -1032,30 +1407,53 @@ export const CreateSeriesScreen = ({ route }: Props) => {
                     style={{ fontFamily: fonts.bodyRegular, textAlignVertical: "center" }}
                     editable={!interactionLocked}
                     onSubmitEditing={() => {
-                      void submitSeriesAnswer(undefined, "input");
+                      void submitSeriesAnswer();
                     }}
-                    returnKeyType="send"
+                    returnKeyType="done"
                   />
 
                   <Pressable
                     className={`w-9 h-9 rounded-full items-center justify-center ${
-                      seriesChatInput.trim() && !interactionLocked ? "bg-[#EE8C2B]" : "bg-[#D8CFC5]"
+                      canAdvanceCurrentStep && !interactionLocked ? "bg-[#EE8C2B]" : "bg-[#D8CFC5]"
                     }`}
-                    disabled={!seriesChatInput.trim() || interactionLocked}
+                    disabled={!canAdvanceCurrentStep || interactionLocked}
                     onPress={() => {
-                      void submitSeriesAnswer(undefined, "input");
+                      void submitSeriesAnswer();
                     }}
                   >
-                    <Ionicons name="send" size={15} color="#FFFFFF" />
+                    <Ionicons name="checkmark" size={17} color="#FFFFFF" />
                   </Pressable>
                 </View>
+
+                {currentStep.optional ? (
+                  <Pressable
+                    onPress={() => {
+                      void submitSeriesAnswer(true);
+                    }}
+                    disabled={interactionLocked}
+                    className={`mt-2 h-9 rounded-xl items-center justify-center ${interactionLocked ? "bg-[#D9D1C8]" : "bg-white border border-[#E7DDCF]"}`}
+                  >
+                    <Text className="text-[12px] text-[#6B5846]" style={{ fontFamily: fonts.bodyMedium }}>
+                      この質問はスキップ
+                    </Text>
+                  </Pressable>
+                ) : null}
               </View>
             )}
           </View>
         </SafeAreaView>
       </KeyboardAvoidingView>
 
-      {isGenerating ? <StoryForgeLoadingOverlay message={FORGING_STATUS_MESSAGES[loadingMessageIndex]} /> : null}
+      {isGenerating ? (
+        <StoryForgeLoadingOverlay
+          message={
+            liveGenerationMessage && liveGenerationMessage !== FORGING_STATUS_MESSAGES[0]
+              ? liveGenerationMessage
+              : FORGING_STATUS_MESSAGES[loadingMessageIndex]
+          }
+          onCancel={handleCancelGeneration}
+        />
+      ) : null}
     </View>
   );
 };

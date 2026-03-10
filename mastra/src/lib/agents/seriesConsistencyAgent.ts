@@ -38,6 +38,7 @@ const SERIES_CONSISTENCY_AGENT_INSTRUCTIONS = `
 - 各 checkpoint.carry_over が連結しているか
 - シーズン目標への収束導線があるか
 - first_episode_seed がシリーズ導入として機能するか
+- first_episode_seed.spot_requirements が「具体地名ではなく役割仕様」になっているか
 - 街歩き（徒歩で複数スポットを巡る）前提が継続的に守られているか
 - 単一屋内完結や街歩き不能な舞台へ逸脱していないか
 
@@ -211,9 +212,11 @@ ${input.checkpoints
 - 目的: ${input.first_episode_seed.objective}
 - 所要時間: ${input.first_episode_seed.expected_duration_minutes}分
 - 次回への余韻: ${input.first_episode_seed.carry_over_hint}
+- 要求スポット数: ${input.first_episode_seed.spot_requirements.length}
 
 ## TOMOSHIBI 制約（最優先）
 - 街歩き（徒歩で2〜4スポット移動）前提を運用ルールに必ず明記する。
+- first_episode_seed は具体スポット名ではなく role 仕様（spot_requirements）である前提を維持する。
 - 単一屋内完結・非歩行舞台への逸脱を抑止する invariant/policy を含める。
 
 seriesConsistencyAgentOutputSchema を満たす JSON を返してください。

@@ -41,11 +41,85 @@ type DailyReportRow = {
   created_at: string | null;
 };
 
+type PostgrestLikeError = {
+  code?: string | null;
+  message?: string | null;
+  hint?: string | null;
+};
+
 const truncate = (text: string, maxLength: number) => {
   const normalized = text.trim();
   if (!normalized) return "";
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, maxLength)}...`;
+};
+
+const asNonEmptyString = (value: unknown) => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const isMissingRelationError = (error: PostgrestLikeError | null | undefined, relation: string) => {
+  if (!error) return false;
+  if (error.code !== "PGRST205") return false;
+  return (error.message || "").includes(`'public.${relation}'`);
+};
+
+const normalizeAIPortRows = (
+  rows: Record<string, unknown>[],
+  friendIdSet: Set<string>,
+  limit: number
+): DailyReportRow[] => {
+  const mapped = rows.reduce<DailyReportRow[]>((acc, row, index) => {
+    const userId =
+      asNonEmptyString(row.user_id) ||
+      asNonEmptyString(row.userId) ||
+      asNonEmptyString(row.author_id) ||
+      asNonEmptyString(row.authorId) ||
+      asNonEmptyString(row.creator_id) ||
+      asNonEmptyString(row.creatorId);
+    if (!userId || !friendIdSet.has(userId)) return acc;
+
+    const category = asNonEmptyString(row.category) || asNonEmptyString(row.type) || null;
+    const reportText =
+      asNonEmptyString(row.report_text) ||
+      asNonEmptyString(row.reportText) ||
+      asNonEmptyString(row.summary) ||
+      asNonEmptyString(row.content) ||
+      asNonEmptyString(row.message) ||
+      null;
+    const createdAt =
+      asNonEmptyString(row.created_at) ||
+      asNonEmptyString(row.createdAt) ||
+      asNonEmptyString(row.inserted_at) ||
+      asNonEmptyString(row.updated_at) ||
+      null;
+    const fallbackId = `aiport-${userId}-${createdAt || index}`;
+    const id =
+      asNonEmptyString(row.id) ||
+      asNonEmptyString(row.report_id) ||
+      asNonEmptyString(row.reportId) ||
+      asNonEmptyString(row.uuid) ||
+      fallbackId;
+
+    acc.push({
+      id,
+      user_id: userId,
+      category,
+      report_text: reportText,
+      created_at: createdAt,
+    });
+    return acc;
+  }, []);
+
+  return mapped
+    .sort((a, b) => {
+      const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return bTime - aTime;
+    })
+    .slice(0, limit);
 };
 
 const resolveStartLocation = (
@@ -273,25 +347,42 @@ export const fetchNotifications = async (viewerUserId: string, limit = 30) => {
     )
   );
 
-  const [reportsRes, profilesRes] = await Promise.all([
-    friendIds.length > 0
-      ? supabase
-          .from("daily_reports")
-          .select("id, user_id, category, report_text, created_at")
-          .in("user_id", friendIds)
-          .order("created_at", { ascending: false })
-          .limit(limit)
-      : Promise.resolve({ data: [] as DailyReportRow[], error: null }),
-    friendIds.length > 0
-      ? supabase
+  const relatedProfileIds = Array.from(new Set([...friendIds, ...followerRows.map((row) => row.requester_id)]));
+
+  const profilesRes =
+    relatedProfileIds.length > 0
+      ? await supabase
           .from("profiles")
           .select("id, name, bio, profile_picture_url")
-          .in("id", Array.from(new Set([...friendIds, ...followerRows.map((row) => row.requester_id)])))
-      : Promise.resolve({ data: [] as ProfileRow[], error: null }),
-  ]);
+          .in("id", relatedProfileIds)
+      : { data: [] as ProfileRow[], error: null };
 
-  if (reportsRes.error) throw reportsRes.error;
   if (profilesRes.error) throw profilesRes.error;
+
+  let reportRows: DailyReportRow[] = [];
+  if (friendIds.length > 0) {
+    const reportsRes = await supabase
+      .from("daily_reports")
+      .select("id, user_id, category, report_text, created_at")
+      .in("user_id", friendIds)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (reportsRes.error) {
+      if (!isMissingRelationError(reportsRes.error, "daily_reports")) {
+        throw reportsRes.error;
+      }
+
+      const aiPortRes = await supabase.from("AIPort").select("*").limit(Math.max(40, limit * 2));
+      if (aiPortRes.error) {
+        console.warn("feed: AIPort fallback query failed", aiPortRes.error);
+      } else {
+        reportRows = normalizeAIPortRows((aiPortRes.data || []) as Record<string, unknown>[], new Set(friendIds), limit);
+      }
+    } else {
+      reportRows = (reportsRes.data || []) as DailyReportRow[];
+    }
+  }
 
   const profileMap = new Map(((profilesRes.data || []) as ProfileRow[]).map((profile) => [profile.id, profile]));
 
@@ -309,7 +400,7 @@ export const fetchNotifications = async (viewerUserId: string, limit = 30) => {
     } satisfies NotificationItem;
   });
 
-  const reportItems = ((reportsRes.data || []) as DailyReportRow[]).map((report) => {
+  const reportItems = reportRows.map((report) => {
     const actor = profileMap.get(report.user_id);
     const text = report.report_text || report.category || "新しい投稿があります";
 

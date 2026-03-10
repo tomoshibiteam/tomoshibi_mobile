@@ -56,6 +56,7 @@ type SpotRow = {
   order_index: number | null;
   lat: number | null;
   lng: number | null;
+  image_url?: string | null;
 };
 
 type SpotDetailRow = {
@@ -115,6 +116,27 @@ const parseHints = (hintText?: string | null) =>
     .map((hint) => hint.trim())
     .filter(Boolean);
 
+const parseBodyCoords = (body?: string | null): { lat: number; lng: number } | null => {
+  const text = (body || "").trim();
+  if (!text) return null;
+  const lineMatch = text.match(
+    /(?:^|\n)\s*(?:座標|位置|coords?)\s*[:：]\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/i
+  );
+  if (!lineMatch) return null;
+  const lat = Number.parseFloat(lineMatch[1]);
+  const lng = Number.parseFloat(lineMatch[2]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat, lng };
+};
+
+const parseBodyStageName = (body?: string | null): string | null => {
+  const text = (body || "").trim();
+  if (!text) return null;
+  const stageMatch = text.match(/(?:^|\n)\s*舞台\s*[:：]\s*(.+)(?:\n|$)/);
+  return normalizeText(stageMatch?.[1] || null) || null;
+};
+
 const makeNarration = (id: string, text: string): GameplayMessage => ({
   id,
   speakerType: "narrator",
@@ -130,6 +152,18 @@ const isMissingRelationError = (error: unknown) => {
     body.includes("does not exist") ||
     body.includes("relation")
   );
+};
+
+const isMissingColumnError = (error: unknown, column: string) => {
+  if (!error || typeof error !== "object") return false;
+  const maybe = error as {
+    code?: string;
+    message?: string;
+    details?: string;
+    hint?: string;
+  };
+  const body = `${maybe.message || ""} ${maybe.details || ""} ${maybe.hint || ""}`.toLowerCase();
+  return maybe.code === "42703" && body.includes(column.toLowerCase());
 };
 
 const toMessage = (row: {
@@ -196,6 +230,8 @@ const buildFallbackQuestFromEpisodes = async (
 
   const spots: GameplaySpot[] = episodes.map((episode, index) => {
     const body = normalizeText(episode.body);
+    const parsedCoords = parseBodyCoords(episode.body);
+    const parsedStageName = parseBodyStageName(episode.body);
     const lineChunks = body
       .split(/\n+/)
       .map((line) => line.trim())
@@ -204,11 +240,13 @@ const buildFallbackQuestFromEpisodes = async (
     return {
       id: `episode-${episode.id}`,
       orderIndex: index + 1,
-      name: normalizeText(episode.title) || `第${episode.episodeNo}話`,
+      name: parsedStageName || normalizeText(episode.title) || `第${episode.episodeNo}話`,
       description: body || "新しいエピソードが始まります。",
-      lat: null,
-      lng: null,
-      backgroundImage: BACKGROUND_IMAGES[index % BACKGROUND_IMAGES.length],
+      lat: parsedCoords?.lat ?? null,
+      lng: parsedCoords?.lng ?? null,
+      backgroundImage:
+        normalizeText(series.coverImageUrl) ||
+        BACKGROUND_IMAGES[index % BACKGROUND_IMAGES.length],
       puzzleQuestion: null,
       puzzleAnswer: null,
       puzzleHints: [],
@@ -266,15 +304,32 @@ export const fetchGameplayQuest = async (
   const questRow = questData as QuestRow;
 
   try {
-    const { data: spotsData, error: spotsError } = await supabase
-      .from("spots")
-      .select("id, name, order_index, lat, lng")
-      .eq("quest_id", questId)
-      .order("order_index", { ascending: true });
+    const fetchSpots = async () => {
+      const withImage = await supabase
+        .from("spots")
+        .select("id, name, order_index, lat, lng, image_url")
+        .eq("quest_id", questId)
+        .order("order_index", { ascending: true });
 
-    if (spotsError) throw spotsError;
+      if (!withImage.error) {
+        return (withImage.data || []) as SpotRow[];
+      }
 
-    const rawSpots = (spotsData || []) as SpotRow[];
+      if (!isMissingColumnError(withImage.error, "image_url")) {
+        throw withImage.error;
+      }
+
+      const fallback = await supabase
+        .from("spots")
+        .select("id, name, order_index, lat, lng")
+        .eq("quest_id", questId)
+        .order("order_index", { ascending: true });
+
+      if (fallback.error) throw fallback.error;
+      return (fallback.data || []) as SpotRow[];
+    };
+
+    const rawSpots = await fetchSpots();
     if (rawSpots.length === 0) {
       return buildFallbackQuestFromEpisodes(questId, timeline);
     }
@@ -431,7 +486,10 @@ export const fetchGameplayQuest = async (
           "周辺を観察し、手がかりを集めましょう。",
         lat: typeof spot.lat === "number" ? spot.lat : null,
         lng: typeof spot.lng === "number" ? spot.lng : null,
-        backgroundImage: BACKGROUND_IMAGES[index % BACKGROUND_IMAGES.length],
+        backgroundImage:
+          normalizeText(spot.image_url) ||
+          normalizeText(questRow.cover_image_url) ||
+          BACKGROUND_IMAGES[index % BACKGROUND_IMAGES.length],
         puzzleQuestion: normalizeText(detail?.question_text) || null,
         puzzleAnswer: normalizeText(detail?.answer_text) || null,
         puzzleHints: parseHints(detail?.hint_text),

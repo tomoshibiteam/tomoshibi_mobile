@@ -2,6 +2,15 @@
 
 既存のWeb版 (`/Users/wataru/tomoshibi`) を残したまま、React Native へ移行するための新規プロジェクトです。
 
+## 事業共通認識ドキュメント
+- 基準文書: `docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md`
+- 運用ルール: `docs/business/COMMON_UNDERSTANDING_OPERATIONS.md`
+- 意思決定ログ: `docs/business/DECISION_LOG.md`
+- 実装計画（シリーズ/エピソード）: `docs/product/SERIES_EPISODE_IMPLEMENTATION_PLAN.md`
+- 生成フロー詳細（シリーズ/エピソード）: `docs/product/SERIES_EPISODE_GENERATION_FLOW_DETAIL.md`
+
+仕様検討・UX議論・外部共有資料の作成前に、上記5点を先に確認してください。
+
 ## 技術構成
 - Expo (React Native + TypeScript)
 - React Navigation (Stack + Bottom Tabs)

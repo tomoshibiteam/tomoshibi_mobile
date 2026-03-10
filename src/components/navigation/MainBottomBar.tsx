@@ -17,7 +17,7 @@ type NavItem = {
 const navItems: NavItem[] = [
   { route: "Home", icon: "home-outline", iconActive: "home" },
   { route: "Search", icon: "search-outline", iconActive: "search" },
-  { route: "Notifications", icon: "notifications-outline", iconActive: "notifications" },
+  { route: "Notifications", icon: "trophy-outline", iconActive: "trophy" },
   { route: "Profile", icon: "person-outline", iconActive: "person" },
 ];
 

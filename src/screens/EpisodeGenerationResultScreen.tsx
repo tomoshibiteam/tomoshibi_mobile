@@ -4,17 +4,21 @@ import {
   Alert,
   Image,
   ImageBackground,
+  Platform,
   Pressable,
   ScrollView,
   Text,
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import * as Location from "expo-location";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   applySeriesProgressPatch,
   createEpisodeForSeries,
+  saveRuntimeEpisodeSpots,
+  type RuntimeSpotCoordinate,
 } from "@/services/quests";
 import { useSessionUserId } from "@/hooks/useSessionUser";
 import type { RootStackParamList } from "@/navigation/types";
@@ -24,6 +28,7 @@ import type {
   GeneratedRuntimeEpisode,
 } from "@/services/seriesAi";
 import { fonts } from "@/theme/fonts";
+import { geocodeAddress } from "@/lib/geocode";
 
 type Props = NativeStackScreenProps<RootStackParamList, "EpisodeGenerationResult">;
 
@@ -38,15 +43,83 @@ const TABS: Array<{ key: TabKey; label: string }> = [
 
 const FALLBACK_COVER =
   "https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=1200&q=80";
+const GOOGLE_MAPS_WEB_API_KEY =
+  process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY ??
+  process.env.EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_API_KEY ??
+  "";
+
+const parseInlineCoords = (value?: string | null): { lat: number; lng: number } | null => {
+  const text = (value || "").trim();
+  if (!text) return null;
+  const match = text.match(/(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const lat = Number.parseFloat(match[1]);
+  const lng = Number.parseFloat(match[2]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat, lng };
+};
+
+const geocodeSpotCoordinate = async (
+  spotName: string,
+  stageLocation?: string
+): Promise<{ lat: number; lng: number; address: string } | null> => {
+  const inline = parseInlineCoords(spotName);
+  if (inline) {
+    return { ...inline, address: spotName };
+  }
+
+  const queries = [
+    `${spotName} ${stageLocation || ""}`.trim(),
+    spotName.trim(),
+    (stageLocation || "").trim(),
+  ].filter(Boolean);
+
+  for (const query of queries) {
+    try {
+      if (Platform.OS === "web") {
+        if (!GOOGLE_MAPS_WEB_API_KEY) continue;
+        const coords = await geocodeAddress(query, GOOGLE_MAPS_WEB_API_KEY);
+        if (coords) {
+          return { lat: coords.lat, lng: coords.lng, address: query };
+        }
+      } else {
+        const geocoded = await Location.geocodeAsync(query);
+        const first = geocoded.find(
+          (item) =>
+            Number.isFinite(item.latitude) && Number.isFinite(item.longitude)
+        );
+        if (first) {
+          return { lat: first.latitude, lng: first.longitude, address: query };
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
+};
 
 const buildEpisodeBody = (
   runtimeEpisode: GeneratedRuntimeEpisode,
-  seriesTitle: string
+  seriesTitle: string,
+  stageLocation?: string,
+  stageCoords?: { lat: number; lng: number } | null
 ): string => {
   const charMap = new Map(
     (runtimeEpisode.characters || []).map((c) => [c.id, c.name])
   );
-  return (runtimeEpisode.spots || [])
+  const coordsLine =
+    stageCoords && Number.isFinite(stageCoords.lat) && Number.isFinite(stageCoords.lng)
+      ? `座標: ${stageCoords.lat.toFixed(6)},${stageCoords.lng.toFixed(6)}`
+      : null;
+  const headerLines = [
+    stageLocation ? `舞台: ${stageLocation}` : `舞台: ${seriesTitle}`,
+    coordsLine,
+  ].filter((line): line is string => Boolean(line));
+
+  const spotBody = (runtimeEpisode.spots || [])
     .map((spot) => {
       const roleLabel = spot.sceneRole ? `【${spot.sceneRole}】` : "";
       const header = `${roleLabel}${spot.spotName}`;
@@ -68,10 +141,20 @@ const buildEpisodeBody = (
       return `${header}\n\n${narration ? `${narration}\n\n` : ""}${blocks}${puzzle}`;
     })
     .join("\n\n---\n\n");
+
+  return [...headerLines, "", spotBody].filter(Boolean).join("\n");
 };
 
 export const EpisodeGenerationResultScreen = ({ navigation, route }: Props) => {
-  const { runtimeEpisode, seriesId, seriesTitle, coverImageUrl, episodeNo } =
+  const {
+    runtimeEpisode,
+    seriesId,
+    seriesTitle,
+    coverImageUrl,
+    episodeNo,
+    stageLocation,
+    stageCoords,
+  } =
     route.params;
   const { userId } = useSessionUserId();
   const insets = useSafeAreaInsets();
@@ -84,6 +167,45 @@ export const EpisodeGenerationResultScreen = ({ navigation, route }: Props) => {
   const characters = runtimeEpisode.characters || [];
   const currentSpot = spots[0];
 
+  const resolveSpotCoordinates = useCallback(async (): Promise<RuntimeSpotCoordinate[]> => {
+    const resolved: RuntimeSpotCoordinate[] = [];
+    const uniqueByName = new Set<string>();
+
+    for (const spot of runtimeEpisode.spots || []) {
+      const name = (spot.spotName || "").trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (uniqueByName.has(key)) continue;
+      uniqueByName.add(key);
+
+      const geocoded = await geocodeSpotCoordinate(name, stageLocation);
+      if (geocoded) {
+        resolved.push({
+          spotName: name,
+          lat: geocoded.lat,
+          lng: geocoded.lng,
+          address: geocoded.address,
+        });
+        continue;
+      }
+
+      if (
+        stageCoords &&
+        Number.isFinite(stageCoords.lat) &&
+        Number.isFinite(stageCoords.lng)
+      ) {
+        resolved.push({
+          spotName: name,
+          lat: stageCoords.lat,
+          lng: stageCoords.lng,
+          address: stageLocation || name,
+        });
+      }
+    }
+
+    return resolved;
+  }, [runtimeEpisode.spots, stageLocation, stageCoords]);
+
   const handleSave = useCallback(async () => {
     if (!userId || !seriesId) {
       Alert.alert("保存できません", "ログインが必要です。");
@@ -91,7 +213,12 @@ export const EpisodeGenerationResultScreen = ({ navigation, route }: Props) => {
     }
     setIsSubmitting(true);
     try {
-      const episodeBody = buildEpisodeBody(runtimeEpisode, seriesTitle);
+      const episodeBody = buildEpisodeBody(
+        runtimeEpisode,
+        seriesTitle,
+        stageLocation,
+        stageCoords
+      );
       const result = await createEpisodeForSeries({
         userId,
         seriesId,
@@ -99,6 +226,24 @@ export const EpisodeGenerationResultScreen = ({ navigation, route }: Props) => {
         episodeTitle: runtimeEpisode.title,
         episodeText: episodeBody,
       });
+
+      try {
+        const spotCoordinates = await resolveSpotCoordinates();
+        await saveRuntimeEpisodeSpots({
+          questId: result.questId,
+          userId,
+          episodeNo:
+            (result.storage === "quest_episodes" ? result.episodeNo : undefined) ||
+            episodeNo ||
+            undefined,
+          runtimeEpisode,
+          stageLocation,
+          stageCoords,
+          spotCoordinates,
+        });
+      } catch (spotSaveError) {
+        console.warn("EpisodeGenerationResult: saveRuntimeEpisodeSpots warning", spotSaveError);
+      }
 
       if (runtimeEpisode.progressPatch && result.questId) {
         try {
@@ -136,6 +281,9 @@ export const EpisodeGenerationResultScreen = ({ navigation, route }: Props) => {
     seriesId,
     seriesTitle,
     runtimeEpisode,
+    stageLocation,
+    stageCoords,
+    resolveSpotCoordinates,
     navigation,
   ]);
 

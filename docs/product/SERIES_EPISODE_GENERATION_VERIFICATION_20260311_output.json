@@ -1,0 +1,22 @@
+[series-concept-agent] attempt 1/2 — LLM呼び出し中
+[series-concept-agent] attempt 1 — LLM応答受信
+[series-character-agent] 開始 — title: 汐鳴港の黄昏迷宮, target_count: 3
+[series-character-agent] attempt 1/3 — LLM呼び出し中 (軽量スキーマ, 90秒でタイムアウト)
+[series-character-agent] attempt 1 — LLM応答受信
+[series-character-agent] 完了 — 3人を生成
+[series-episode-planner-agent] attempt 1/2 — LLM呼び出し中
+[series-episode-planner-agent] attempt 1 — LLM応答受信
+[series-consistency-agent] attempt 1/2 — LLM呼び出し中
+[series-consistency-agent] attempt 1 — LLM応答受信
+[series-episode-pipeline] 開始 — series: 汐鳴港の黄昏迷宮, location: 浅草, purpose: 歴史観光と街歩き, spots: 5, wishes: レトロな街並みを楽しみつつ、次話が気になる導線にしてほしい
+[series-episode-pipeline] Step 1/3: エピソード設計
+[episode-planner] 入力データ確認:
+[episode-planner]   シリーズ: 汐鳴港の黄昏迷宮
+[episode-planner]   概要: 歴史ある港町・汐鳴を舞台に、青年・凪と相棒・宗介が「古い海図の切れ端」を求めて坂道や路地裏を歩き続ける探索ミステリーです。全6話を通じて、黄昏時の街並みに隠され
+[episode-planner]   世界観: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。
+[episode-planner]   前提: 歴史ある港町・汐鳴の路地裏を歩き、年上の頼れる相棒と共に街に眠る古い謎と現代の事件を解き明かす。 各話は徒歩で巡れる複数スポット（目安2〜4箇所）を移動しながら
+[episode-planner]   シーズン目標: 街の各所に隠された「古い海図の切れ端」を全て集め、汐鳴の歴史を揺るがす大きな秘密を解き明かすこと。
+[episode-planner]   キャラクター(3人): 海藤 凪(汐鳴港の歴史に魅せられ、古い海図の謎を追う若き探求者。), 鳴海 宗介(汐鳴港の裏事情に精通し、凪を導き守る元刑事の喫茶店マスター。), 月島 玲子(汐鳴港の郷土史料館で働き、二人に重要なヒントをもたらすミステリアスな司書。)
+[episode-planner]   完了話数: 0 → 今回は第1話
+[episode-planner]   場所: 浅草, 目的: 歴史観光と街歩き, スポット希望: 5
+[episode-planner] attempt 1/2 — LLM呼び出し中
