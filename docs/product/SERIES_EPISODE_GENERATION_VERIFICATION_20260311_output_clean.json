@@ -1,0 +1,47 @@
+[series-concept-agent] attempt 1/2 — LLM呼び出し中
+[series-concept-agent] attempt 1 — LLM応答受信
+[series-character-agent] 開始 — title: 汐鳴港の黄昏迷宮, target_count: 3
+[series-character-agent] attempt 1/3 — LLM呼び出し中 (軽量スキーマ, 90秒でタイムアウト)
+[series-character-agent] attempt 1 — LLM応答受信
+[series-character-agent] 完了 — 3人を生成
+[series-episode-planner-agent] attempt 1/2 — LLM呼び出し中
+[series-episode-planner-agent] attempt 1 — LLM応答受信
+[series-consistency-agent] attempt 1/2 — LLM呼び出し中
+[series-consistency-agent] attempt 1 — LLM応答受信
+[series-episode-pipeline] 開始 — series: 汐鳴港の黄昏迷宮, location: 浅草, purpose: 歴史観光と街歩き, spots: 6, wishes: レトロ / 発見 / 少し緊張感
+[series-episode-pipeline] Step 1/3: エピソード設計
+[episode-planner] 入力データ確認:
+[episode-planner]   シリーズ: 汐鳴港の黄昏迷宮
+[episode-planner]   概要: 街の各所に隠された「古い海図の切れ端」を全て集め、汐鳴の歴史を揺るがす大きな秘密を解き明かすこと。
+[episode-planner]   世界観: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。
+[episode-planner]   前提: 歴史ある港町・汐鳴の路地裏を歩き、年上の頼れる相棒と共に街に眠る古い謎と現代の事件を解き明かす。 各話は徒歩で巡れる複数スポット（目安2〜4箇所）を移動しながら
+[episode-planner]   シーズン目標: 街の各所に隠された「古い海図の切れ端」を全て集め、汐鳴の歴史を揺るがす大きな秘密を解き明かすこと。
+[episode-planner]   キャラクター(3人): 海藤 凪(街に散らばる「古い海図の切れ端」を全て集め、汐鳴の隠された真実を解き明かすこと。), 鳴海 宗介(過去の未解決事件の真相を突き止めつつ、凪を危険から遠ざけること。), 月島 玲子(一族が代々守ってきた汐鳴の「裏の歴史」を正しい形で後世に残すこと。)
+[episode-planner]   完了話数: 0 → 今回は第1話
+[episode-planner]   場所: 浅草, 目的: 歴史観光と街歩き, スポット希望: 6
+[episode-planner] attempt 1/2 — LLM呼び出し中
+[episode-planner] 成功 — title: 第1話：潮風が運ぶ古い謎
+[episode-planner]   one_liner: レトロな港町・汐鳴の路地裏で、失われた海図を巡る探索が幕を開ける。
+[episode-planner]   premise: 汐鳴の歴史ある下町エリア（通称：浅草町）を舞台に、頼れる相棒・宗介と共に古い謎を追う。
+[episode-planner]   episode_world: 第1話：潮風が運ぶ古い謎〜浅草町の黄昏〜 / レトロで少し緊張感のある雰囲気
+[episode-planner]   キャラクター(5人): 海藤 凪(街に散らばる「古い海図の切れ端」を全て集め、汐鳴の隠された真実を解き明かすこと。), 鳴海 宗介(過去の未解決事件の真相を突き止めつつ、凪を危険から遠ざけること。), 月島 玲子(一族が代々守ってきた汐鳴の「裏の歴史」を正しい形で後世に残すこと。), ゲンさん(古書店の店主), 謎の男(開発業者の手先)
+[episode-planner]   req[0] 起 汐鳴・浅草町の入り口となる古い橋 — obj: 宗介と合流し、最初の目的地を確認した状態
+[episode-planner]   req[1] 承 レトロな看板が並ぶ路地裏 — obj: サチから情報を得て、古書店への道筋を見つけた状態
+[episode-planner]   req[2] 承 ゲンさんの古書店（外観・店先） — obj: ゲンさんから海図に関する最初の情報を得た状態
+[episode-planner]   req[3] 転 人通りの少ない裏路地の行き止まり — obj: 尾行者を撒き、安全を確保した状態
+[episode-planner]   req[4] 転 古いレンガ造りの祠と石碑 — obj: 石碑の謎を解き、最初の「海図の切れ端」を入手した状態
+[episode-planner]   req[5] 結 港を見下ろす高台の広場 — obj: 海図の切れ端を確認し、次なる目的地を定めた状態
+[series-episode-pipeline] Step 2-3/3: 6件の要件を解決してchapter・puzzle生成
+[episode-spots] [spot 1/6: 浅草 石畳路地] chapter生成中
+[episode-spots] [spot 1/6: 浅草 石畳路地] chapter完了 — blocks: 8, text: 359文字
+[episode-spots] [spot 1/6: 浅草 石畳路地] puzzle生成中
+[episode-spots] [spot 1/6: 浅草 石畳路地] puzzle完了 — Q: 浅草 石畳路地で「宗介と合流し、最初の目的地を確認した状態」を成立させる答えは何...
+[episode-spots] [spot 2/6: 浅草 運河テラス] chapter生成中
+[episode-spots] [spot 2/6: 浅草 運河テラス] chapter完了 — blocks: 7, text: 253文字
+[episode-spots] [spot 2/6: 浅草 運河テラス] puzzle生成中
+[episode-spots] [spot 2/6: 浅草 運河テラス] puzzle完了 — Q: 浅草 運河テラスで「サチから情報を得て、古書店への道筋を見つけた状態」を成立させ...
+[episode-spots] [spot 3/6: 浅草 文化案内所前] chapter生成中
+[episode-spots] [spot 3/6: 浅草 文化案内所前] chapter完了 — blocks: 9, text: 408文字
+[episode-spots] [spot 3/6: 浅草 文化案内所前] puzzle生成中
+[episode-spots] [spot 3/6: 浅草 文化案内所前] puzzle完了 — Q: 浅草 文化案内所前で「ゲンさんから海図に関する最初の情報を得た状態」を成立させる...
+[episode-spots] [spot 4/6: 浅草 橋詰広場] chapter生成中

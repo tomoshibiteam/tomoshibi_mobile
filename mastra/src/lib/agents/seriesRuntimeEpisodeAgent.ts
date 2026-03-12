@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { MASTRA_SERIES_RUNTIME_EPISODE_MODEL } from "../modelConfig";
 import { generateChapter, type ChapterAgentInput } from "./chapterAgent";
-import { generatePuzzle, type PuzzleAgentInput } from "./puzzleAgent";
 import {
   buildDefaultObjectiveMissionLink,
   normalizeObjectiveMissionLink,
@@ -1286,27 +1285,35 @@ const buildCandidateSpots = (
 ): SpotCandidate[] => {
   const location = clean(context.stageLocation) || "街";
   const keywordString = [requirement.spot_role, requirement.tourism_value_type, ...requirement.required_attributes].join(" ");
-  const suffixes = new Set<string>(["駅前広場", "商店街", "公共広場"]);
+  const specializedSuffixes: string[] = [];
+  const genericSuffixes = ["駅前広場", "商店街", "公共広場"];
+  const positionalSuffixes = [
+    "石畳路地",
+    "運河テラス",
+    "文化案内所前",
+    "橋詰広場",
+    "歴史掲示板前",
+    "展望歩道",
+    "川沿いベンチ",
+  ];
+  specializedSuffixes.push(positionalSuffixes[index % positionalSuffixes.length]);
   if (/(水辺|川|港|運河|橋|海)/.test(keywordString)) {
-    suffixes.add("川沿い遊歩道");
-    suffixes.add("水辺プロムナード");
+    specializedSuffixes.push("川沿い遊歩道", "水辺プロムナード");
   }
   if (/(歴史|史跡|寺|神社|古|城|文化財)/.test(keywordString)) {
-    suffixes.add("歴史資料館前");
-    suffixes.add("神社参道");
+    specializedSuffixes.push("歴史資料館前", "神社参道");
   }
   if (/(景観|見晴らし|余韻|展望)/.test(keywordString)) {
-    suffixes.add("展望デッキ");
-    suffixes.add("高台公園");
+    specializedSuffixes.push("展望デッキ", "高台公園");
   }
   if (/(文化|体験|市場|食)/.test(keywordString)) {
-    suffixes.add("市場通り");
-    suffixes.add("文化交流広場");
+    specializedSuffixes.push("市場通り", "文化交流広場");
   }
 
   const legacySeedSpots = dedupeStrings((context.legacySuggestedSpots || []).map((name) => clean(name)));
+  const orderedSuffixes = dedupeStrings([...specializedSuffixes, ...genericSuffixes]);
   const candidatesRaw = dedupeStrings([
-    ...Array.from(suffixes).map((suffix) => `${location} ${suffix}`),
+    ...orderedSuffixes.map((suffix) => `${location} ${suffix}`),
     ...legacySeedSpots.map((name) => (name.includes(location) ? name : `${location} ${name}`)),
   ]).slice(0, 8);
 
@@ -1867,16 +1874,9 @@ const generateSpotsContent = async (
 
     previousSummary = chapter.summary;
     previousClue = chapter.newClue || ch.key_clue || previousClue;
-    await emitSeriesRuntimeEpisodeProgress(onProgress, {
-      phase: "spot_puzzle_start",
-      detail: `${ch.spot_name}の謎解きを生成`,
-      spot_index: idx + 1,
-      spot_count: resolvedRequirements.length,
-      spot_name: ch.spot_name,
-    });
 
-    // --- Puzzle ---
-    console.log(`${logPrefix} ${spotLabel} puzzle生成中`);
+    // Puzzle generation is disabled.
+    // Keep deterministic compatibility fields so existing clients/schemas still work.
     const defaultOml = buildDefaultObjectiveMissionLink({
       spotName: ch.spot_name,
       objectiveResult: ch.objective,
@@ -1890,26 +1890,15 @@ const generateSpotsContent = async (
       keyClue: ch.key_clue,
       tourismAnchor: ch.tourism_focus,
     });
-
-    const puzzleInput: PuzzleAgentInput = {
-      spotName: ch.spot_name,
-      tourismAnchor: ch.tourism_focus,
-      sceneObjective: ch.objective,
-      mission: ch.mission,
-      sceneRole: ch.scene_role,
-      keyClue: ch.key_clue,
-      objective_mission_link: oml,
+    const puzzle = {
+      question_text: clean(oml.mission_question) || `${ch.objective}を成立させる要点は何か？`,
+      answer_text:
+        clean(chapter.newClue) || clean(oml.expected_answer) || clean(ch.key_clue) || "次へ進む鍵",
+      hint_text: clean(`${ch.tourism_focus}に注目し、${ch.objective}の成立条件を確認する。`),
+      explanation_text:
+        clean(oml.success_outcome) ||
+        clean(`${ch.tourism_focus}が判断材料となり、${ch.objective}の前進につながる。`),
     };
-
-    const puzzle = await generatePuzzle(puzzleInput);
-    console.log(`${logPrefix} ${spotLabel} puzzle完了 — Q: ${puzzle.question_text.slice(0, 40)}...`);
-    await emitSeriesRuntimeEpisodeProgress(onProgress, {
-      phase: "spot_puzzle_done",
-      detail: `${ch.spot_name}の謎解き生成が完了`,
-      spot_index: idx + 1,
-      spot_count: resolvedRequirements.length,
-      spot_name: ch.spot_name,
-    });
 
     // --- Split dialogue into pre/post mission ---
     const blocks = chapter.blocks;
@@ -2157,9 +2146,9 @@ export const generateSeriesRuntimeEpisode = async (
     detail: "エピソード設計が完了",
   });
 
-  // Step 2–3: Chapter + Puzzle per spot
+  // Step 2–3: Chapter per spot (puzzle generation disabled)
   console.log(
-    `${logPrefix} Step 2-3/3: ${plan.spot_requirements.length}件の要件を解決してchapter・puzzle生成`
+    `${logPrefix} Step 2-3/3: ${plan.spot_requirements.length}件の要件を解決してchapter生成`
   );
   await emitSeriesRuntimeEpisodeProgress(onProgress, {
     phase: "spot_resolution_start",

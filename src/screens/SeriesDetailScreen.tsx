@@ -28,8 +28,10 @@ import { useSessionUserId } from "@/hooks/useSessionUser";
 type Props = NativeStackScreenProps<RootStackParamList, "SeriesDetail">;
 
 type Character = {
+  id: string;
   name: string;
   role: string;
+  avatarImageUrl: string | null;
   icon: keyof typeof Ionicons.glyphMap;
 };
 
@@ -44,11 +46,15 @@ const FALLBACK_EPISODE_COVER_URLS = [
   "https://images.unsplash.com/photo-1433838552652-f9a46b332c40?auto=format&fit=crop&w=900&q=80",
 ] as const;
 
-const FALLBACK_CHARACTERS: Character[] = [
-  { name: "マスター", role: "寡黙な店主", icon: "person-outline" },
-  { name: "リリー", role: "常連の老婦人", icon: "person-outline" },
-  { name: "クロ", role: "店の黒猫", icon: "paw-outline" },
-];
+const pickCharacterIcon = (role: string): keyof typeof Ionicons.glyphMap => {
+  const normalized = role.toLowerCase();
+  if (/(猫|cat|動物|pet)/i.test(normalized)) return "paw-outline";
+  if (/(案内|guide|ナビ|ガイド)/i.test(normalized)) return "compass-outline";
+  if (/(探偵|detective|調査|分析)/i.test(normalized)) return "search-outline";
+  if (/(医者|doctor|看護|治療)/i.test(normalized)) return "medkit-outline";
+  if (/(教授|先生|研究|学者)/i.test(normalized)) return "flask-outline";
+  return "person-outline";
+};
 
 const statusToLabel = (status: string | null) => {
   const normalized = (status || "").toLowerCase();
@@ -115,17 +121,17 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
   const nextEpisode = episodes[clearedCount] || null;
   const progressLabel = statusToLabel(series?.status || null);
 
-  const characters = useMemo(() => {
-    if (!series?.tags || series.tags.length === 0) return FALLBACK_CHARACTERS;
-
-    const tagBased = series.tags.slice(0, 3).map((tag, index) => ({
-      name: tag,
-      role: index === 0 ? "キーパーソン" : index === 1 ? "ガイド" : "仲間",
-      icon: "person-outline" as const,
-    }));
-
-    return tagBased.length > 0 ? tagBased : FALLBACK_CHARACTERS;
-  }, [series?.tags]);
+  const characters = useMemo<Character[]>(
+    () =>
+      (series?.characters || []).map((character) => ({
+        id: character.id,
+        name: character.name,
+        role: character.role,
+        avatarImageUrl: character.avatarImageUrl,
+        icon: pickCharacterIcon(character.role),
+      })),
+    [series?.characters]
+  );
 
   const startEdit = (episode: SeriesEpisode) => {
     setEditingEpisodeId(episode.id);
@@ -347,24 +353,39 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
 
           <View>
             <Text className="text-sm text-[#221910] mb-4 pl-3 border-l-4 border-[#EE8C2B]" style={{ fontFamily: fonts.displayBold }}>
-              固定キャラクター
+              シリーズ固定の登場人物
             </Text>
-
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 16 }}>
-              {characters.map((character) => (
-                <View key={`${character.name}-${character.role}`} className="w-20 items-center">
-                  <View className="w-16 h-16 rounded-full border border-[#E3DDD6] bg-[#F4F1ED] items-center justify-center">
-                    <Ionicons name={character.icon} size={23} color="#9A9287" />
+            {characters.length > 0 ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 16 }}>
+                {characters.map((character) => (
+                  <View key={character.id} className="w-24 items-center">
+                    <View className="w-16 h-16 rounded-full border border-[#E3DDD6] bg-[#F4F1ED] items-center justify-center overflow-hidden">
+                      {character.avatarImageUrl ? (
+                        <Image source={{ uri: character.avatarImageUrl }} className="w-full h-full" resizeMode="cover" />
+                      ) : (
+                        <Ionicons name={character.icon} size={23} color="#9A9287" />
+                      )}
+                    </View>
+                    <Text className="text-xs text-[#3D3026] mt-2 text-center" numberOfLines={1} style={{ fontFamily: fonts.displayBold }}>
+                      {character.name}
+                    </Text>
+                    <Text
+                      className="text-[10px] text-[#7A746D] mt-0.5 text-center"
+                      numberOfLines={2}
+                      style={{ fontFamily: fonts.bodyRegular, lineHeight: 14 }}
+                    >
+                      {character.role}
+                    </Text>
                   </View>
-                  <Text className="text-xs text-[#3D3026] mt-2" numberOfLines={1} style={{ fontFamily: fonts.displayBold }}>
-                    {character.name}
-                  </Text>
-                  <Text className="text-[10px] text-[#7A746D] mt-0.5" numberOfLines={1} style={{ fontFamily: fonts.bodyRegular }}>
-                    {character.role}
-                  </Text>
-                </View>
-              ))}
-            </ScrollView>
+                ))}
+              </ScrollView>
+            ) : (
+              <View className="rounded-xl border border-dashed border-[#E3DDD6] bg-[#FBF9F6] px-4 py-4">
+                <Text className="text-[12px] text-[#7A746D]" style={{ fontFamily: fonts.bodyRegular }}>
+                  シリーズ固定の登場人物はまだ登録されていません。
+                </Text>
+              </View>
+            )}
           </View>
         </View>
 

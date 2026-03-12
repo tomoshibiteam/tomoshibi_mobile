@@ -1377,7 +1377,7 @@ const fetchCandidatesStep = createStep({
     const overpassElements = parseOverpassElements(process.env.MASTRA_OVERPASS_ELEMENTS);
     const overpassEndpoints = (process.env.MASTRA_OVERPASS_ENDPOINTS || "")
       .split(",")
-      .map((item) => item.trim())
+      .map((item: string) => item.trim())
       .filter(Boolean);
     const overpassTimeoutSec = parseInt(process.env.MASTRA_OVERPASS_TIMEOUT_SEC || "25", 10);
     const overpassTimeoutMs = parseInt(process.env.MASTRA_OVERPASS_TIMEOUT_MS || "20000", 10);
@@ -1391,13 +1391,13 @@ const fetchCandidatesStep = createStep({
     const geocodeQuery = geocodeQueries[0] || "";
     const geocodeCountryCodes = (process.env.MASTRA_NOMINATIM_COUNTRYCODES || "jp")
       .split(",")
-      .map((item) => item.trim().toLowerCase())
+      .map((item: string) => item.trim().toLowerCase())
       .filter(Boolean);
     const geocodeEndpoints = (
       process.env.MASTRA_NOMINATIM_ENDPOINTS || process.env.MASTRA_NOMINATIM_ENDPOINT || ""
     )
       .split(",")
-      .map((item) => item.trim())
+      .map((item: string) => item.trim())
       .filter(Boolean);
     const fallbackLat = parseFloat(process.env.MASTRA_FALLBACK_CENTER_LAT || "");
     const fallbackLng = parseFloat(process.env.MASTRA_FALLBACK_CENTER_LNG || "");

@@ -58,6 +58,12 @@ export type SeriesDetail = {
   areaName: string | null;
   status: string | null;
   tags: string[];
+  characters: Array<{
+    id: string;
+    name: string;
+    role: string;
+    avatarImageUrl: string | null;
+  }>;
   creatorId: string | null;
   createdAt: string | null;
 };
@@ -85,6 +91,10 @@ export type SeriesEpisodeRuntimeContext = {
   coverConsistencyReport: Record<string, unknown> | null;
   progressState: Record<string, unknown> | null;
   firstEpisodeSeed: Record<string, unknown> | null;
+  seriesBlueprint: Record<string, unknown> | null;
+  initialUserSeriesStateTemplate: Record<string, unknown> | null;
+  episodeRuntimeBootstrapPayload: Record<string, unknown> | null;
+  userSeriesState: Record<string, unknown> | null;
   checkpoints: Array<{
     checkpointNo: number;
     title: string;
@@ -133,6 +143,11 @@ const dedupe = (values: string[]) => {
     seen.add(key);
     return true;
   });
+};
+
+const toFiniteNumber = (value: unknown, fallback = 0) => {
+  const parsed = Number.parseFloat(String(value ?? fallback));
+  return Number.isFinite(parsed) ? parsed : fallback;
 };
 
 const asCodedError = (message: string, code: string) => {
@@ -355,6 +370,58 @@ export const fetchSeriesDetail = async (questId: string) => {
   if (error) throw error;
   if (!data) return null;
 
+  let characterRows:
+    | Array<{
+      id: string | null;
+      name: string | null;
+      role: string | null;
+      portrait_image_url: string | null;
+      character_order?: number | null;
+    }>
+    | null = null;
+
+  try {
+    const withPortrait = await supabase
+      .from("series_characters")
+      .select("id, name, role, portrait_image_url, character_order")
+      .eq("quest_id", questId)
+      .limit(10);
+
+    if (
+      withPortrait.error &&
+      isMissingAnyColumn(withPortrait.error, ["portrait_image_url", "character_order"])
+    ) {
+      const legacy = await supabase
+        .from("series_characters")
+        .select("id, name, role")
+        .eq("quest_id", questId)
+        .limit(10);
+      if (legacy.error) throw legacy.error;
+
+      characterRows = ((legacy.data || []) as Array<{
+        id: string | null;
+        name: string | null;
+        role: string | null;
+      }>).map((row) => ({
+        id: row.id,
+        name: row.name,
+        role: row.role,
+        portrait_image_url: null,
+      }));
+    } else {
+      if (withPortrait.error) throw withPortrait.error;
+      characterRows = ((withPortrait.data || []) as Array<{
+        id: string | null;
+        name: string | null;
+        role: string | null;
+        portrait_image_url: string | null;
+        character_order?: number | null;
+      }>).sort((a, b) => (Number(a.character_order || 0) || 0) - (Number(b.character_order || 0) || 0));
+    }
+  } catch (characterError) {
+    console.warn("fetchSeriesDetail: series_characters read warning", characterError);
+  }
+
   const row = data as {
     id: string;
     title: string | null;
@@ -375,6 +442,22 @@ export const fetchSeriesDetail = async (questId: string) => {
     areaName: row.area_name,
     status: row.status,
     tags: row.tags || [],
+    characters: ((characterRows || []) as Array<{
+      id: string | null;
+      name: string | null;
+      role: string | null;
+      portrait_image_url: string | null;
+      character_order?: number | null;
+    }>)
+      .filter((character) => Boolean(character.name && character.role))
+      .map((character, index) => {
+        return {
+          id: character.id || `series-char-${index + 1}`,
+          name: character.name || "登場人物",
+          role: character.role || "役割未設定",
+          avatarImageUrl: clean(character.portrait_image_url || "") || null,
+        };
+      }),
     creatorId: row.creator_id,
     createdAt: row.created_at,
   } satisfies SeriesDetail;
@@ -395,34 +478,13 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
 
   const bibleResponse = await supabase
     .from("series_bibles")
-    .select(
-      "overview, premise, season_goal, ai_rules, world, continuity, identity_pack, cover_consistency_report, progress_state, first_episode_seed"
-    )
+    .select("*")
     .eq("quest_id", questId)
     .eq("creator_id", userId)
     .limit(1);
 
-  let bibleRows = (bibleResponse.data || null) as Array<Record<string, unknown>> | null;
-  let bibleError = bibleResponse.error;
-
-  if (
-    bibleError &&
-    isMissingAnyColumn(bibleError, [
-      "progress_state",
-      "first_episode_seed",
-      "identity_pack",
-      "cover_consistency_report",
-    ])
-  ) {
-    const retry = await supabase
-      .from("series_bibles")
-      .select("overview, premise, season_goal, ai_rules, world, continuity")
-      .eq("quest_id", questId)
-      .eq("creator_id", userId)
-      .limit(1);
-    bibleRows = (retry.data || null) as Array<Record<string, unknown>> | null;
-    bibleError = retry.error;
-  }
+  const bibleRows = (bibleResponse.data || null) as Array<Record<string, unknown>> | null;
+  const bibleError = bibleResponse.error;
 
   if (bibleError && bibleError.code !== "42P01") {
     throw bibleError;
@@ -441,6 +503,10 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
         cover_consistency_report?: Record<string, unknown> | null;
         progress_state?: Record<string, unknown> | null;
         first_episode_seed?: Record<string, unknown> | null;
+        series_blueprint?: Record<string, unknown> | null;
+        initial_user_series_state_template?: Record<string, unknown> | null;
+        episode_runtime_bootstrap_payload?: Record<string, unknown> | null;
+        user_series_state?: Record<string, unknown> | null;
       }
       | undefined) || null;
 
@@ -577,6 +643,12 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
     coverConsistencyReport: (bibleRow?.cover_consistency_report as Record<string, unknown>) || null,
     progressState: (bibleRow?.progress_state as Record<string, unknown>) || null,
     firstEpisodeSeed: (bibleRow?.first_episode_seed as Record<string, unknown>) || null,
+    seriesBlueprint: (bibleRow?.series_blueprint as Record<string, unknown>) || null,
+    initialUserSeriesStateTemplate:
+      (bibleRow?.initial_user_series_state_template as Record<string, unknown>) || null,
+    episodeRuntimeBootstrapPayload:
+      (bibleRow?.episode_runtime_bootstrap_payload as Record<string, unknown>) || null,
+    userSeriesState: (bibleRow?.user_series_state as Record<string, unknown>) || null,
     checkpoints: ((checkpointRows || []) as Array<{
       episode_no: number | null;
       title: string | null;
@@ -719,6 +791,479 @@ export const applySeriesProgressPatch = async (payload: ApplySeriesProgressPatch
   if (updateError) {
     if (isMissingAnyColumn(updateError, ["progress_state"])) return;
     throw updateError;
+  }
+};
+
+type ApplySeriesContinuityPatchVNextPayload = {
+  questId: string;
+  userId: string;
+  savedEpisodeNo?: number;
+  continuityPatch: Record<string, unknown>;
+};
+
+const continuityPatchToLegacyProgressPatch = (
+  patch: Record<string, unknown>
+): ApplySeriesProgressPatchPayload["progressPatch"] => {
+  const memoryPatch = asRecord(patch.memoryPatch);
+  const relationshipPatch = Array.isArray(patch.relationshipPatch) ? patch.relationshipPatch : [];
+  const payoffPatch = asRecord(patch.payoffPatch);
+  const arcPatch = asRecord(patch.arcPatch);
+
+  const trustDeltas = relationshipPatch
+    .map((item) => Number.parseFloat(String(asRecord(item).trustDelta ?? 0)))
+    .filter((value) => Number.isFinite(value));
+  const avgTrustDelta = trustDeltas.length
+    ? trustDeltas.reduce((sum, value) => sum + value, 0) / trustDeltas.length
+    : 0;
+
+  return {
+    unresolvedThreadsToAdd: asStringArray(payoffPatch.activeThreads),
+    unresolvedThreadsToRemove: asStringArray(payoffPatch.closedThreads),
+    revealedFactsToAdd: dedupe([
+      ...asStringArray(memoryPatch.addedEvents),
+      ...asStringArray(memoryPatch.addedSharedMemories),
+    ]),
+    relationshipStateSummary:
+      clean(typeof arcPatch.arcSummaryAfterEpisode === "string" ? arcPatch.arcSummaryAfterEpisode : "") ||
+      "関係性は継続中。",
+    relationshipFlagsToAdd: dedupe(
+      relationshipPatch
+        .map((item) => {
+          const row = asRecord(item);
+          return clean(typeof row.newRelationshipState === "string" ? row.newRelationshipState : "");
+        })
+        .filter(Boolean)
+    ),
+    relationshipFlagsToRemove: [],
+    recentRelationShift: dedupe(
+      relationshipPatch
+        .map((item) => {
+          const row = asRecord(item);
+          return clean(typeof row.keyMomentSummary === "string" ? row.keyMomentSummary : "");
+        })
+        .filter(Boolean)
+    ).slice(0, 8),
+    companionTrustDelta: Number.isFinite(avgTrustDelta)
+      ? Math.round(Math.max(-10, Math.min(10, avgTrustDelta)))
+      : undefined,
+    nextHook:
+      asStringArray(payoffPatch.newlySeededForeshadowing)[0] ||
+      clean(typeof arcPatch.approachToEnding === "string" ? arcPatch.approachToEnding : "") ||
+      "",
+  };
+};
+
+export const applySeriesContinuityPatchVNext = async (
+  payload: ApplySeriesContinuityPatchVNextPayload
+) => {
+  const supabase = getSupabaseOrThrow();
+  const { continuityPatch } = payload;
+  if (!continuityPatch || typeof continuityPatch !== "object") return;
+
+  const baseLegacyPatch = continuityPatchToLegacyProgressPatch(
+    asRecord(continuityPatch)
+  );
+
+  const query = await supabase
+    .from("series_bibles")
+    .select("id, user_series_state, progress_state")
+    .eq("quest_id", payload.questId)
+    .eq("creator_id", payload.userId)
+    .maybeSingle();
+
+  if (query.error) {
+    if (isMissingAnyColumn(query.error, ["user_series_state"])) {
+      await applySeriesProgressPatch({
+        questId: payload.questId,
+        userId: payload.userId,
+        savedEpisodeNo: payload.savedEpisodeNo,
+        progressPatch: baseLegacyPatch,
+      });
+      return;
+    }
+    if ((query.error as { code?: string })?.code === "42P01") return;
+    throw query.error;
+  }
+
+  if (!query.data?.id) {
+    await applySeriesProgressPatch({
+      questId: payload.questId,
+      userId: payload.userId,
+      savedEpisodeNo: payload.savedEpisodeNo,
+      progressPatch: baseLegacyPatch,
+    });
+    return;
+  }
+
+  const row = query.data as {
+    id: string;
+    user_series_state?: unknown;
+    progress_state?: unknown;
+  };
+
+  const rawPatch = asRecord(continuityPatch);
+  const memoryPatch = asRecord(rawPatch.memoryPatch);
+  const relationshipPatch = Array.isArray(rawPatch.relationshipPatch)
+    ? rawPatch.relationshipPatch
+    : [];
+  const payoffPatch = asRecord(rawPatch.payoffPatch);
+  const arcPatch = asRecord(rawPatch.arcPatch);
+  const localCharacterPatch = asRecord(rawPatch.localCharacterPatch);
+
+  const legacyProgress = asRecord(row.progress_state);
+  const currentState = asRecord(row.user_series_state);
+  const currentProgress = asRecord(currentState.currentProgress);
+  const rememberedExperience = asRecord(currentState.rememberedExperience);
+  const continuityState = asRecord(currentState.continuityState);
+
+  const currentEpisodeCount = Math.max(
+    0,
+    Number.parseInt(
+      String(
+        currentProgress.episodeCountCompleted ??
+          legacyProgress.last_completed_episode_no ??
+          0
+      ),
+      10
+    ) || 0
+  );
+  const nextEpisodeCount = Math.max(
+    currentEpisodeCount + 1,
+    Number.isFinite(payload.savedEpisodeNo || NaN)
+      ? Number(payload.savedEpisodeNo)
+      : currentEpisodeCount + 1
+  );
+  const unresolvedThreads = dedupe(
+    asStringArray(payoffPatch.activeThreads).concat(
+      asStringArray(currentProgress.unresolvedThreads)
+    )
+  ).filter(
+    (item) =>
+      !asStringArray(payoffPatch.closedThreads).some(
+        (closed) => normalize(closed) === normalize(item)
+      )
+  );
+  const resolvedThreads = dedupe(
+    asStringArray(currentProgress.resolvedThreads)
+      .concat(asStringArray(payoffPatch.closedThreads))
+      .concat(asStringArray(payoffPatch.resolvedForeshadowing))
+      .concat(asStringArray(memoryPatch.addedEvents))
+  );
+  const activeForeshadowing = dedupe(
+    asStringArray(currentProgress.activeForeshadowing).concat(
+      asStringArray(payoffPatch.newlySeededForeshadowing)
+    )
+  ).filter(
+    (item) =>
+      !asStringArray(payoffPatch.resolvedForeshadowing).some(
+        (resolved) => normalize(resolved) === normalize(item)
+      )
+  );
+
+  const previousRelationship = Array.isArray(currentState.relationshipState)
+    ? currentState.relationshipState.map((item) => asRecord(item))
+    : [];
+  const relationById = new Map<string, Record<string, unknown>>();
+  previousRelationship.forEach((item) => {
+    const id = clean(typeof item.characterId === "string" ? item.characterId : "");
+    if (!id) return;
+    relationById.set(id, item);
+  });
+
+  relationshipPatch.forEach((item) => {
+    const rowPatch = asRecord(item);
+    const characterId = clean(
+      typeof rowPatch.characterId === "string" ? rowPatch.characterId : ""
+    );
+    if (!characterId) return;
+    const before = relationById.get(characterId) || {
+      characterId,
+      closenessLabel: "neutral",
+      trustLevel: 40,
+      tensionLevel: 20,
+      affectionLevel: 0,
+      specialFlags: [],
+      sharedMemories: [],
+      unresolvedEmotions: [],
+    };
+    const trustLevel = Math.max(
+      0,
+      Math.min(
+        100,
+        toFiniteNumber(before.trustLevel, 40) + toFiniteNumber(rowPatch.trustDelta, 0)
+      )
+    );
+    const tensionLevel = Math.max(
+      0,
+      Math.min(
+        100,
+        toFiniteNumber(before.tensionLevel, 20) + toFiniteNumber(rowPatch.tensionDelta, 0)
+      )
+    );
+    const affectionLevel = Math.max(
+      0,
+      Math.min(
+        100,
+        toFiniteNumber(before.affectionLevel, 0) + toFiniteNumber(rowPatch.affectionDelta, 0)
+      )
+    );
+    relationById.set(characterId, {
+      ...before,
+      characterId,
+      trustLevel: Math.round(trustLevel),
+      tensionLevel: Math.round(tensionLevel),
+      affectionLevel: Math.round(affectionLevel),
+      closenessLabel:
+        clean(
+          typeof rowPatch.newRelationshipState === "string"
+            ? rowPatch.newRelationshipState
+            : ""
+        ) || clean(typeof before.closenessLabel === "string" ? before.closenessLabel : "") || "neutral",
+      specialFlags: dedupe(
+        asStringArray(before.specialFlags).concat(
+          clean(
+            typeof rowPatch.newRelationshipState === "string"
+              ? rowPatch.newRelationshipState
+              : ""
+          )
+        )
+      ),
+      sharedMemories: dedupe(
+        asStringArray(before.sharedMemories)
+          .concat(asStringArray(memoryPatch.addedSharedMemories))
+          .concat(
+            clean(
+              typeof rowPatch.keyMomentSummary === "string"
+                ? rowPatch.keyMomentSummary
+                : ""
+            )
+          )
+      ),
+      unresolvedEmotions:
+        tensionLevel > 55
+          ? dedupe(
+              asStringArray(before.unresolvedEmotions).concat(
+                clean(
+                  typeof rowPatch.keyMomentSummary === "string"
+                    ? rowPatch.keyMomentSummary
+                    : ""
+                )
+              )
+            )
+          : asStringArray(before.unresolvedEmotions),
+    });
+  });
+
+  const localCarryoverExisting = Array.isArray(
+    continuityState.episodeLocalCharacterCarryovers
+  )
+    ? continuityState.episodeLocalCharacterCarryovers.map((item) => asRecord(item))
+    : [];
+  const callbackEligibleRows = Array.isArray(localCharacterPatch.callbackEligible)
+    ? localCharacterPatch.callbackEligible.map((item) => asRecord(item))
+    : [];
+  const introducedRows = Array.isArray(localCharacterPatch.introduced)
+    ? localCharacterPatch.introduced.map((item) => asRecord(item))
+    : [];
+
+  const callbackById = new Map<string, string>();
+  callbackEligibleRows.forEach((item) => {
+    const id = clean(typeof item.localCharacterId === "string" ? item.localCharacterId : "");
+    if (!id) return;
+    callbackById.set(
+      id,
+      clean(typeof item.reason === "string" ? item.reason : "") || "callback_eligible"
+    );
+  });
+
+  const localCarryoverMerged = dedupe(
+    localCarryoverExisting.map(
+      (item) =>
+        `${clean(typeof item.localCharacterId === "string" ? item.localCharacterId : "")}::${clean(
+          typeof item.displayName === "string" ? item.displayName : ""
+        )}::${clean(
+          typeof item.callbackEligibility === "string" ? item.callbackEligibility : ""
+        )}`
+    ).concat(
+      introducedRows
+        .map((item) => {
+          const id = clean(
+            typeof item.localCharacterId === "string" ? item.localCharacterId : ""
+          );
+          if (!id || !callbackById.has(id)) return "";
+          const name = clean(typeof item.displayName === "string" ? item.displayName : "") || id;
+          return `${id}::${name}::${callbackById.get(id) || "callback_eligible"}`;
+        })
+        .filter(Boolean)
+    )
+  )
+    .map((packed) => {
+      const [localCharacterId, displayName, callbackEligibility] = packed.split("::");
+      return {
+        localCharacterId: clean(localCharacterId),
+        displayName: clean(displayName),
+        callbackEligibility: clean(callbackEligibility),
+      };
+    })
+    .filter((item) => item.localCharacterId);
+
+  const remembered = {
+    visitedLocations: dedupe(
+      asStringArray(rememberedExperience.visitedLocations).concat(
+        asStringArray(memoryPatch.addedLocationMemories)
+      )
+    ),
+    keyEvents: dedupe(
+      asStringArray(rememberedExperience.keyEvents).concat(
+        asStringArray(memoryPatch.addedEvents)
+      )
+    ),
+    importantConversations: dedupe(
+      asStringArray(rememberedExperience.importantConversations).concat(
+        asStringArray(memoryPatch.addedConversations)
+      )
+    ),
+    playerChoices: asStringArray(rememberedExperience.playerChoices),
+    emotionalMoments: dedupe(
+      asStringArray(rememberedExperience.emotionalMoments).concat(
+        relationshipPatch
+          .map((item) => {
+            const row = asRecord(item);
+            return clean(
+              typeof row.keyMomentSummary === "string"
+                ? row.keyMomentSummary
+                : ""
+            );
+          })
+          .filter(Boolean)
+      )
+    ),
+    relationshipTurningPoints: dedupe(
+      asStringArray(rememberedExperience.relationshipTurningPoints).concat(
+        relationshipPatch
+          .map((item) => {
+            const row = asRecord(item);
+            return clean(
+              typeof row.keyMomentSummary === "string"
+                ? row.keyMomentSummary
+                : ""
+            );
+          })
+          .filter(Boolean)
+      )
+    ),
+  };
+
+  const nextUserSeriesState = {
+    ...currentState,
+    id:
+      clean(typeof currentState.id === "string" ? currentState.id : "") ||
+      `${payload.questId}:${payload.userId}`,
+    userId:
+      clean(typeof currentState.userId === "string" ? currentState.userId : "") ||
+      payload.userId,
+    seriesBlueprintId:
+      clean(
+        typeof currentState.seriesBlueprintId === "string"
+          ? currentState.seriesBlueprintId
+          : ""
+      ) || payload.questId,
+    referencedBlueprintVersion: Math.max(
+      1,
+      Number.parseInt(String(currentState.referencedBlueprintVersion ?? 1), 10) || 1
+    ),
+    stateVersion:
+      Math.max(1, Number.parseInt(String(currentState.stateVersion ?? 1), 10) || 1) + 1,
+    currentProgress: {
+      episodeCountCompleted: nextEpisodeCount,
+      currentCheckpointIndex: Math.max(
+        0,
+        Number.parseInt(
+          String(arcPatch.currentCheckpointIndexAfterEpisode ?? currentProgress.currentCheckpointIndex ?? 0),
+          10
+        ) || 0
+      ),
+      currentArcSummary:
+        clean(typeof arcPatch.arcSummaryAfterEpisode === "string" ? arcPatch.arcSummaryAfterEpisode : "") ||
+        baseLegacyPatch.relationshipStateSummary ||
+        "関係性は継続中。",
+      unresolvedThreads,
+      resolvedThreads,
+      activeForeshadowing,
+      completedEpisodeIds: dedupe(
+        asStringArray(currentProgress.completedEpisodeIds).concat(
+          `episode_${nextEpisodeCount}`
+        )
+      ),
+    },
+    rememberedExperience: remembered,
+    relationshipState: Array.from(relationById.values()),
+    continuityState: {
+      callbackCandidates: dedupe(
+        asStringArray(continuityState.callbackCandidates).concat(
+          asStringArray(memoryPatch.addedEvents)
+        )
+      ),
+      motifsInUse: asStringArray(continuityState.motifsInUse),
+      blockedLines: asStringArray(continuityState.blockedLines),
+      promisedPayoffs: dedupe(
+        asStringArray(continuityState.promisedPayoffs).concat(
+          asStringArray(payoffPatch.newlySeededForeshadowing)
+        )
+      ),
+      episodeLocalCharacterCarryovers: localCarryoverMerged,
+    },
+  };
+
+  const trustAverage = (() => {
+    const trustValues = nextUserSeriesState.relationshipState
+      .map((item) => toFiniteNumber(asRecord(item).trustLevel, NaN))
+      .filter((value) => Number.isFinite(value));
+    if (trustValues.length === 0) return 40;
+    return Math.round(
+      trustValues.reduce((sum, value) => sum + value, 0) / trustValues.length
+    );
+  })();
+
+  const projectedProgressState = {
+    last_completed_episode_no: nextUserSeriesState.currentProgress.episodeCountCompleted,
+    unresolved_threads: nextUserSeriesState.currentProgress.unresolvedThreads,
+    revealed_facts: nextUserSeriesState.currentProgress.resolvedThreads,
+    relationship_state_summary: nextUserSeriesState.currentProgress.currentArcSummary,
+    relationship_flags: dedupe(
+      nextUserSeriesState.relationshipState.flatMap((item) =>
+        asStringArray(asRecord(item).specialFlags)
+      )
+    ),
+    recent_relation_shift: remembered.relationshipTurningPoints.slice(-8),
+    companion_trust_level: trustAverage,
+    next_hook:
+      asStringArray(payoffPatch.newlySeededForeshadowing)[0] ||
+      baseLegacyPatch.nextHook ||
+      clean(typeof legacyProgress.next_hook === "string" ? legacyProgress.next_hook : ""),
+  };
+
+  const update = await supabase
+    .from("series_bibles")
+    .update({
+      user_series_state: nextUserSeriesState,
+      progress_state: projectedProgressState,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", row.id)
+    .eq("creator_id", payload.userId);
+
+  if (update.error) {
+    if (isMissingAnyColumn(update.error, ["user_series_state"])) {
+      await applySeriesProgressPatch({
+        questId: payload.questId,
+        userId: payload.userId,
+        savedEpisodeNo: payload.savedEpisodeNo,
+        progressPatch: baseLegacyPatch,
+      });
+      return;
+    }
+    throw update.error;
   }
 };
 
@@ -1231,6 +1776,56 @@ export const saveSeriesBlueprint = async (payload: SaveSeriesBlueprintPayload) =
   const supabase = getSupabaseOrThrow();
   const now = new Date().toISOString();
   const seriesId = payload.seriesId;
+  const seriesBlueprintRaw = asRecord(payload.generated.seriesBlueprint);
+  const initialTemplateRaw = asRecord(payload.generated.initialUserSeriesStateTemplate);
+  const narrativeRaw = asRecord(seriesBlueprintRaw.narrative);
+  const firstSeedRaw = asRecord(seriesBlueprintRaw.firstEpisodeSeed);
+  const seriesBlueprintId = clean(
+    typeof seriesBlueprintRaw.id === "string" ? seriesBlueprintRaw.id : ""
+  ) || seriesId;
+  const referencedBlueprintVersion = Math.max(
+    1,
+    Number.parseInt(String(seriesBlueprintRaw.version ?? 1), 10) || 1
+  );
+
+  const initialUserSeriesStatePayload =
+    Object.keys(initialTemplateRaw).length > 0
+      ? {
+          id: `${payload.questId}:${payload.userId}`,
+          userId: payload.userId,
+          seriesBlueprintId,
+          referencedBlueprintVersion,
+          stateVersion: 1,
+          currentProgress: asRecord(initialTemplateRaw.currentProgress),
+          relationshipState: Array.isArray(initialTemplateRaw.relationshipState)
+            ? initialTemplateRaw.relationshipState
+            : [],
+          rememberedExperience: asRecord(initialTemplateRaw.rememberedExperience),
+          continuityState: asRecord(initialTemplateRaw.continuityState),
+          monetizationState: {
+            episodeLimit: Math.max(
+              1,
+              Number.parseInt(
+                String(narrativeRaw.freePlanDefaultEpisodeLimit ?? 3),
+                10
+              ) || 3
+            ),
+            extensionUnlocked: false,
+          },
+          metadata: {
+            createdAt: now,
+            plannedEnding:
+              clean(typeof narrativeRaw.plannedEnding === "string" ? narrativeRaw.plannedEnding : "") ||
+              null,
+            coreMystery:
+              clean(typeof narrativeRaw.coreMysteryOrDrive === "string" ? narrativeRaw.coreMysteryOrDrive : "") ||
+              null,
+            firstEpisodePurpose:
+              clean(typeof firstSeedRaw.purpose === "string" ? firstSeedRaw.purpose : "") ||
+              null,
+          },
+        }
+      : {};
 
   const bibleBasePayload = {
     quest_id: payload.questId,
@@ -1257,6 +1852,12 @@ export const saveSeriesBlueprint = async (payload: SaveSeriesBlueprintPayload) =
     cover_image_url: payload.generated.coverImageUrl || null,
     identity_pack: payload.generated.identityPack || {},
     cover_consistency_report: payload.generated.coverConsistencyReport || {},
+    series_blueprint: payload.generated.seriesBlueprint || {},
+    initial_user_series_state_template:
+      payload.generated.initialUserSeriesStateTemplate || {},
+    episode_runtime_bootstrap_payload:
+      payload.generated.episodeRuntimeBootstrapPayload || {},
+    user_series_state: initialUserSeriesStatePayload,
   };
 
   let { data: bibleRow, error: bibleError } = await supabase
@@ -1276,6 +1877,10 @@ export const saveSeriesBlueprint = async (payload: SaveSeriesBlueprintPayload) =
         "first_episode_seed",
         "identity_pack",
         "cover_consistency_report",
+        "series_blueprint",
+        "initial_user_series_state_template",
+        "episode_runtime_bootstrap_payload",
+        "user_series_state",
       ]
     )
   ) {

@@ -190,7 +190,7 @@ const buildCharacterTags = (character: GeneratedSeriesCharacter) => {
 };
 
 export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
-  const { generated, sourcePrompt } = route.params;
+  const { generated, sourcePrompt, imagesPreloaded } = route.params;
   const { userId } = useSessionUserId();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -201,7 +201,7 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
   const [failedPortraits, setFailedPortraits] = useState<Record<string, boolean>>({});
   const [failedWorldVisuals, setFailedWorldVisuals] = useState<Record<string, boolean>>({});
   const [characterSlideIndex, setCharacterSlideIndex] = useState(0);
-  const [imagesReady, setImagesReady] = useState(false);
+  const [imagesReady, setImagesReady] = useState(Boolean(imagesPreloaded));
 
   const dateLabel = useMemo(() => formatDateLabel(), []);
   const orderedCharacters = useMemo(() => sortCharactersForDisplay(generated.characters), [generated.characters]);
@@ -1081,6 +1081,7 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
   }, [imagesReady, LOADING_MESSAGES.length]);
 
   useEffect(() => {
+    if (imagesReady) return;
     if (totalImages === 0) {
       setImagesReady(true);
       return;

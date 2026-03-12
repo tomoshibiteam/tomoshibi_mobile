@@ -55,13 +55,12 @@ const SERIES_CHARACTER_AGENT_INSTRUCTIONS = `
 - must_appear は primary のみ true を許可。
 - portrait_prompt: 画像生成用の短い英語説明（1文）。portrait_image_url: 空文字 "" でよい。
 - secrets, relationship_hooks は文字列の配列（空配列可）。
-- オプション: archetype, drive, dilemma, backstory, big_five(5数値0-100), enneagram_type(1-9), core_fear, core_desire, speech_pattern, catchphrase, quirks(最大4), visual_design(4文字列), relationships(target_id, type, description, tension_level)。
+- 上記以外の拡張フィールドは出力しない（レスポンス短縮のため）。
 
 ## 差別化
 - キャラ数は3〜5。名前・口癖・dominant_colorは互いに被らせない。
 - primary は1〜2人を必須。secondary は最大3人。
 - name に「あなた」「アナタ」「プレイヤー」「主人公」「You」など自己参照語を使わない。全員を固有名詞で命名する。
-- relationships の type は "trust"|"rivalry"|"mentor"|"debt"|"secret"|"family"|"romance" のいずれか。
 `;
 
 export const seriesCharacterAgent = new Agent({
@@ -508,7 +507,18 @@ const normalizeCharacterOutput = (
   };
 };
 
-const CHARACTER_GENERATION_TIMEOUT_MS = 90_000; // 1.5分
+const CHARACTER_GENERATION_TIMEOUT_MS = Math.max(
+  60_000,
+  Number.parseInt(clean(process.env.SERIES_CHARACTER_GENERATION_TIMEOUT_MS) || "180000", 10) || 180_000
+);
+const CHARACTER_GENERATION_MAX_ATTEMPTS = Math.max(
+  1,
+  Math.min(3, Number.parseInt(clean(process.env.SERIES_CHARACTER_GENERATION_MAX_ATTEMPTS) || "2", 10) || 2)
+);
+const CHARACTER_GENERATION_TIMEOUT_GROWTH = Math.max(
+  1,
+  Number.parseFloat(clean(process.env.SERIES_CHARACTER_GENERATION_TIMEOUT_GROWTH) || "1.35") || 1.35
+);
 
 export const generateSeriesCharacters = async (
   input: SeriesCharacterAgentInput
@@ -545,17 +555,23 @@ primary は1〜2人、secondary は最大3人にしてください。
 name には「あなた」「アナタ」「プレイヤー」「主人公」「You」など自己参照語を使わず、全員を固有名詞で命名してください。
 `;
 
-  const maxAttempts = 3;
+  const maxAttempts = CHARACTER_GENERATION_MAX_ATTEMPTS;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      console.log(`${logPrefix} attempt ${attempt}/${maxAttempts} — LLM呼び出し中 (軽量スキーマ, ${CHARACTER_GENERATION_TIMEOUT_MS / 1000}秒でタイムアウト)`);
+      const timeoutMs = Math.round(
+        CHARACTER_GENERATION_TIMEOUT_MS *
+          Math.pow(CHARACTER_GENERATION_TIMEOUT_GROWTH, Math.max(0, attempt - 1))
+      );
+      console.log(
+        `${logPrefix} attempt ${attempt}/${maxAttempts} — LLM呼び出し中 (軽量スキーマ, ${Math.round(timeoutMs / 1000)}秒でタイムアウト)`
+      );
       const generatePromise = seriesCharacterAgent.generate(prompt, {
         structuredOutput: { schema: lightOutputSchema },
       });
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(
-          () => reject(new Error(`キャラクター生成が${CHARACTER_GENERATION_TIMEOUT_MS / 1000}秒でタイムアウトしました。`)),
-          CHARACTER_GENERATION_TIMEOUT_MS
+          () => reject(new Error(`キャラクター生成が${Math.round(timeoutMs / 1000)}秒でタイムアウトしました。`)),
+          timeoutMs
         )
       );
       const response = await Promise.race([generatePromise, timeoutPromise]);

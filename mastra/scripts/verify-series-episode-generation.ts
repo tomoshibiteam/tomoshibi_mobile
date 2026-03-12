@@ -2,9 +2,16 @@ import dotenv from "dotenv";
 import { generateSeriesWorkflowWithProgress } from "../src/workflows/series-workflow";
 import {
   generateSeriesRuntimeEpisode,
+  type SeriesRuntimeEpisodeOutput,
   seriesRuntimeEpisodeOutputSchema,
 } from "../src/lib/agents/seriesRuntimeEpisodeAgent";
 import { seriesWorkflowOutputSchema } from "../src/schemas/series";
+import {
+  applyEpisodeContinuityPatch,
+  buildSeriesGenerationResultVNextFromLegacyOutput,
+  generateEpisodeRuntimeVNext,
+  generateSeriesGenerationResultVNext,
+} from "../src/lib/runtime/seriesRuntimeVNext";
 
 dotenv.config({ override: true });
 
@@ -15,12 +22,26 @@ type Check = {
 };
 
 const clean = (value?: string | null) => (value || "").replace(/\s+/g, " ").trim();
+const VERIFY_TIMEOUT_MS = Math.max(
+  60_000,
+  Number.parseInt(process.env.TOMOSHIBI_VERIFY_TIMEOUT_MS || "240000", 10)
+);
 
 const toCheck = (name: string, pass: boolean, detail?: string): Check => ({ name, pass, detail });
 
-const must = (condition: unknown, message: string): asserts condition => {
-  if (!condition) {
-    throw new Error(message);
+const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 };
 
@@ -52,7 +73,9 @@ const verify = async () => {
   });
 
   const seriesParsed = seriesWorkflowOutputSchema.safeParse(seriesResult);
-  must(seriesParsed.success, "series output schema validation failed");
+  if (!seriesParsed.success) {
+    throw new Error("series output schema validation failed");
+  }
   const series = seriesParsed.data.series;
   const seriesMeta = seriesParsed.data.meta;
 
@@ -110,48 +133,80 @@ const verify = async () => {
   });
 
   const episodeEvents: string[] = [];
-  const episodeResult = await generateSeriesRuntimeEpisode(
-    {
-      series: {
-        title: series.title,
-        overview: series.overview,
-        premise: series.premise,
-        season_goal: series.season_goal,
-        ai_rules: series.ai_rules,
-        world_setting: series.world.setting,
-        continuity: series.continuity,
-        progress_state: series.progress_state,
-        first_episode_seed: series.first_episode_seed,
-        checkpoints: series.checkpoints,
-        characters: series.characters.map((character) => ({
-          name: character.name,
-          role: character.role,
-          tier: character.tier,
-          must_appear: character.must_appear,
-          personality: character.personality,
-          arc_start: character.arc_start,
-          arc_end: character.arc_end,
-        })),
-        recent_episodes: [],
-      },
-      episode_request: {
-        stage_location: "浅草",
-        purpose: "歴史観光と街歩き",
-        user_wishes: "レトロな街並みを楽しみつつ、次話が気になる導線にしてほしい",
-        desired_spot_count: 5,
-        desired_duration_minutes: 20,
-        language: "ja",
-      },
-    },
-    {
-      onProgress: (event) => {
-        episodeEvents.push(event.phase);
-      },
+  const forceRuntimeFallback =
+    String(process.env.TOMOSHIBI_VERIFY_RUNTIME_FALLBACK || "").toLowerCase() === "1";
+  const runtimeApiEnvKeys = [
+    "GOOGLE_GENERATIVE_AI_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+  ] as const;
+  const runtimeApiEnvBackup = Object.fromEntries(
+    runtimeApiEnvKeys.map((key) => [key, process.env[key]])
+  ) as Record<(typeof runtimeApiEnvKeys)[number], string | undefined>;
+  const withRuntimeModelFallback = async <T>(fn: () => Promise<T>): Promise<T> => {
+    if (!forceRuntimeFallback) return fn();
+    runtimeApiEnvKeys.forEach((key) => {
+      process.env[key] = "";
+    });
+    try {
+      return await fn();
+    } finally {
+      runtimeApiEnvKeys.forEach((key) => {
+        process.env[key] = runtimeApiEnvBackup[key];
+      });
     }
+  };
+
+  let episodeResult: SeriesRuntimeEpisodeOutput | undefined;
+  episodeResult = await withRuntimeModelFallback(() =>
+    generateSeriesRuntimeEpisode(
+      {
+        series: {
+          title: series.title,
+          overview: series.overview,
+          premise: series.premise,
+          season_goal: series.season_goal,
+          ai_rules: series.ai_rules,
+          world_setting: series.world.setting,
+          continuity: series.continuity,
+          progress_state: series.progress_state,
+          first_episode_seed: series.first_episode_seed,
+          checkpoints: series.checkpoints,
+          characters: series.characters.map((character) => ({
+            name: character.name,
+            role: character.role,
+            tier: character.tier,
+            must_appear: character.must_appear,
+            personality: character.personality,
+            arc_start: character.arc_start,
+            arc_end: character.arc_end,
+          })),
+          recent_episodes: [],
+        },
+        episode_request: {
+          stage_location: "浅草",
+          purpose: "歴史観光と街歩き",
+          user_wishes: "レトロな街並みを楽しみつつ、次話が気になる導線にしてほしい",
+          desired_spot_count: 5,
+          desired_duration_minutes: 20,
+          language: "ja",
+        },
+      },
+      {
+        onProgress: (event) => {
+          episodeEvents.push(event.phase);
+        },
+      }
+    )
   );
 
+  if (!episodeResult) {
+    throw new Error("episode generation returned empty result");
+  }
   const episodeParsed = seriesRuntimeEpisodeOutputSchema.safeParse(episodeResult);
-  must(episodeParsed.success, "episode output schema validation failed");
+  if (!episodeParsed.success) {
+    throw new Error("episode output schema validation failed");
+  }
   const episode = episodeParsed.data;
 
   const episodeChecks: Check[] = [
@@ -198,11 +253,195 @@ const verify = async () => {
     );
   });
 
-  const allChecks = [...seriesChecks, ...episodeChecks];
+  const vNextEvents: string[] = [];
+  const vNextRawRequest = {
+    userId: "verify-user",
+    interview:
+      "現代日本の港町と路地裏を歩くミステリー。固定キャラとの関係が少しずつ進み、次話で伏線回収される体験がほしい。",
+    prompt: "夕景の街歩きで、関係性と回収を重視したシリーズを生成してください。",
+    desiredEpisodeLimit: 6,
+    explicitGenreHints: ["ミステリー", "街歩き", "人間ドラマ"],
+    excludedDirections: ["過度にグロテスクな描写"],
+    safetyPreferences: ["現実の公共空間で成立する導線を優先"],
+  };
+  const vNextSeries = forceRuntimeFallback
+    ? buildSeriesGenerationResultVNextFromLegacyOutput(vNextRawRequest, {
+        series,
+        meta: seriesMeta,
+      })
+    : await withTimeout(
+        withRuntimeModelFallback(() =>
+          generateSeriesGenerationResultVNext(vNextRawRequest)
+        ),
+        VERIFY_TIMEOUT_MS,
+        "vNext series generation"
+      );
+
+  let lastVNextPhase = "";
+  const vNextEpisodeResult = await withTimeout(
+    withRuntimeModelFallback(() =>
+      generateEpisodeRuntimeVNext(
+      {
+        request: {
+          userId: "verify-user",
+          seriesBlueprintId: vNextSeries.seriesBlueprint.id,
+          userSeriesStateId: `verify-user:${vNextSeries.seriesBlueprint.id}`,
+          episodeRequest: {
+            locationContext: {
+              cityOrArea: "浅草",
+              transportMode: "walk",
+              availableMinutes: 20,
+              candidateSpots: ["雷門", "仲見世商店街", "隅田川テラス"],
+            },
+            tourismGoal: "歴史観光と街歩き",
+            desiredMoodToday: ["レトロ", "発見", "少し緊張感"],
+          },
+          runtimeOptions: {
+            maxSpots: 6,
+            minSpots: 3,
+            fallbackAllowed: true,
+            plannerRetries: 2,
+          },
+        },
+        seriesBlueprint: vNextSeries.seriesBlueprint,
+        userSeriesState: {
+          id: `verify-user:${vNextSeries.seriesBlueprint.id}`,
+          userId: "verify-user",
+          seriesBlueprintId: vNextSeries.seriesBlueprint.id,
+          referencedBlueprintVersion: vNextSeries.seriesBlueprint.version,
+          stateVersion: 1,
+          ...vNextSeries.initialUserSeriesStateTemplate,
+        },
+      },
+      {
+        onProgress: (event) => {
+          const phase = clean(event.phase);
+          if (!phase) return;
+          vNextEvents.push(phase);
+          if (phase !== lastVNextPhase) {
+            lastVNextPhase = phase;
+            console.error(`[verify][vnext] phase=${phase} detail=${clean(event.detail)}`);
+          }
+        },
+      }
+    )
+    ),
+    VERIFY_TIMEOUT_MS,
+    "vNext episode runtime"
+  );
+
+  const vNextEpisode = vNextEpisodeResult.episodeOutput;
+  const vNextPatchedState = applyEpisodeContinuityPatch(
+    {
+      id: `verify-user:${vNextSeries.seriesBlueprint.id}`,
+      userId: "verify-user",
+      seriesBlueprintId: vNextSeries.seriesBlueprint.id,
+      referencedBlueprintVersion: vNextSeries.seriesBlueprint.version,
+      stateVersion: 1,
+      ...vNextSeries.initialUserSeriesStateTemplate,
+    },
+    vNextEpisode.continuityPatch
+  );
+
+  const allSceneNextReasonsFilled = vNextEpisode.scenes.every(
+    (scene) => clean(scene.progression.nextSpotReason).length > 0
+  );
+  const hasPastReferences = vNextEpisode.scenes.some(
+    (scene) =>
+      scene.continuity.callbacksToPastEpisodes.length > 0 ||
+      scene.continuity.memoryReferences.length > 0
+  );
+  const hasForeshadowingMotion =
+    vNextEpisode.continuityPatch.payoffPatch.resolvedForeshadowing.length > 0 ||
+    vNextEpisode.continuityPatch.payoffPatch.newlySeededForeshadowing.length > 0;
+  const validatorSummary = vNextEpisode.generationTrace.find((row) =>
+    row.startsWith("validator_summary:")
+  );
+  const validatorHasIssue = vNextEpisode.generationTrace.some((row) =>
+    row.startsWith("validator_issue:")
+  );
+
+  const vNextChecks: Check[] = [
+    toCheck(
+      "vnext.series.characters >=2",
+      vNextSeries.seriesBlueprint.characters.length >= 2,
+      `characters=${vNextSeries.seriesBlueprint.characters.length}`
+    ),
+    toCheck(
+      "vnext.series.checkpoints >=2",
+      vNextSeries.seriesBlueprint.checkpoints.length >= 2,
+      `checkpoints=${vNextSeries.seriesBlueprint.checkpoints.length}`
+    ),
+    toCheck(
+      "vnext.series.firstEpisodeSeed exists",
+      clean(vNextSeries.seriesBlueprint.firstEpisodeSeed.purpose).length > 0
+    ),
+    toCheck(
+      "vnext.episode.fixed characters appeared",
+      vNextEpisode.fixedCharactersAppeared.length > 0,
+      `fixed=${vNextEpisode.fixedCharactersAppeared.length}`
+    ),
+    toCheck(
+      "vnext.episode.each scene has fixed character",
+      vNextEpisode.scenes.every((scene) => scene.fixedCharacters.length > 0)
+    ),
+    toCheck(
+      "vnext.episode.local characters introduced",
+      vNextEpisode.localCharactersIntroduced.length > 0,
+      `local=${vNextEpisode.localCharactersIntroduced.length}`
+    ),
+    toCheck("vnext.episode.past references exist", hasPastReferences),
+    toCheck(
+      "vnext.episode.relationship movement exists",
+      vNextEpisode.continuityPatch.relationshipPatch.length > 0,
+      `relationshipPatch=${vNextEpisode.continuityPatch.relationshipPatch.length}`
+    ),
+    toCheck("vnext.episode.foreshadowing motion exists", hasForeshadowingMotion),
+    toCheck("vnext.episode.nextSpotReason all scenes", allSceneNextReasonsFilled),
+    toCheck(
+      "vnext.episode.nextEpisodeHook exists",
+      clean(vNextEpisode.ending.nextEpisodeHook).length > 0
+    ),
+    toCheck(
+      "vnext.episode.continuityPatch exists",
+      Boolean(vNextEpisode.continuityPatch)
+    ),
+    toCheck(
+      "vnext.validator summary trace exists",
+      Boolean(validatorSummary),
+      validatorSummary
+    ),
+    toCheck(
+      "vnext.validator has no issue trace",
+      !validatorHasIssue
+    ),
+    toCheck(
+      "vnext.patch apply increments episode count",
+      vNextPatchedState.currentProgress.episodeCountCompleted === 1,
+      `episodeCount=${vNextPatchedState.currentProgress.episodeCountCompleted}`
+    ),
+    toCheck(
+      "vnext.patch apply updates state version",
+      vNextPatchedState.stateVersion === 2,
+      `stateVersion=${vNextPatchedState.stateVersion}`
+    ),
+    toCheck(
+      "vnext progress phases include required core",
+      ["request_received", "input_validated", "series_context_loaded", "continuity_context_built", "completed"].every(
+        (phase) => vNextEvents.includes(phase)
+      ),
+      `phases=${Array.from(new Set(vNextEvents)).join(",")}`
+    ),
+  ];
+
+  const allChecks = [...seriesChecks, ...episodeChecks, ...vNextChecks];
   const failed = allChecks.filter((check) => !check.pass);
 
   const report = {
     timestamp: new Date().toISOString(),
+    mode: {
+      runtime_fallback: forceRuntimeFallback,
+    },
     summary: {
       total: allChecks.length,
       passed: allChecks.length - failed.length,
@@ -225,6 +464,30 @@ const verify = async () => {
       carry_over_hook: episode.carry_over_hook,
       generation_trace: episode.generation_trace || null,
       progress_phases: Array.from(new Set(episodeEvents)),
+    },
+    vnext: {
+      series_blueprint_id: vNextSeries.seriesBlueprint.id,
+      workflow_version: vNextEpisode.workflowVersion,
+      fixed_character_count: vNextEpisode.fixedCharactersAppeared.length,
+      local_character_count: vNextEpisode.localCharactersIntroduced.length,
+      scene_count: vNextEpisode.scenes.length,
+      next_episode_hook: vNextEpisode.ending.nextEpisodeHook,
+      generation_trace: vNextEpisode.generationTrace,
+      progress_phases: Array.from(new Set(vNextEvents)),
+      patched_state: {
+        state_version: vNextPatchedState.stateVersion,
+        episode_count_completed: vNextPatchedState.currentProgress.episodeCountCompleted,
+        unresolved_threads: vNextPatchedState.currentProgress.unresolvedThreads.length,
+        active_foreshadowing: vNextPatchedState.currentProgress.activeForeshadowing.length,
+      },
+    },
+    raw: {
+      series,
+      series_meta: seriesMeta,
+      episode,
+      vnext_series: vNextSeries,
+      vnext_episode: vNextEpisode,
+      vnext_patched_state: vNextPatchedState,
     },
     checks: allChecks,
   };

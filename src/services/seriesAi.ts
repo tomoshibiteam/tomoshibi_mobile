@@ -386,6 +386,10 @@ export type GeneratedSeriesDraft = {
   identityPack?: GeneratedSeriesIdentityPack;
   coverConsistencyReport?: GeneratedSeriesCoverConsistencyReport;
   workflowVersion?: string;
+  // vNext payloads (optional pass-through for continuity-first runtime migration)
+  seriesBlueprint?: Record<string, unknown>;
+  initialUserSeriesStateTemplate?: Record<string, unknown>;
+  episodeRuntimeBootstrapPayload?: Record<string, unknown>;
 };
 
 export type RuntimeEpisodeProgressPatch = {
@@ -524,6 +528,8 @@ export type GeneratedRuntimeEpisode = {
   estimatedDurationMinutes: number;
   progressPatch: RuntimeEpisodeProgressPatch;
   generationTrace?: RuntimeEpisodeGenerationTrace;
+  continuityPatchVNext?: Record<string, unknown>;
+  episodeOutputVNext?: Record<string, unknown>;
 };
 
 export type RuntimeEpisodeContext = {
@@ -543,9 +549,14 @@ export type RuntimeEpisodeContext = {
     title: string;
     summary?: string;
   }>;
+  seriesBlueprint?: Record<string, unknown> | null;
+  initialUserSeriesStateTemplate?: Record<string, unknown> | null;
+  episodeRuntimeBootstrapPayload?: Record<string, unknown> | null;
+  userSeriesState?: Record<string, unknown> | null;
 };
 
 export type GenerateSeriesEpisodeByMastraPayload = {
+  userId?: string;
   series: RuntimeEpisodeContext;
   stageLocation: string;
   purpose: string;
@@ -559,6 +570,8 @@ const RUNTIME_EPISODE_GENERATION_PHASES = [
   "request_received",
   "input_validated",
   "characters_validated",
+  "series_context_loaded",
+  "continuity_context_built",
   "pipeline_start",
   "fallback_plan_start",
   "fallback_plan_done",
@@ -566,12 +579,18 @@ const RUNTIME_EPISODE_GENERATION_PHASES = [
   "episode_plan_done",
   "spot_resolution_start",
   "spot_resolution_done",
+  "episode_cast_design_start",
+  "episode_cast_design_done",
+  "scene_generation_start",
+  "scene_generation_done",
   "spot_chapter_start",
   "spot_chapter_done",
   "spot_puzzle_start",
   "spot_puzzle_done",
   "episode_assemble_start",
   "episode_assemble_done",
+  "continuity_patch_build_start",
+  "continuity_patch_build_done",
   "response_preparing",
   "completed",
 ] as const;
@@ -646,6 +665,20 @@ export type GenerateSeriesByMastraOptions = {
 
 const SERIES_DRAFT_DEFAULT_TIMEOUT_MS = 600_000;
 const SERIES_DRAFT_DEFAULT_POLL_INTERVAL_MS = 700;
+const SERIES_VNEXT_STRICT =
+  clean(process.env.EXPO_PUBLIC_SERIES_VNEXT_STRICT ?? process.env.SERIES_VNEXT_STRICT).toLowerCase() !==
+  "false";
+const SERIES_VNEXT_REQUEST_TIMEOUT_MS = (() => {
+  const parsed = Number.parseInt(
+    clean(
+      process.env.EXPO_PUBLIC_SERIES_VNEXT_REQUEST_TIMEOUT_MS ??
+        process.env.SERIES_VNEXT_REQUEST_TIMEOUT_MS
+    ),
+    10
+  );
+  if (!Number.isFinite(parsed) || parsed <= 0) return 180_000;
+  return parsed;
+})();
 
 const isSeriesDraftGenerationPhase = (value: string): value is SeriesDraftGenerationPhase =>
   (SERIES_DRAFT_GENERATION_PHASES as readonly string[]).includes(value);
@@ -654,6 +687,7 @@ const normalizeStringArray = (value: unknown) => {
   if (!Array.isArray(value)) return [] as string[];
   return value.map((item) => clean(typeof item === "string" ? item : String(item ?? ""))).filter(Boolean);
 };
+const asStringArray = (value: unknown) => normalizeStringArray(value);
 
 const normalizeIdentityAnchorTokens = (raw: unknown): GeneratedSeriesCharacterIdentityAnchorTokens | undefined => {
   if (!raw || typeof raw !== "object") return undefined;
@@ -1220,6 +1254,304 @@ const normalizeProgressState = (raw: unknown): GeneratedSeriesProgressState | un
   };
 };
 
+const mapVNextSceneRoleToLegacy = (value: string): GeneratedSeriesCheckpoint["expectedEmotion"] => {
+  const normalized = clean(value);
+  if (normalized === "opening") return "期待";
+  if (normalized === "turning_point") return "緊張";
+  if (normalized === "pre-ending") return "高揚";
+  if (normalized === "ending") return "余韻";
+  return "発見";
+};
+
+const normalizeDraftFromVNextResponse = (
+  envelope: unknown,
+  fallback: GenerateSeriesByMastraPayload
+): GeneratedSeriesDraft | null => {
+  const payloadObject = asObject(envelope);
+  const blueprint = asObject(payloadObject.seriesBlueprint);
+  const visualBundle = asObject(payloadObject.visualBundle);
+  const concept = asObject(blueprint.concept);
+  const narrative = asObject(blueprint.narrative);
+  const worldRules = asObject(blueprint.worldRules);
+  const continuityContract = asObject(blueprint.continuityContract);
+  const identityPackRaw = asObject(blueprint.identityPack);
+  const firstEpisodeSeedRaw = asObject(blueprint.firstEpisodeSeed);
+  const initialTemplate = asObject(payloadObject.initialUserSeriesStateTemplate);
+
+  const title = clean(typeof concept.title === "string" ? concept.title : "");
+  if (!title) return null;
+
+  const oneLineHook = clean(typeof concept.oneLineHook === "string" ? concept.oneLineHook : "");
+  const premise = clean(typeof concept.premise === "string" ? concept.premise : "");
+  const worldviewCore = clean(typeof concept.worldviewCore === "string" ? concept.worldviewCore : "");
+
+  const hardRules = normalizeStringArray(worldRules.hardRules);
+  const mandatoryCallbacks = normalizeStringArray(continuityContract.mandatoryCallbackTypes);
+  const aiRules = ensureWalkAiRules(
+    [...hardRules, ...mandatoryCallbacks].map((line) => `- ${line}`).join("\n")
+  );
+
+  const visualCharactersRaw = Array.isArray(visualBundle.characters) ? visualBundle.characters : [];
+  const visualCharacters = visualCharactersRaw
+    .map((item, index) => {
+      const row = asObject(item);
+      const characterId = clean(typeof row.characterId === "string" ? row.characterId : "");
+      const displayName = clean(typeof row.displayName === "string" ? row.displayName : "");
+      const portraitPrompt = clean(typeof row.portraitPrompt === "string" ? row.portraitPrompt : "") || undefined;
+      const portraitImageUrl =
+        normalizeMediaUrlForClient(typeof row.portraitImageUrl === "string" ? row.portraitImageUrl : "") || undefined;
+      if (!characterId && !displayName && !portraitPrompt && !portraitImageUrl) return null;
+      return {
+        characterId: characterId || `char_${index + 1}`,
+        displayName: displayName || "",
+        portraitPrompt,
+        portraitImageUrl,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const visualCharacterById = new Map(visualCharacters.map((row) => [row.characterId, row]));
+  const visualCharacterByName = new Map(
+    visualCharacters
+      .map((row) => [row.displayName.toLowerCase(), row] as const)
+      .filter(([key]) => Boolean(key))
+  );
+
+  const vNextCharactersRaw = Array.isArray(blueprint.characters) ? blueprint.characters : [];
+  const characters = vNextCharactersRaw
+    .map((item, index) => {
+      const row = asObject(item);
+      const identity = asObject(row.identity);
+      const usageRules = asObject(row.usageRules);
+      const relationshipDesign = asObject(row.relationshipDesign);
+      const hooks = asObject(row.recurringHooks);
+      const name = clean(typeof row.displayName === "string" ? row.displayName : "");
+      if (!name) return null;
+      const characterId = clean(typeof row.id === "string" ? row.id : "") || `char_${index + 1}`;
+      const visual =
+        visualCharacterById.get(characterId) ||
+        visualCharacterByName.get(name.toLowerCase()) ||
+        undefined;
+      const mustAppearFrequency = clean(
+        typeof usageRules.mustAppearFrequency === "string" ? usageRules.mustAppearFrequency : ""
+      );
+      return {
+        id: characterId,
+        name,
+        role:
+          clean(typeof row.coreFunctionInSeries === "string" ? row.coreFunctionInSeries : "") ||
+          clean(typeof row.role === "string" ? row.role : "") ||
+          "同行者",
+        tier: mustAppearFrequency === "every_episode" ? "primary" : "secondary",
+        mustAppear: mustAppearFrequency === "every_episode",
+        archetype: clean(typeof row.archetype === "string" ? row.archetype : "") || undefined,
+        personality: dedupeStrings([
+          ...normalizeStringArray(identity.immutableTraits),
+          ...normalizeStringArray(identity.mutableTraits),
+        ]).join(" / "),
+        goal:
+          clean(typeof identity.motivationCore === "string" ? identity.motivationCore : "") ||
+          undefined,
+        arcStart:
+          clean(typeof relationshipDesign.initialDistanceToUser === "string"
+            ? relationshipDesign.initialDistanceToUser
+            : "") || undefined,
+        arcEnd:
+          clean(typeof relationshipDesign.expectedArcWithUser === "string"
+            ? relationshipDesign.expectedArcWithUser
+            : "") || undefined,
+        relationshipHooks: normalizeStringArray(hooks.conversationalHooks),
+        secrets: normalizeStringArray(usageRules.cannotContradict),
+        portraitPrompt: visual?.portraitPrompt,
+        portraitImageUrl:
+          visual?.portraitImageUrl ||
+          buildSeedFallbackImageUrl(`${title}-${name}-portrait`, 768, 1024),
+      } satisfies GeneratedSeriesCharacter;
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+  const vNextCheckpointsRaw = Array.isArray(blueprint.checkpoints) ? blueprint.checkpoints : [];
+  const checkpoints: GeneratedSeriesCheckpoint[] = vNextCheckpointsRaw
+    .map((item, index) => {
+      const row = asObject(item);
+      const label = clean(typeof row.label === "string" ? row.label : "");
+      if (!label) return null;
+      const checkpointNo = Number.parseInt(String(row.index ?? index), 10);
+      return {
+        checkpointNo: Number.isFinite(checkpointNo) ? checkpointNo + 1 : index + 1,
+        title: label,
+        purpose: clean(typeof row.narrativePurpose === "string" ? row.narrativePurpose : "") || "",
+        unlockHint: normalizeStringArray(row.requiredProgressConditions).join(" / "),
+        expectedEmotion:
+          normalizeStringArray(row.expectedUserEmotion)[0] ||
+          mapVNextSceneRoleToLegacy(clean(typeof row.roleInArc === "string" ? row.roleInArc : "")),
+        carryOver: normalizeStringArray(row.mustRememberAfterPassing).join(" / "),
+      } satisfies GeneratedSeriesCheckpoint;
+    })
+    .filter((item): item is GeneratedSeriesCheckpoint => Boolean(item));
+
+  const seedSpotTypes = normalizeStringArray(firstEpisodeSeedRaw.suggestedPlaceTypes);
+  const firstEpisodeSeed: GeneratedSeriesFirstEpisodeSeed = {
+    title: `${title} 第1話`,
+    objective: clean(typeof firstEpisodeSeedRaw.purpose === "string" ? firstEpisodeSeedRaw.purpose : "") || "導入",
+    openingScene:
+      clean(typeof firstEpisodeSeedRaw.openingSituation === "string" ? firstEpisodeSeedRaw.openingSituation : "") ||
+      "旅の入口で違和感と出会う",
+    expectedDurationMinutes: 20,
+    routeStyle: "徒歩中心の周遊",
+    completionCondition:
+      clean(typeof firstEpisodeSeedRaw.whyGoThereLogic === "string" ? firstEpisodeSeedRaw.whyGoThereLogic : "") ||
+      "主要スポットで手がかりを得る。",
+    carryOverHint: normalizeStringArray(asObject(firstEpisodeSeedRaw.foreshadowingPlan).seed)[0] || "次話に続く問いが残る。",
+    spotRequirements: normalizeSpotRequirements(
+      seedSpotTypes.map((spotRole, index) => ({
+        requirement_id: `req_${index + 1}`,
+        scene_role: sceneRoleForIndex(index, Math.max(seedSpotTypes.length, 2)),
+        spot_role: spotRole,
+        required_attributes: [],
+        visit_constraints: [],
+        tourism_value_type: "地域体験",
+      })),
+      worldviewCore
+    ),
+    suggestedSpots: ensureWalkSuggestedSpots(seedSpotTypes, worldviewCore),
+  };
+
+  const currentProgress = asObject(initialTemplate.currentProgress);
+  const progressState: GeneratedSeriesProgressState = {
+    lastCompletedEpisodeNo: Number.parseInt(String(currentProgress.episodeCountCompleted ?? 0), 10) || 0,
+    unresolvedThreads: normalizeStringArray(currentProgress.unresolvedThreads),
+    revealedFacts: normalizeStringArray(currentProgress.resolvedThreads),
+    relationshipStateSummary: "主要キャラクターとの関係は導入段階。",
+    relationshipFlags: [],
+    recentRelationShift: [],
+    companionTrustLevel: 40,
+    nextHook: normalizeStringArray(currentProgress.activeForeshadowing)[0] || "",
+  };
+
+  const nonNegotiableTheme = normalizeStringArray(asObject(identityPackRaw.seriesCoreAnchors).nonNegotiableTheme);
+  const identityCharacterAnchors = Array.isArray(identityPackRaw.characterAnchors)
+    ? identityPackRaw.characterAnchors
+    : [];
+  const keyPersonCharacterIds = characters
+    .filter((character) => character.mustAppear)
+    .map((character) => character.id || "")
+    .filter(Boolean)
+    .slice(0, 3);
+  const identityPack: GeneratedSeriesIdentityPack | undefined =
+    keyPersonCharacterIds.length > 0
+      ? {
+          version: Number.parseInt(String(blueprint.version ?? 1), 10) || 1,
+          source: "generated",
+          styleBible: nonNegotiableTheme.join(" / ") || "continuity-first",
+          keyPersonCharacterIds,
+          characters: characters.slice(0, 8).map((character) => {
+            const anchor = identityCharacterAnchors.find((item) => {
+              const row = asObject(item);
+              return clean(typeof row.characterId === "string" ? row.characterId : "") === character.id;
+            });
+            const anchorRow = asObject(anchor);
+            return {
+              characterId: character.id || "",
+              name: character.name,
+              role: character.role,
+              isKeyPerson: keyPersonCharacterIds.includes(character.id || ""),
+              identityAnchorTokens: {
+                hair: "特徴的な髪型",
+                silhouette: "印象的なシルエット",
+                dominantColor: "アクセントカラー",
+                outfitKeyItem: "象徴アイテム",
+                distinguishingFeature:
+                  clean(typeof anchorRow.anchorSummary === "string" ? anchorRow.anchorSummary : "") || "印象的な特徴",
+              },
+            };
+          }),
+          lockedAt: clean(typeof blueprint.origin === "object" ? asObject(blueprint.origin).generatedAt as string : "") || new Date().toISOString(),
+        }
+      : undefined;
+
+  const worldVisualAssets = Array.isArray(visualBundle.worldVisualAssets)
+    ? visualBundle.worldVisualAssets.reduce<
+      Array<{
+        id: string;
+        title: string;
+        description: string;
+        prompt?: string;
+        imageUrl?: string;
+      }>
+    >((acc, item, index) => {
+      const row = asObject(item);
+      const id = clean(typeof row.id === "string" ? row.id : "") || `world_${index + 1}`;
+      const title = clean(typeof row.title === "string" ? row.title : "");
+      const description = clean(typeof row.description === "string" ? row.description : "");
+      const prompt = clean(typeof row.prompt === "string" ? row.prompt : "") || undefined;
+      const imageUrl =
+        normalizeMediaUrlForClient(typeof row.imageUrl === "string" ? row.imageUrl : "") || undefined;
+      if (!title && !description && !prompt && !imageUrl) return acc;
+      acc.push({
+        id,
+        title: title || `世界観ビジュアル ${index + 1}`,
+        description: description || "世界観の雰囲気を示すビジュアル。",
+        prompt,
+        imageUrl,
+      });
+      return acc;
+    }, [])
+    : [];
+  const coverImagePrompt =
+    clean(typeof visualBundle.coverImagePrompt === "string" ? visualBundle.coverImagePrompt : "") || undefined;
+  const coverImageUrl =
+    normalizeMediaUrlForClient(typeof visualBundle.coverImageUrl === "string" ? visualBundle.coverImageUrl : "") ||
+    buildSeedFallbackImageUrl(`${title}-cover`, 1024, 1365);
+  const coverConsistencyReport = normalizeCoverConsistencyReport(visualBundle.coverConsistencyReport);
+
+  return {
+    title,
+    overview: oneLineHook || premise || "概要を生成できませんでした。",
+    aiRules,
+    characters: characters.length > 0 ? characters : [],
+    coverImagePrompt,
+    coverImageUrl,
+    genre: normalizeStringArray(concept.genreAxes)[0] || clean(fallback.interview.genreWorld) || undefined,
+    tone: normalizeStringArray(concept.toneKeywords)[0] || clean(fallback.interview.desiredEmotion) || undefined,
+    premise: premise || undefined,
+    seasonGoal: clean(typeof narrative.longArcGoal === "string" ? narrative.longArcGoal : "") || undefined,
+    world: {
+      visualAssets: worldVisualAssets,
+      setting: ensureWalkableSetting(worldviewCore),
+      coreConflict:
+        clean(typeof narrative.coreMysteryOrDrive === "string" ? narrative.coreMysteryOrDrive : "") || undefined,
+      recurringMotifs: normalizeStringArray(concept.aestheticKeywords),
+      tabooRules: normalizeStringArray(worldRules.forbiddenBreaks),
+    },
+    checkpoints,
+    firstEpisodeSeed,
+    progressState,
+    continuity: {
+      globalMystery:
+        clean(typeof narrative.coreMysteryOrDrive === "string" ? narrative.coreMysteryOrDrive : "") || undefined,
+      finalePayoff: clean(typeof narrative.plannedEnding === "string" ? narrative.plannedEnding : "") || undefined,
+      invariantRules: hardRules,
+      episodeLinkPolicy: normalizeStringArray(continuityContract.mandatoryCallbackTypes),
+    },
+    coverFocusCharacters: characters.slice(0, 3).map((character) => ({
+      characterId: character.id || "",
+      name: character.name,
+      role: character.role,
+      focusReason: "継続話での中心人物",
+      visualAnchor: character.personality || "印象的な佇まい",
+    })),
+    identityPack,
+    coverConsistencyReport,
+    workflowVersion:
+      clean(typeof payloadObject.workflowVersion === "string" ? payloadObject.workflowVersion : "") || undefined,
+    seriesBlueprint: payloadObject.seriesBlueprint as Record<string, unknown>,
+    initialUserSeriesStateTemplate:
+      payloadObject.initialUserSeriesStateTemplate as Record<string, unknown>,
+    episodeRuntimeBootstrapPayload:
+      payloadObject.episodeRuntimeBootstrapPayload as Record<string, unknown>,
+  };
+};
+
 export const generateSeriesDraftViaMastra = async (
   payload: GenerateSeriesByMastraPayload,
   options: GenerateSeriesByMastraOptions = {}
@@ -1231,6 +1563,10 @@ export const generateSeriesDraftViaMastra = async (
   const timeoutMs = Math.max(30_000, options.timeoutMs ?? SERIES_DRAFT_DEFAULT_TIMEOUT_MS);
   const pollIntervalMs = Math.max(250, options.pollIntervalMs ?? SERIES_DRAFT_DEFAULT_POLL_INTERVAL_MS);
   const requestTimeoutMs = Math.max(8_000, Math.min(45_000, Math.floor(timeoutMs / 8)));
+  const vNextRequestTimeoutMs = Math.max(
+    30_000,
+    Math.min(300_000, Math.max(Math.floor(timeoutMs / 2), SERIES_VNEXT_REQUEST_TIMEOUT_MS))
+  );
 
   const body = {
     interview: {
@@ -1279,8 +1615,21 @@ export const generateSeriesDraftViaMastra = async (
     options.onProgress?.(event);
   };
 
+  const normalizeSeriesDraftProgressEvent = (raw: unknown): SeriesDraftGenerationEvent | null => {
+    const row = asObject(raw);
+    const phase = clean(typeof row.phase === "string" ? row.phase : "");
+    if (!isSeriesDraftGenerationPhase(phase)) return null;
+    return {
+      phase,
+      at: clean(typeof row.at === "string" ? row.at : "") || new Date().toISOString(),
+      detail: clean(typeof row.detail === "string" ? row.detail : "") || undefined,
+    };
+  };
+
   const normalizeDraftFromResponse = (json: unknown): GeneratedSeriesDraft => {
     const payloadObject = (json && typeof json === "object" ? (json as Record<string, unknown>) : null) || {};
+    const vNextDraft = normalizeDraftFromVNextResponse(payloadObject, payload);
+    if (vNextDraft) return vNextDraft;
     const seriesRaw = (payloadObject.series as Record<string, unknown> | undefined) || payloadObject;
     const metaRaw = (payloadObject.meta as Record<string, unknown> | undefined) || null;
 
@@ -1421,16 +1770,244 @@ export const generateSeriesDraftViaMastra = async (
     return normalizeDraftFromResponse(json);
   };
 
-  const normalizeSeriesDraftProgressEvent = (raw: unknown): SeriesDraftGenerationEvent | null => {
-    const row = asObject(raw);
-    const phase = clean(typeof row.phase === "string" ? row.phase : "");
-    if (!isSeriesDraftGenerationPhase(phase)) return null;
-    return {
-      phase,
-      at: clean(typeof row.at === "string" ? row.at : "") || new Date().toISOString(),
-      detail: clean(typeof row.detail === "string" ? row.detail : "") || undefined,
+  const runVNextEndpoint = async (): Promise<GeneratedSeriesDraft> => {
+    const rawRequest = {
+      userId: isUuid(payload.creatorId) ? payload.creatorId : undefined,
+      interview: dedupeStrings([
+        payload.interview.genreWorld,
+        payload.interview.desiredEmotion,
+        payload.interview.companionPreference,
+        payload.interview.continuationTrigger,
+        payload.interview.avoidExpressions,
+        payload.interview.additionalNotes || "",
+      ]).join(" / "),
+      prompt: clean(payload.prompt) || undefined,
+      desiredEpisodeLimit: payload.desiredEpisodeCount,
+      explicitGenreHints: dedupeStrings([payload.interview.genreWorld]).filter(Boolean),
+      excludedDirections: dedupeStrings(
+        clean(payload.interview.avoidExpressions)
+          .split(/[／/、,]/)
+          .map((item) => clean(item))
+          .filter(Boolean)
+      ),
+      safetyPreferences: [],
     };
+
+    const runVNextSyncFallback = async (): Promise<GeneratedSeriesDraft> => {
+      const response = await fetchWithTimeout(
+        `${baseUrl}/api/series/generate`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(rawRequest),
+        },
+        vNextRequestTimeoutMs,
+        options.signal
+      );
+      const rawText = await response.text();
+      const json = parseJsonSafe(rawText);
+      if (!response.ok) {
+        if (response.status === 404 || response.status === 405) {
+          throw new Error("vnext_endpoint_not_available");
+        }
+        const errMsg =
+          json && typeof json === "object" && json !== null && "error" in json
+            ? String((json as { error?: unknown }).error || "")
+            : rawText || `HTTP ${response.status}`;
+        throw new Error(errMsg || "vNextシリーズ生成に失敗しました。");
+      }
+
+      const normalized = normalizeDraftFromVNextResponse(json, payload);
+      if (!normalized || !Array.isArray(normalized.characters) || normalized.characters.length === 0) {
+        throw new Error("vnext_response_normalization_failed");
+      }
+      return normalized;
+    };
+
+    let createJobResponse: Response | null = null;
+    let createJobRaw = "";
+    let createJobJson: unknown = null;
+    try {
+      createJobResponse = await fetchWithTimeout(
+        `${baseUrl}/api/series/generate/jobs`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(rawRequest),
+        },
+        requestTimeoutMs,
+        options.signal
+      );
+      createJobRaw = await createJobResponse.text();
+      createJobJson = parseJsonSafe(createJobRaw);
+    } catch (fetchError) {
+      if (fetchError instanceof Error && fetchError.name === "AbortError") {
+        throw createAbortError();
+      }
+      if (fetchError instanceof Error && fetchError.name === "TimeoutError") {
+        throw new Error(`Mastra APIへの接続がタイムアウトしました（${Math.floor(requestTimeoutMs / 1000)}秒）。`);
+      }
+      if (isLikelyNetworkError(fetchError)) {
+        throw buildMastraNetworkError(baseUrl, fetchError);
+      }
+      throw fetchError;
+    }
+
+    if (!createJobResponse) {
+      throw new Error("vNextシリーズ生成ジョブ作成レスポンスが取得できませんでした。");
+    }
+
+    if (!createJobResponse.ok) {
+      if (createJobResponse.status === 404 || createJobResponse.status === 405) {
+        return runVNextSyncFallback();
+      }
+      const errMsg =
+        createJobJson && typeof createJobJson === "object" && "error" in createJobJson
+          ? String((createJobJson as { error?: unknown }).error || "")
+          : createJobRaw || `HTTP ${createJobResponse.status}`;
+      throw new Error(errMsg || "vNextシリーズ生成ジョブの作成に失敗しました。");
+    }
+
+    const createJobPayload = asObject(createJobJson);
+    const jobId = clean(
+      typeof createJobPayload.job_id === "string"
+        ? createJobPayload.job_id
+        : typeof createJobPayload.jobId === "string"
+          ? createJobPayload.jobId
+          : ""
+    );
+    if (!jobId) {
+      return runVNextSyncFallback();
+    }
+
+    const initialEvents = Array.isArray(createJobPayload.events) ? createJobPayload.events : [];
+    initialEvents.forEach((rawEvent) => {
+      const normalized = normalizeSeriesDraftProgressEvent(rawEvent);
+      if (normalized) emitProgress(normalized);
+    });
+
+    const nextCursor = Number.parseInt(
+      String(createJobPayload.next_cursor ?? createJobPayload.cursor ?? initialEvents.length),
+      10
+    );
+    let cursor = Number.isFinite(nextCursor) && nextCursor >= 0 ? nextCursor : initialEvents.length;
+
+    const pollPath = clean(
+      typeof createJobPayload.poll_path === "string"
+        ? createJobPayload.poll_path
+        : typeof createJobPayload.pollPath === "string"
+          ? createJobPayload.pollPath
+          : ""
+    );
+    const pollUrl = pollPath
+      ? `${baseUrl}${pollPath.startsWith("/") ? "" : "/"}${pollPath}`
+      : `${baseUrl}/api/series/generate/jobs/${encodeURIComponent(jobId)}`;
+
+    const startedAt = Date.now();
+    while (true) {
+      if (options.signal?.aborted) {
+        throw createAbortError();
+      }
+      if (Date.now() - startedAt > timeoutMs) {
+        throw new Error(`シリーズ生成がタイムアウトしました（${Math.floor(timeoutMs / 1000)}秒）。再度お試しください。`);
+      }
+
+      const separator = pollUrl.includes("?") ? "&" : "?";
+      let pollResponse: Response | null = null;
+      let pollRaw = "";
+      let pollJson: unknown = null;
+      try {
+        pollResponse = await fetchWithTimeout(
+          `${pollUrl}${separator}cursor=${cursor}`,
+          {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+          requestTimeoutMs,
+          options.signal
+        );
+        pollRaw = await pollResponse.text();
+        pollJson = parseJsonSafe(pollRaw);
+      } catch (fetchError) {
+        if (fetchError instanceof Error && fetchError.name === "AbortError") {
+          throw createAbortError();
+        }
+        if (fetchError instanceof Error && fetchError.name === "TimeoutError") {
+          throw new Error(`Mastra APIポーリングがタイムアウトしました（${Math.floor(requestTimeoutMs / 1000)}秒）。`);
+        }
+        if (isLikelyNetworkError(fetchError)) {
+          throw buildMastraNetworkError(baseUrl, fetchError);
+        }
+        throw fetchError;
+      }
+
+      if (!pollResponse) {
+        throw new Error("vNextシリーズ生成ジョブのポーリングレスポンスが取得できませんでした。");
+      }
+
+      if (!pollResponse.ok) {
+        const errMsg =
+          pollJson && typeof pollJson === "object" && "error" in pollJson
+            ? String((pollJson as { error?: unknown }).error || "")
+            : pollRaw || `HTTP ${pollResponse.status}`;
+        throw new Error(errMsg || "vNextシリーズ生成ジョブの取得に失敗しました。");
+      }
+
+      const pollPayload = asObject(pollJson);
+      const events = Array.isArray(pollPayload.events) ? pollPayload.events : [];
+      events.forEach((rawEvent) => {
+        const normalized = normalizeSeriesDraftProgressEvent(rawEvent);
+        if (normalized) emitProgress(normalized);
+      });
+
+      const next = Number.parseInt(String(pollPayload.next_cursor ?? ""), 10);
+      if (Number.isFinite(next) && next >= cursor) {
+        cursor = next;
+      } else {
+        cursor += events.length;
+      }
+
+      const status = clean(typeof pollPayload.status === "string" ? pollPayload.status : "");
+      if (status === "completed" || status === "succeeded") {
+        const normalized =
+          normalizeDraftFromVNextResponse(asObject(pollPayload.result), payload) ||
+          normalizeDraftFromVNextResponse(pollPayload, payload);
+        if (!normalized || !Array.isArray(normalized.characters) || normalized.characters.length === 0) {
+          throw new Error("vnext_response_normalization_failed");
+        }
+        return normalized;
+      }
+      if (status === "failed") {
+        const reason = clean(typeof pollPayload.error === "string" ? pollPayload.error : "") || "vNextシリーズ生成に失敗しました。";
+        throw new Error(reason);
+      }
+
+      await waitFor(pollIntervalMs, options.signal);
+    }
   };
+
+  try {
+    emitProgress({ phase: "request_received", at: new Date().toISOString(), detail: "シリーズ生成リクエストを受領" });
+    emitProgress({ phase: "input_validated", at: new Date().toISOString(), detail: "入力スキーマ検証を完了" });
+    const vNext = await runVNextEndpoint();
+    emitProgress({ phase: "completed", at: new Date().toISOString(), detail: "vNextシリーズ生成が完了" });
+    return vNext;
+  } catch (vNextError) {
+    const message = clean(vNextError instanceof Error ? vNextError.message : String(vNextError));
+    if (message !== "vnext_endpoint_not_available") {
+      if (SERIES_VNEXT_STRICT) {
+        console.warn("[seriesAi] vNext series generate failed (strict mode):", message);
+        throw new Error(message || "vNextシリーズ生成に失敗しました。");
+      }
+      console.warn("[seriesAi] vNext series generate fallback to legacy:", message);
+    }
+  }
 
   let createJobResponse: Response | null = null;
   let createJobRaw = "";
@@ -1478,7 +2055,13 @@ export const generateSeriesDraftViaMastra = async (
   }
 
   const createJobPayload = asObject(createJobJson);
-  const jobId = clean(typeof createJobPayload.job_id === "string" ? createJobPayload.job_id : "");
+  const jobId = clean(
+    typeof createJobPayload.job_id === "string"
+      ? createJobPayload.job_id
+      : typeof createJobPayload.jobId === "string"
+        ? createJobPayload.jobId
+        : ""
+  );
   if (!jobId) {
     return runLegacyEndpoint();
   }
@@ -1495,7 +2078,13 @@ export const generateSeriesDraftViaMastra = async (
   );
   let cursor = Number.isFinite(nextCursor) && nextCursor >= 0 ? nextCursor : initialEvents.length;
 
-  const pollPath = clean(typeof createJobPayload.poll_path === "string" ? createJobPayload.poll_path : "");
+  const pollPath = clean(
+    typeof createJobPayload.poll_path === "string"
+      ? createJobPayload.poll_path
+      : typeof createJobPayload.pollPath === "string"
+        ? createJobPayload.pollPath
+        : ""
+  );
   const pollUrl = pollPath
     ? `${baseUrl}${pollPath.startsWith("/") ? "" : "/"}${pollPath}`
     : `${baseUrl}/api/series/jobs/${encodeURIComponent(jobId)}`;
@@ -1567,7 +2156,7 @@ export const generateSeriesDraftViaMastra = async (
     }
 
     const status = clean(typeof pollPayload.status === "string" ? pollPayload.status : "");
-    if (status === "succeeded") {
+    if (status === "succeeded" || status === "completed") {
       return normalizeDraftFromResponse(pollJson);
     }
     if (status === "failed") {
@@ -1881,6 +2470,222 @@ const normalizeRuntimeEpisode = (raw: unknown): GeneratedRuntimeEpisode | null =
   };
 };
 
+const vNextSceneRoleToLegacy = (value: string): EpisodeSpot["sceneRole"] => {
+  const normalized = clean(value);
+  if (normalized === "opening") return "起";
+  if (normalized === "ending") return "結";
+  if (normalized === "turn") return "転";
+  return "承";
+};
+
+const normalizeRuntimeEpisodeFromVNext = (envelope: unknown): GeneratedRuntimeEpisode | null => {
+  const payloadObject = asObject(envelope);
+  const resultRow = asObject(payloadObject.result);
+  const episodeOutput = asObject(
+    resultRow.episodeOutput ||
+      payloadObject.episodeOutput ||
+      payloadObject
+  );
+  const episodeMeta = asObject(episodeOutput.episodeMeta);
+  const continuityPatch = asObject(episodeOutput.continuityPatch);
+  const memoryPatch = asObject(continuityPatch.memoryPatch);
+  const payoffPatch = asObject(continuityPatch.payoffPatch);
+  const arcPatch = asObject(continuityPatch.arcPatch);
+  const ending = asObject(episodeOutput.ending);
+
+  const title = clean(typeof episodeMeta.title === "string" ? episodeMeta.title : "");
+  if (!title) return null;
+
+  const scenesRaw = Array.isArray(episodeOutput.scenes) ? episodeOutput.scenes : [];
+  const spots: EpisodeSpot[] = scenesRaw.map((item, index) => {
+    const scene = asObject(item);
+    const narration = asObject(scene.narration);
+    const progression = asObject(scene.progression);
+    const dialogue = asObject(scene.dialogue);
+    const opening = Array.isArray(dialogue.opening) ? dialogue.opening : [];
+    const exploration = Array.isArray(dialogue.exploration) ? dialogue.exploration : [];
+    const emotionalBeat = Array.isArray(dialogue.emotionalBeat) ? dialogue.emotionalBeat : [];
+    const toLine = (row: unknown): EpisodeDialogueLine | null => {
+      const line = asObject(row);
+      const text = clean(typeof line.text === "string" ? line.text : "");
+      if (!text) return null;
+      return {
+        characterId:
+          clean(typeof line.speakerId === "string" ? line.speakerId : "") || "narrator",
+        text,
+      };
+    };
+    const toBlock = (row: unknown): EpisodeSpotBlock | null => {
+      const line = asObject(row);
+      const text = clean(typeof line.text === "string" ? line.text : "");
+      if (!text) return null;
+      return {
+        type: "dialogue",
+        text,
+        speakerId: clean(typeof line.speakerId === "string" ? line.speakerId : "") || undefined,
+      };
+    };
+    const intro = clean(typeof narration.intro === "string" ? narration.intro : "");
+    const arrival = clean(typeof narration.arrival === "string" ? narration.arrival : "");
+    const climax = clean(typeof narration.emotionalClimax === "string" ? narration.emotionalClimax : "");
+    const outro = clean(typeof narration.outro === "string" ? narration.outro : "");
+    const sceneNarration = [intro, arrival, climax, outro].filter(Boolean).join("\n");
+    const blocks = [
+      ...opening.map(toBlock),
+      ...exploration.map(toBlock),
+      ...emotionalBeat.map(toBlock),
+      {
+        type: "mission" as const,
+        text:
+          clean(typeof progression.nextSpotReason === "string" ? progression.nextSpotReason : "") ||
+          "次の地点へ向かう。",
+      },
+    ].filter((block): block is EpisodeSpotBlock => Boolean(block));
+    return {
+      spotName: clean(typeof scene.spotName === "string" ? scene.spotName : "") || `スポット ${index + 1}`,
+      sceneRole: vNextSceneRoleToLegacy(clean(typeof scene.sceneRole === "string" ? scene.sceneRole : "")),
+      sceneObjective: clean(typeof scene.sceneGoal === "string" ? scene.sceneGoal : "") || "",
+      sceneNarration: sceneNarration || "シーン進行",
+      blocks,
+      questionText:
+        clean(typeof progression.clueOrRealization === "string" ? progression.clueOrRealization : "") ||
+        "このシーンの要点は？",
+      answerText:
+        clean(typeof progression.clueOrRealization === "string" ? progression.clueOrRealization : "") ||
+        "",
+      hintText:
+        clean(typeof progression.nextSpotReason === "string" ? progression.nextSpotReason : "") ||
+        "次の展開に繋がる要素を確認する。",
+      explanationText:
+        clean(typeof progression.emotionalOutcome === "string" ? progression.emotionalOutcome : "") ||
+        "",
+      preMissionDialogue: opening.map(toLine).filter((line): line is EpisodeDialogueLine => Boolean(line)),
+      postMissionDialogue: emotionalBeat.map(toLine).filter((line): line is EpisodeDialogueLine => Boolean(line)),
+    } satisfies EpisodeSpot;
+  });
+
+  if (spots.length === 0) return null;
+
+  const fixedCharactersAppeared = normalizeStringArray(episodeOutput.fixedCharactersAppeared);
+  const localCharactersIntroduced = Array.isArray(episodeOutput.localCharactersIntroduced)
+    ? episodeOutput.localCharactersIntroduced
+    : [];
+
+  const characters: EpisodeCharacter[] = [
+    ...fixedCharactersAppeared.map((id) => ({
+      id,
+      name: id,
+      role: "series_character",
+      personality: "",
+      origin: "series" as const,
+    })),
+    ...localCharactersIntroduced.map((item, index) => {
+      const row = asObject(item);
+      return {
+        id: clean(typeof row.localCharacterId === "string" ? row.localCharacterId : "") || `ep_char_${index + 1}`,
+        name: clean(typeof row.displayName === "string" ? row.displayName : "") || `ローカル人物${index + 1}`,
+        role: clean(typeof row.roleInEpisode === "string" ? row.roleInEpisode : "") || "local_character",
+        personality: normalizeStringArray(row.personalityTraits).join(" / "),
+        origin: "episode" as const,
+      } satisfies EpisodeCharacter;
+    }),
+  ];
+
+  const relationshipPatch = Array.isArray(continuityPatch.relationshipPatch)
+    ? continuityPatch.relationshipPatch
+    : [];
+  const trustDeltas = relationshipPatch
+    .map((item) => Number.parseInt(String(asObject(item).trustDelta ?? 0), 10))
+    .filter((value) => Number.isFinite(value));
+  const avgTrustDelta = trustDeltas.length
+    ? Math.round(trustDeltas.reduce((sum, value) => sum + value, 0) / trustDeltas.length)
+    : 0;
+
+  return {
+    title,
+    summary:
+      clean(typeof episodeMeta.summaryHook === "string" ? episodeMeta.summaryHook : "") ||
+      clean(typeof ending.closingNarration === "string" ? ending.closingNarration : "") ||
+      `${title}の概要`,
+    oneLiner:
+      clean(typeof episodeMeta.summaryHook === "string" ? episodeMeta.summaryHook : "") ||
+      clean(typeof episodeMeta.episodePurpose === "string" ? episodeMeta.episodePurpose : ""),
+    mainPlot: {
+      premise: clean(typeof episodeMeta.episodePurpose === "string" ? episodeMeta.episodePurpose : ""),
+      goal: clean(typeof episodeMeta.episodePurpose === "string" ? episodeMeta.episodePurpose : ""),
+    },
+    characters,
+    episodeWorld: {
+      title: clean(typeof episodeMeta.title === "string" ? episodeMeta.title : "") || "今回の旅の章",
+      mood: normalizeStringArray(ending.emotionalAftertaste)[0] || "発見と余韻",
+      atmosphere: clean(typeof ending.closingNarration === "string" ? ending.closingNarration : "") || "継続物語の進展",
+      sensoryKeywords: [],
+      storyAxis: clean(typeof episodeMeta.episodePurpose === "string" ? episodeMeta.episodePurpose : ""),
+      emotionalArc: clean(typeof arcPatch.arcSummaryAfterEpisode === "string" ? arcPatch.arcSummaryAfterEpisode : ""),
+      localTheme: clean(typeof episodeMeta.arcRole === "string" ? episodeMeta.arcRole : "") || "development",
+    },
+    episodeUniqueCharacters: localCharactersIntroduced.map((item, index) => {
+      const row = asObject(item);
+      return {
+        id: clean(typeof row.localCharacterId === "string" ? row.localCharacterId : "") || `ep_char_${index + 1}`,
+        name: clean(typeof row.displayName === "string" ? row.displayName : "") || `ローカル人物${index + 1}`,
+        role: clean(typeof row.roleInEpisode === "string" ? row.roleInEpisode : "") || "地域人物",
+        personality: normalizeStringArray(row.personalityTraits).join(" / ") || "観察力が高い",
+        motivation: clean(typeof row.motivation === "string" ? row.motivation : "") || "地域情報を伝える",
+        relationToSeries:
+          clean(typeof row.relationToSeriesTheme === "string" ? row.relationToSeriesTheme : "") ||
+          "シリーズ進行に接続",
+        introductionScene:
+          clean(typeof row.relationToSpot === "string" ? row.relationToSpot : "") ||
+          "中盤で登場",
+      } satisfies EpisodeUniqueCharacter;
+    }),
+    spots,
+    completionCondition:
+      clean(typeof episodeMeta.episodePurpose === "string" ? episodeMeta.episodePurpose : "") ||
+      "主要スポットで進展を得る。",
+    carryOverHook:
+      clean(typeof ending.nextEpisodeHook === "string" ? ending.nextEpisodeHook : "") ||
+      "次回に続く問いが残る。",
+    estimatedDurationMinutes: Math.max(10, Math.min(45, spots.length * 6)),
+    progressPatch: {
+      unresolvedThreadsToAdd: normalizeStringArray(payoffPatch.activeThreads),
+      unresolvedThreadsToRemove: normalizeStringArray(payoffPatch.closedThreads),
+      revealedFactsToAdd: normalizeStringArray(memoryPatch.addedEvents),
+      relationshipStateSummary:
+        clean(typeof arcPatch.arcSummaryAfterEpisode === "string" ? arcPatch.arcSummaryAfterEpisode : "") ||
+        "関係性は継続中。",
+      relationshipFlagsToAdd: dedupeStrings(
+        relationshipPatch
+          .map((item) => {
+            const row = asObject(item);
+            const value =
+              typeof row.newRelationshipState === "string" ? row.newRelationshipState : "";
+            return clean(value);
+          })
+          .filter(Boolean)
+      ),
+      relationshipFlagsToRemove: [],
+      recentRelationShift: dedupeStrings(
+        relationshipPatch
+          .map((item) => {
+            const row = asObject(item);
+            const value =
+              typeof row.keyMomentSummary === "string" ? row.keyMomentSummary : "";
+            return clean(value);
+          })
+          .filter(Boolean)
+      ).slice(0, 6),
+      companionTrustDelta: Number.isFinite(avgTrustDelta) ? Math.max(-10, Math.min(10, avgTrustDelta)) : undefined,
+      nextHook:
+        clean(typeof ending.nextEpisodeHook === "string" ? ending.nextEpisodeHook : "") ||
+        "",
+    },
+    continuityPatchVNext: continuityPatch,
+    episodeOutputVNext: episodeOutput,
+  };
+};
+
 const EPISODE_GENERATION_DEFAULT_TIMEOUT_MS = 600_000;
 const EPISODE_GENERATION_DEFAULT_POLL_INTERVAL_MS = 700;
 
@@ -2102,11 +2907,179 @@ export const generateSeriesEpisodeViaMastra = async (
     },
   };
 
+  const parseInlineCoordinates = (
+    value: string
+  ): { lat: number; lng: number } | undefined => {
+    const match = clean(value).match(/(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/);
+    if (!match) return undefined;
+    const lat = Number.parseFloat(match[1]);
+    const lng = Number.parseFloat(match[2]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return undefined;
+    return { lat, lng };
+  };
+
+  const buildVNextEpisodeBody = () => {
+    const blueprint = asObject(payload.series.seriesBlueprint);
+    if (Object.keys(blueprint).length === 0) return null;
+
+    const blueprintNarrative = asObject(blueprint.narrative);
+    const rawUserState = asObject(payload.series.userSeriesState);
+    const template = asObject(payload.series.initialUserSeriesStateTemplate);
+    const rawProgress = payload.series.progressState || undefined;
+
+    const requestUserId =
+      clean(payload.userId) ||
+      clean(typeof rawUserState.userId === "string" ? rawUserState.userId : "") ||
+      "anonymous_user";
+    const requestSeriesBlueprintId =
+      clean(typeof blueprint.id === "string" ? blueprint.id : "") ||
+      clean(typeof rawUserState.seriesBlueprintId === "string" ? rawUserState.seriesBlueprintId : "") ||
+      `series_${clean(payload.series.title) || "draft"}`;
+    const requestUserSeriesStateId =
+      clean(typeof rawUserState.id === "string" ? rawUserState.id : "") ||
+      `${requestSeriesBlueprintId}:${requestUserId}`;
+
+    const currentProgress = asObject(rawUserState.currentProgress);
+    const templateProgress = asObject(template.currentProgress);
+    const episodeCountCompleted =
+      Number.parseInt(
+        String(
+          currentProgress.episodeCountCompleted ??
+            templateProgress.episodeCountCompleted ??
+            rawProgress?.lastCompletedEpisodeNo ??
+            0
+        ),
+        10
+      ) || 0;
+
+    const userSeriesState = {
+      id: requestUserSeriesStateId,
+      userId: requestUserId,
+      seriesBlueprintId: requestSeriesBlueprintId,
+      referencedBlueprintVersion:
+        Number.parseInt(String(rawUserState.referencedBlueprintVersion ?? blueprint.version ?? 1), 10) || 1,
+      stateVersion: Number.parseInt(String(rawUserState.stateVersion ?? 1), 10) || 1,
+      currentProgress: {
+        episodeCountCompleted,
+        currentCheckpointIndex:
+          Number.parseInt(
+            String(
+              currentProgress.currentCheckpointIndex ??
+                templateProgress.currentCheckpointIndex ??
+                0
+            ),
+            10
+          ) || 0,
+        currentArcSummary:
+          clean(typeof currentProgress.currentArcSummary === "string" ? currentProgress.currentArcSummary : "") ||
+          clean(rawProgress?.relationshipStateSummary) ||
+          "導入段階",
+        unresolvedThreads: dedupeStrings(
+          asStringArray(currentProgress.unresolvedThreads).concat(
+            rawProgress?.unresolvedThreads || []
+          )
+        ),
+        resolvedThreads: dedupeStrings(
+          asStringArray(currentProgress.resolvedThreads).concat(
+            rawProgress?.revealedFacts || []
+          )
+        ),
+        activeForeshadowing: dedupeStrings(
+          asStringArray(currentProgress.activeForeshadowing)
+        ),
+        completedEpisodeIds: asStringArray(currentProgress.completedEpisodeIds),
+      },
+      rememberedExperience: {
+        visitedLocations: asStringArray(asObject(rawUserState.rememberedExperience).visitedLocations),
+        keyEvents: asStringArray(asObject(rawUserState.rememberedExperience).keyEvents),
+        importantConversations: asStringArray(
+          asObject(rawUserState.rememberedExperience).importantConversations
+        ),
+        playerChoices: asStringArray(asObject(rawUserState.rememberedExperience).playerChoices),
+        emotionalMoments: asStringArray(asObject(rawUserState.rememberedExperience).emotionalMoments),
+        relationshipTurningPoints: asStringArray(
+          asObject(rawUserState.rememberedExperience).relationshipTurningPoints
+        ),
+      },
+      relationshipState: Array.isArray(rawUserState.relationshipState)
+        ? rawUserState.relationshipState
+        : Array.isArray(template.relationshipState)
+          ? template.relationshipState
+          : [],
+      continuityState: {
+        callbackCandidates: dedupeStrings(
+          asStringArray(asObject(rawUserState.continuityState).callbackCandidates)
+        ),
+        motifsInUse: dedupeStrings(asStringArray(asObject(rawUserState.continuityState).motifsInUse)),
+        blockedLines: asStringArray(asObject(rawUserState.continuityState).blockedLines),
+        promisedPayoffs: dedupeStrings(
+          asStringArray(asObject(rawUserState.continuityState).promisedPayoffs)
+        ),
+        episodeLocalCharacterCarryovers: Array.isArray(
+          asObject(rawUserState.continuityState).episodeLocalCharacterCarryovers
+        )
+          ? asObject(rawUserState.continuityState).episodeLocalCharacterCarryovers
+          : [],
+      },
+      monetizationState: {
+        episodeLimit:
+          Number.parseInt(
+            String(
+              asObject(rawUserState.monetizationState).episodeLimit ??
+                blueprintNarrative.freePlanDefaultEpisodeLimit ??
+                3
+            ),
+            10
+          ) || 3,
+        extensionUnlocked: Boolean(
+          asObject(rawUserState.monetizationState).extensionUnlocked
+        ),
+      },
+    };
+
+    const locationContext = {
+      cityOrArea: payload.stageLocation,
+      coordinates: parseInlineCoordinates(payload.stageLocation),
+      candidateSpots: payload.series.firstEpisodeSeed?.suggestedSpots || undefined,
+      transportMode: "walk" as const,
+      availableMinutes: payload.desiredDurationMinutes ?? 20,
+    };
+
+    return {
+      request: {
+        userId: requestUserId,
+        seriesBlueprintId: requestSeriesBlueprintId,
+        userSeriesStateId: requestUserSeriesStateId,
+        episodeRequest: {
+          locationContext,
+          tourismGoal: payload.purpose,
+          desiredMoodToday: clean(payload.userWishes)
+            ? [clean(payload.userWishes)]
+            : undefined,
+        },
+        runtimeOptions: {
+          maxSpots: desiredSpotCount,
+          minSpots: Math.min(3, desiredSpotCount),
+          fallbackAllowed: true,
+          plannerRetries: 2,
+        },
+      },
+      seriesBlueprint: blueprint,
+      userSeriesState,
+    };
+  };
+
+  const vNextEpisodeBody = buildVNextEpisodeBody();
+  const runtimeBody = vNextEpisodeBody || body;
+
   const emitProgress = (event: RuntimeEpisodeGenerationEvent) => {
     options.onProgress?.(event);
   };
 
   const normalizeEpisodeFromResponse = (envelope: unknown) => {
+    const vNext = normalizeRuntimeEpisodeFromVNext(envelope);
+    if (vNext) return vNext;
     const payloadObject = asObject(envelope);
     const nestedEpisode = payloadObject.episode;
     const episodeRaw =
@@ -2177,7 +3150,7 @@ export const generateSeriesEpisodeViaMastra = async (
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify(runtimeBody),
       },
       requestTimeoutMs,
       options.signal
@@ -2204,12 +3177,28 @@ export const generateSeriesEpisodeViaMastra = async (
     if (createJobResponse.status === 404 || createJobResponse.status === 405) {
       return runLegacyEndpoint();
     }
+    if (
+      vNextEpisodeBody &&
+      (createJobResponse.status === 400 || createJobResponse.status === 422)
+    ) {
+      console.warn(
+        "[seriesAi] vNext episode job rejected, fallback to legacy format",
+        createJobRaw
+      );
+      return runLegacyEndpoint();
+    }
     const errorBody = createJobJson && typeof createJobJson === "object" ? JSON.stringify(createJobJson) : createJobRaw;
     throw new Error(`Mastra episode job creation failed (${createJobResponse.status}): ${errorBody || "unknown"}`);
   }
 
   const createJobPayload = asObject(createJobJson);
-  const jobId = clean(typeof createJobPayload.job_id === "string" ? createJobPayload.job_id : "");
+  const jobId = clean(
+    typeof createJobPayload.job_id === "string"
+      ? createJobPayload.job_id
+      : typeof createJobPayload.jobId === "string"
+        ? createJobPayload.jobId
+        : ""
+  );
   if (!jobId) {
     return runLegacyEndpoint();
   }
@@ -2226,7 +3215,13 @@ export const generateSeriesEpisodeViaMastra = async (
   );
   let cursor = Number.isFinite(nextCursor) && nextCursor >= 0 ? nextCursor : initialEvents.length;
 
-  const pollPath = clean(typeof createJobPayload.poll_path === "string" ? createJobPayload.poll_path : "");
+  const pollPath = clean(
+    typeof createJobPayload.poll_path === "string"
+      ? createJobPayload.poll_path
+      : typeof createJobPayload.pollPath === "string"
+        ? createJobPayload.pollPath
+        : ""
+  );
   const pollUrl = pollPath
     ? `${baseUrl}${pollPath.startsWith("/") ? "" : "/"}${pollPath}`
     : `${baseUrl}/api/series/episode/jobs/${encodeURIComponent(jobId)}`;
@@ -2294,7 +3289,7 @@ export const generateSeriesEpisodeViaMastra = async (
     }
 
     const status = clean(typeof pollPayload.status === "string" ? pollPayload.status : "");
-    if (status === "succeeded") {
+    if (status === "succeeded" || status === "completed") {
       return normalizeEpisodeFromResponse(pollJson);
     }
     if (status === "failed") {

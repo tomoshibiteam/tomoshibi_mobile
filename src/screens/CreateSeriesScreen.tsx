@@ -5,6 +5,7 @@ import {
   Alert,
   Animated,
   Easing,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -20,7 +21,6 @@ import type { NativeStackNavigationProp, NativeStackScreenProps } from "@react-n
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
-import LottieView from "lottie-react-native";
 import type { RootStackParamList } from "@/navigation/types";
 import { fonts } from "@/theme/fonts";
 import { useSessionUserId } from "@/hooks/useSessionUser";
@@ -142,59 +142,103 @@ const SERIES_INTERVIEW_STEPS: readonly SeriesInterviewStep[] = [
 ] as const;
 
 const SERIES_INTERVIEW_DONE_MESSAGE =
-  "ありがとうございます。回答をもとにシリーズ案を3つ生成します。気になる案を選んで次へ進みましょう。";
-
-const FORGING_STATUS_MESSAGES = [
-  "質問回答を整理しています...",
-  "シリーズ案Aを構築中...",
-  "シリーズ案Bを構築中...",
-  "シリーズ案Cを構築中...",
-] as const;
+  "ありがとうございます。回答をもとにシリーズを生成します。準備ができたら次へ進みましょう。";
 
 const SERIES_PHASE_USER_COPY: Record<SeriesDraftGenerationPhase, string> = {
-  request_received: "生成リクエストを受け取りました",
-  input_validated: "入力内容を確認しています",
-  sanitize_series_request_start: "生成条件を整えています",
-  sanitize_series_request_done: "生成条件の準備ができました",
-  generate_series_concept_start: "世界観と物語コンセプトを設計しています",
-  generate_series_concept_done: "世界観コンセプトを整えています",
-  generate_series_characters_start: "主要キャラクターを設計しています",
-  generate_series_characters_done: "主要キャラクター設計が完了しました",
-  build_series_identity_pack_start: "キーパーソンと人物同一性を固定しています",
-  build_series_identity_pack_done: "人物同一性の固定が完了しました",
-  generate_series_checkpoints_start: "エピソード進行を設計しています",
-  generate_series_checkpoints_done: "エピソード進行設計が完了しました",
-  seed_route_dry_run_start: "第1話導線の成立性を検証しています",
-  seed_route_dry_run_done: "第1話導線の検証が完了しました",
-  finalize_series_blueprint_start: "シリーズ全体を統合しています",
-  generate_series_cover_candidates_start: "世界観ポスターのカバー候補を生成しています",
-  generate_series_cover_candidates_done: "カバー候補の生成が完了しました",
-  validate_cover_identity_start: "カバーと画風の整合を確認しています",
-  validate_cover_identity_done: "カバー整合チェックが完了しました",
-  finalize_series_blueprint_done: "シリーズ案の最終調整をしています",
-  response_preparing: "結果を整えています",
-  completed: "シリーズ案の準備ができました",
+  request_received: "生成依頼を受け取りました。",
+  input_validated: "入力内容を確認しています。",
+  sanitize_series_request_start: "好みと制約を整理しています。",
+  sanitize_series_request_done: "生成条件の整理が完了しました。",
+  generate_series_concept_start: "世界観と長編コンセプトを設計しています。",
+  generate_series_concept_done: "世界観コンセプトの骨格ができました。",
+  generate_series_characters_start: "固定キャラクターを設計しています。",
+  generate_series_characters_done: "固定キャラクター設計が完了しました。",
+  build_series_identity_pack_start: "キャラクター同一性のアンカーを固定しています。",
+  build_series_identity_pack_done: "同一性アンカーの固定が完了しました。",
+  generate_series_checkpoints_start: "シリーズ進行のチェックポイントを設計しています。",
+  generate_series_checkpoints_done: "チェックポイント設計が完了しました。",
+  seed_route_dry_run_start: "第1話の導線が成立するか検証しています。",
+  seed_route_dry_run_done: "第1話導線の検証が完了しました。",
+  finalize_series_blueprint_start: "シリーズBlueprintを統合しています。",
+  generate_series_cover_candidates_start: "カバー候補を生成しています。",
+  generate_series_cover_candidates_done: "カバー候補の生成が完了しました。",
+  validate_cover_identity_start: "カバーとシリーズ同一性を照合しています。",
+  validate_cover_identity_done: "カバー整合チェックが完了しました。",
+  finalize_series_blueprint_done: "最終調整を行っています。",
+  response_preparing: "結果を整えて返却準備をしています。",
+  completed: "シリーズ生成が完了しました。",
 };
 
-const SERIES_PROPOSAL_VARIANTS = [
+type SeriesWorkflowStageStatus = "pending" | "active" | "done";
+type SeriesWorkflowStage = {
+  id: string;
+  label: string;
+  summary: string;
+  phases: readonly SeriesDraftGenerationPhase[];
+};
+
+const SERIES_WORKFLOW_STAGES: readonly SeriesWorkflowStage[] = [
   {
-    id: "romantic",
-    label: "感情重視",
-    direction: "キャラクター同士の関係性と感情の機微を強めたシリーズ案にしてください。",
+    id: "request",
+    label: "受付と入力確認",
+    summary: "生成依頼の受理と入力検証を行います。",
+    phases: ["request_received", "input_validated"],
   },
   {
-    id: "mystery",
-    label: "謎重視",
-    direction: "不思議さと謎解きの連続性を強めたシリーズ案にしてください。",
+    id: "sanitize",
+    label: "条件の正規化",
+    summary: "インタビュー回答を生成条件へ正規化します。",
+    phases: ["sanitize_series_request_start", "sanitize_series_request_done"],
   },
   {
-    id: "balanced",
-    label: "バランス型",
-    direction: "感情・謎・日常のバランスが取れたシリーズ案にしてください。",
+    id: "concept",
+    label: "世界観設計",
+    summary: "長編として成立するコンセプトと核テーマを設計します。",
+    phases: ["generate_series_concept_start", "generate_series_concept_done"],
+  },
+  {
+    id: "cast",
+    label: "固定キャラ設計",
+    summary: "固定キャラクターと同一性アンカーを確定します。",
+    phases: [
+      "generate_series_characters_start",
+      "generate_series_characters_done",
+      "build_series_identity_pack_start",
+      "build_series_identity_pack_done",
+    ],
+  },
+  {
+    id: "checkpoint",
+    label: "進行設計",
+    summary: "チェックポイントと第1話導線を設計します。",
+    phases: [
+      "generate_series_checkpoints_start",
+      "generate_series_checkpoints_done",
+      "seed_route_dry_run_start",
+      "seed_route_dry_run_done",
+    ],
+  },
+  {
+    id: "finalize",
+    label: "統合と品質確認",
+    summary: "Blueprint統合、カバー整合、返却準備を行います。",
+    phases: [
+      "finalize_series_blueprint_start",
+      "generate_series_cover_candidates_start",
+      "generate_series_cover_candidates_done",
+      "validate_cover_identity_start",
+      "validate_cover_identity_done",
+      "finalize_series_blueprint_done",
+      "response_preparing",
+    ],
+  },
+  {
+    id: "done",
+    label: "完了",
+    summary: "シリーズを利用できる状態で返却します。",
+    phases: ["completed"],
   },
 ] as const;
-
-const FORGING_LOTTIE_URI = "https://assets10.lottiefiles.com/packages/lf20_iwmd6pyr.json";
 
 type GenreThemeKey = "ember" | "adventure" | "mystery" | "serene";
 
@@ -202,12 +246,6 @@ type ChatMessage = {
   id: string;
   role: "assistant" | "user";
   text: string;
-};
-
-type SeriesProposalCandidate = {
-  id: string;
-  axisLabel: string;
-  draft: GeneratedSeriesDraft;
 };
 
 const GENRE_THEMES: Record<GenreThemeKey, { colors: [string, string, string]; orb: string; spark: string }> = {
@@ -245,6 +283,7 @@ const PARTICLE_SEEDS = [
 ] as const;
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const SERIES_RESULT_IMAGE_PREFETCH_TIMEOUT_MS = 25_000;
 
 const generateId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
@@ -269,11 +308,117 @@ const normalizeCopy = (value?: string | null, fallback = "") => {
   return cleaned || fallback;
 };
 
-const toSeriesPhaseMessage = (phase: SeriesDraftGenerationPhase, detail?: string, variantLabel?: string) => {
+const toSeriesPhaseMessage = (phase: SeriesDraftGenerationPhase, detail?: string) => {
   const phaseCopy = SERIES_PHASE_USER_COPY[phase];
-  const normalizedDetail = normalizeCopy(detail);
-  const merged = normalizedDetail && normalizedDetail !== phaseCopy ? `${phaseCopy}\n${normalizedDetail}` : phaseCopy;
-  return variantLabel ? `${variantLabel}案: ${merged}` : merged;
+  if (!detail) return phaseCopy;
+  const normalizedDetail = normalizeCopy(detail).toLowerCase();
+  if (!normalizedDetail) return phaseCopy;
+  if (
+    normalizedDetail.includes("attempt") ||
+    normalizedDetail.includes("llm") ||
+    normalizedDetail.includes("schema") ||
+    normalizedDetail.includes("timeout")
+  ) {
+    return phaseCopy;
+  }
+  return phaseCopy;
+};
+
+const collectSeriesDraftImageUris = (draft: GeneratedSeriesDraft): string[] => {
+  const uris: string[] = [];
+  const cover = normalizeCopy(draft.coverImageUrl);
+  if (cover) uris.push(cover);
+
+  for (const character of draft.characters || []) {
+    const portrait = normalizeCopy(character.portraitImageUrl);
+    if (portrait) uris.push(portrait);
+  }
+
+  const visualAssets = Array.isArray(draft.world?.visualAssets) ? draft.world.visualAssets : [];
+  for (const visual of visualAssets) {
+    const imageUrl = normalizeCopy(visual.imageUrl);
+    if (imageUrl) uris.push(imageUrl);
+  }
+
+  const seen = new Set<string>();
+  return uris.filter((uri) => {
+    if (!uri) return false;
+    if (seen.has(uri)) return false;
+    seen.add(uri);
+    return true;
+  });
+};
+
+const createAbortError = () => {
+  const error = new Error("Aborted");
+  (error as Error & { name: string }).name = "AbortError";
+  return error;
+};
+
+const prefetchSeriesDraftImages = async (params: {
+  uris: string[];
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  onProgress?: (done: number, total: number) => void;
+}) => {
+  const { uris, timeoutMs, signal, onProgress } = params;
+  if (uris.length === 0) return;
+
+  await new Promise<void>((resolve, reject) => {
+    let completed = 0;
+    let settled = false;
+    const total = uris.length;
+    const timeout = setTimeout(
+      () => {
+        if (settled) return;
+        settled = true;
+        if (signal) signal.removeEventListener("abort", onAbort);
+        resolve();
+      },
+      Math.max(5_000, timeoutMs ?? SERIES_RESULT_IMAGE_PREFETCH_TIMEOUT_MS)
+    );
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (signal) signal.removeEventListener("abort", onAbort);
+      resolve();
+    };
+
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (signal) signal.removeEventListener("abort", onAbort);
+      reject(error);
+    };
+
+    const onAbort = () => fail(createAbortError());
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
+
+    uris.forEach((uri) => {
+      Image.prefetch(uri)
+        .catch(() => false)
+        .then(() => {
+          if (settled) return;
+          completed += 1;
+          onProgress?.(completed, total);
+          if (completed >= total) finish();
+        });
+    });
+  });
+};
+
+const resolveSeriesWorkflowStageIndex = (phase: SeriesDraftGenerationPhase) => {
+  for (let index = 0; index < SERIES_WORKFLOW_STAGES.length; index += 1) {
+    if (SERIES_WORKFLOW_STAGES[index].phases.includes(phase)) return index;
+  }
+  return 0;
 };
 
 const deriveSeriesTitle = (prompt: string) => {
@@ -649,7 +794,13 @@ const StoryKeywordChip = ({
         />
         <Text
           className={`text-[12px] ${active ? "text-white" : "text-[#5E4A39]"}`}
-          style={{ fontFamily: active ? fonts.bodyBold : fonts.bodyMedium }}
+          style={{
+            fontFamily: active ? fonts.bodyBold : fonts.bodyMedium,
+            lineHeight: 16,
+            textAlign: "center",
+            textAlignVertical: "center",
+            includeFontPadding: false,
+          }}
           numberOfLines={1}
           adjustsFontSizeToFit
           minimumFontScale={0.74}
@@ -661,8 +812,24 @@ const StoryKeywordChip = ({
   );
 };
 
-const StoryForgeLoadingOverlay = ({ message, onCancel }: { message: string; onCancel?: () => void }) => {
+const StoryForgeLoadingOverlay = ({
+  message,
+  stages,
+  progressMessages,
+  onCancel,
+}: {
+  message: string;
+  stages: Array<{
+    id: string;
+    label: string;
+    summary: string;
+    status: SeriesWorkflowStageStatus;
+  }>;
+  progressMessages: string[];
+  onCancel?: () => void;
+}) => {
   const pulse = useRef(new Animated.Value(0.4)).current;
+  const orbit = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -688,19 +855,162 @@ const StoryForgeLoadingOverlay = ({ message, onCancel }: { message: string; onCa
     };
   }, [pulse]);
 
+  useEffect(() => {
+    const orbitLoop = Animated.loop(
+      Animated.timing(orbit, {
+        toValue: 1,
+        duration: 4200,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    );
+
+    orbitLoop.start();
+    return () => {
+      orbitLoop.stop();
+    };
+  }, [orbit]);
+
+  const orbitRotation = orbit.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"],
+  });
+
+  const reverseOrbitRotation = orbit.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["360deg", "0deg"],
+  });
+
+  const activeStage = stages.find((stage) => stage.status === "active");
+  const recentMessages = (progressMessages.length > 0 ? progressMessages : [message]).slice(-3);
+
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="auto">
       <LinearGradient colors={["#0B101D", "#1B1211", "#3A220F"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
       <SafeAreaView edges={["top", "bottom"]} className="flex-1 items-center justify-center px-8">
-        <View className="items-center">
+        <View className="items-center w-full max-w-[380px]">
           <View className="w-[220px] h-[220px] items-center justify-center mb-4">
-            {Platform.OS === "web" ? (
-              <Animated.View style={{ opacity: pulse }} className="w-24 h-24 rounded-full border border-[#E7B788] items-center justify-center">
-                <Ionicons name="sparkles" size={38} color="#F6D1AD" />
-              </Animated.View>
-            ) : (
-              <LottieView source={{ uri: FORGING_LOTTIE_URI }} autoPlay loop style={{ width: 220, height: 220 }} />
-            )}
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                width: 170,
+                height: 170,
+                borderRadius: 170,
+                backgroundColor: "rgba(250, 179, 108, 0.18)",
+                opacity: pulse.interpolate({
+                  inputRange: [0.4, 1],
+                  outputRange: [0.42, 0.8],
+                }),
+                transform: [
+                  {
+                    scale: pulse.interpolate({
+                      inputRange: [0.4, 1],
+                      outputRange: [0.9, 1.12],
+                    }),
+                  },
+                ],
+              }}
+            />
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                width: 198,
+                height: 198,
+                borderRadius: 198,
+                borderWidth: 1.4,
+                borderColor: "rgba(248, 203, 158, 0.34)",
+                transform: [{ rotate: orbitRotation }],
+              }}
+            >
+              <View
+                style={{
+                  position: "absolute",
+                  top: -2,
+                  left: 96,
+                  width: 5,
+                  height: 5,
+                  borderRadius: 5,
+                  backgroundColor: "rgba(255, 220, 183, 0.95)",
+                }}
+              />
+              <View
+                style={{
+                  position: "absolute",
+                  bottom: -1,
+                  right: 42,
+                  width: 3,
+                  height: 3,
+                  borderRadius: 3,
+                  backgroundColor: "rgba(255, 220, 183, 0.85)",
+                }}
+              />
+            </Animated.View>
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                width: 156,
+                height: 156,
+                borderRadius: 156,
+                borderWidth: 1,
+                borderColor: "rgba(242, 170, 112, 0.32)",
+                transform: [{ rotate: reverseOrbitRotation }],
+              }}
+            >
+              <View
+                style={{
+                  position: "absolute",
+                  top: 21,
+                  right: 7,
+                  width: 4,
+                  height: 4,
+                  borderRadius: 4,
+                  backgroundColor: "rgba(255, 205, 156, 0.92)",
+                }}
+              />
+              <View
+                style={{
+                  position: "absolute",
+                  bottom: 11,
+                  left: 16,
+                  width: 3,
+                  height: 3,
+                  borderRadius: 3,
+                  backgroundColor: "rgba(255, 205, 156, 0.76)",
+                }}
+              />
+            </Animated.View>
+            <Animated.View
+              style={{
+                width: 108,
+                height: 108,
+                borderRadius: 108,
+                overflow: "hidden",
+                opacity: pulse.interpolate({
+                  inputRange: [0.4, 1],
+                  outputRange: [0.9, 1],
+                }),
+                transform: [
+                  {
+                    scale: pulse.interpolate({
+                      inputRange: [0.4, 1],
+                      outputRange: [0.95, 1.03],
+                    }),
+                  },
+                ],
+              }}
+            >
+              <LinearGradient
+                colors={["#FFE4C5", "#F5B066", "#D8782C"]}
+                start={{ x: 0.15, y: 0.1 }}
+                end={{ x: 1, y: 1 }}
+                className="flex-1 items-center justify-center"
+              >
+                <Ionicons name="flame" size={44} color="#2A1409" />
+              </LinearGradient>
+            </Animated.View>
           </View>
 
           <Text
@@ -709,10 +1019,71 @@ const StoryForgeLoadingOverlay = ({ message, onCancel }: { message: string; onCa
           >
             物語を紡いでいます
           </Text>
-          <Text className="text-sm text-[#E6BE96] mt-3" style={{ fontFamily: fonts.bodyMedium, letterSpacing: 0.4 }}>
+          <Text className="text-sm text-[#E6BE96] mt-2" style={{ fontFamily: fonts.bodyMedium, letterSpacing: 0.4 }}>
             {message}
           </Text>
-          <View className="w-full mt-7 h-1.5 rounded-full bg-white/15 overflow-hidden">
+
+          <View className="w-full mt-4 rounded-2xl border border-white/15 bg-white/8 px-4 py-3">
+            <Text className="text-[11px] text-[#F1D6B8]" style={{ fontFamily: fonts.bodyMedium, letterSpacing: 0.6 }}>
+              生成ログ
+            </Text>
+            {recentMessages.map((line, index) => {
+              const isLatest = index === recentMessages.length - 1;
+              return (
+                <View
+                  key={`progress-message-${index}-${line}`}
+                  className={`mt-2 rounded-xl px-3 py-2 ${isLatest ? "bg-[#FFF5E8]/95" : "bg-white/10"}`}
+                >
+                  <Text
+                    className={`text-[12px] leading-5 ${isLatest ? "text-[#3A2718]" : "text-[#F4DFC8]"}`}
+                    style={{ fontFamily: fonts.bodyRegular }}
+                  >
+                    {line}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+
+          <View className="w-full mt-3 rounded-2xl border border-white/15 bg-white/8 px-4 py-3">
+            <Text className="text-[11px] text-[#F1D6B8]" style={{ fontFamily: fonts.bodyMedium, letterSpacing: 0.6 }}>
+              ワークフロー進行
+            </Text>
+            <View className="mt-2 gap-2">
+              {stages.map((stage) => {
+                const iconName =
+                  stage.status === "done"
+                    ? "checkmark-circle"
+                    : stage.status === "active"
+                      ? "sync-circle"
+                      : "ellipse-outline";
+                const iconColor =
+                  stage.status === "done"
+                    ? "#FBC37F"
+                    : stage.status === "active"
+                      ? "#FDE2BF"
+                      : "rgba(255, 234, 210, 0.45)";
+                return (
+                  <View key={stage.id} className="flex-row items-center gap-2">
+                    <Ionicons name={iconName as any} size={15} color={iconColor} />
+                    <Text
+                      className={`text-[12px] ${stage.status === "pending" ? "text-[#C6AE96]" : "text-[#F5DFC6]"}`}
+                      style={{ fontFamily: stage.status === "active" ? fonts.bodyBold : fonts.bodyMedium }}
+                    >
+                      {stage.label}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+            {activeStage ? (
+              <Text className="mt-2 text-[11px] text-[#E7C7A3]" style={{ fontFamily: fonts.bodyRegular }}>
+                現在: {activeStage.summary}
+              </Text>
+            ) : null}
+          </View>
+
+          <View className="w-full mt-3 h-1.5 rounded-full bg-white/15 overflow-hidden">
             <Animated.View
               className="h-full bg-[#F59E0B]"
               style={{
@@ -728,6 +1099,7 @@ const StoryForgeLoadingOverlay = ({ message, onCancel }: { message: string; onCa
               }}
             />
           </View>
+
           {onCancel ? (
             <Pressable onPress={onCancel} className="mt-5 rounded-full border border-white/35 px-4 py-2">
               <Text className="text-[12px] text-[#F7D9B8]" style={{ fontFamily: fonts.bodyMedium, letterSpacing: 0.6 }}>
@@ -760,10 +1132,9 @@ export const CreateSeriesScreen = ({ route }: Props) => {
   const [isAutoAdvancing, setIsAutoAdvancing] = useState(false);
   const [selectedKeywords, setSelectedKeywords] = useState<string[]>([]);
   const [stepAnswers, setStepAnswers] = useState<Partial<Record<SeriesInterviewStep["id"], string>>>({});
-  const [proposalCandidates, setProposalCandidates] = useState<SeriesProposalCandidate[]>([]);
-  const [proposalHint, setProposalHint] = useState("");
-  const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
-  const [liveGenerationMessage, setLiveGenerationMessage] = useState<string>(FORGING_STATUS_MESSAGES[0]);
+  const [latestGenerationPhase, setLatestGenerationPhase] = useState<SeriesDraftGenerationPhase>("request_received");
+  const [liveGenerationMessage, setLiveGenerationMessage] = useState<string>(SERIES_PHASE_USER_COPY.request_received);
+  const [generationProgressMessages, setGenerationProgressMessages] = useState<string[]>([]);
 
   const isMountedRef = useRef(true);
   const seriesChatScrollRef = useRef<ScrollView | null>(null);
@@ -787,10 +1158,6 @@ export const CreateSeriesScreen = ({ route }: Props) => {
     const q3 = (stepAnswers.q3 || "").trim();
     const q4 = (stepAnswers.q4 || "").trim();
     const q5 = (stepAnswers.q5 || "").trim();
-    const additional = [sourcePrompt, proposalHint ? `再生成調整: ${proposalHint}` : ""]
-      .map((row) => row.trim())
-      .filter(Boolean)
-      .join("\n");
     return {
       genreWorld: q3 || "現実の中に少し秘密が潜む、徒歩で巡れる現代日本の物語",
       desiredEmotion: q1 || "ワクワクとじんわりが共存する体験",
@@ -799,9 +1166,9 @@ export const CreateSeriesScreen = ({ route }: Props) => {
       avoidExpressions: q5 || "怖すぎる・重すぎる展開は避ける",
       visualStylePreset: "シネマティックアニメ",
       visualStyleNotes: undefined,
-      additionalNotes: additional || undefined,
+      additionalNotes: sourcePrompt || undefined,
     };
-  }, [proposalHint, sourcePrompt, stepAnswers]);
+  }, [sourcePrompt, stepAnswers]);
 
   const requiredAnswered = useMemo(
     () => SERIES_INTERVIEW_STEPS.filter((step) => !step.optional).every((step) => Boolean((stepAnswers[step.id] || "").trim())),
@@ -820,6 +1187,22 @@ export const CreateSeriesScreen = ({ route }: Props) => {
     if (isInterviewComplete) return 1;
     return Math.max(0.08, Math.min(0.95, (activeQuestionIndex + 1) / SERIES_INTERVIEW_STEPS.length));
   }, [activeQuestionIndex, isInterviewComplete]);
+
+  const workflowStageRows = useMemo(() => {
+    const currentIndex = resolveSeriesWorkflowStageIndex(latestGenerationPhase);
+    return SERIES_WORKFLOW_STAGES.map((stage, index) => {
+      let status: SeriesWorkflowStageStatus = "pending";
+      if (index < currentIndex) status = "done";
+      if (index === currentIndex) status = "active";
+      if (latestGenerationPhase === "completed" && index <= currentIndex) status = "done";
+      return {
+        id: stage.id,
+        label: stage.label,
+        summary: stage.summary,
+        status,
+      };
+    });
+  }, [latestGenerationPhase]);
 
   const interactionLocked = isSaving || isGenerating || isAutoAdvancing || !!typingMessageId;
 
@@ -841,18 +1224,18 @@ export const CreateSeriesScreen = ({ route }: Props) => {
 
   useEffect(() => {
     if (!isGenerating) {
-      setLiveGenerationMessage(FORGING_STATUS_MESSAGES[0]);
+      setLatestGenerationPhase("request_received");
+      setLiveGenerationMessage(SERIES_PHASE_USER_COPY.request_received);
+      setGenerationProgressMessages([]);
       return;
     }
 
-    setLoadingMessageIndex(0);
-    setLiveGenerationMessage(FORGING_STATUS_MESSAGES[0]);
-    const timer = setInterval(() => {
-      setLoadingMessageIndex((prev) => (prev + 1) % FORGING_STATUS_MESSAGES.length);
-    }, 2300);
-
-    return () => clearInterval(timer);
-  }, [isGenerating]);
+    if (generationProgressMessages.length === 0) {
+      setLatestGenerationPhase("request_received");
+      setLiveGenerationMessage(SERIES_PHASE_USER_COPY.request_received);
+      setGenerationProgressMessages([SERIES_PHASE_USER_COPY.request_received]);
+    }
+  }, [generationProgressMessages.length, isGenerating]);
 
   useEffect(() => {
     scrollToBottom(18);
@@ -865,7 +1248,6 @@ export const CreateSeriesScreen = ({ route }: Props) => {
     if (inferred && inferred !== "新しいシリーズ") {
       setSeriesNameCandidate(inferred);
     }
-    setProposalHint(prefillPrompt);
   }, [prefillPrompt]);
 
   const handleAssistantTypingDone = useCallback((messageId: string) => {
@@ -939,8 +1321,6 @@ export const CreateSeriesScreen = ({ route }: Props) => {
         ...prev,
         [currentStep.id]: text,
       }));
-      setProposalCandidates([]);
-      setProposalHint("");
 
       const userMessage: ChatMessage = {
         id: generateId(),
@@ -986,7 +1366,7 @@ export const CreateSeriesScreen = ({ route }: Props) => {
     ]
   );
 
-  const handleGenerateSeries = useCallback(async (hint = "") => {
+  const handleGenerateSeries = useCallback(async () => {
     if (!canSubmit || isSaving) {
       Alert.alert("入力が必要です", "Q1〜Q4への回答を完了してください。");
       return;
@@ -997,12 +1377,13 @@ export const CreateSeriesScreen = ({ route }: Props) => {
 
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-    const normalizedHint = hint.trim();
+    const initialPhase: SeriesDraftGenerationPhase = "request_received";
+    const initialMessage = toSeriesPhaseMessage(initialPhase);
     setIsSaving(true);
     setIsGenerating(true);
-    setProposalCandidates([]);
-    setProposalHint(normalizedHint);
-    setLiveGenerationMessage(FORGING_STATUS_MESSAGES[0]);
+    setLatestGenerationPhase(initialPhase);
+    setLiveGenerationMessage(initialMessage);
+    setGenerationProgressMessages([initialMessage]);
     const generationAbortController = new AbortController();
     generationAbortRef.current = generationAbortController;
 
@@ -1010,91 +1391,83 @@ export const CreateSeriesScreen = ({ route }: Props) => {
       const titleCandidate = (seriesNameCandidate.trim() || deriveSeriesTitle(promptForGeneration)).trim();
       const existingIdentityPack = await loadExistingIdentityPack(titleCandidate);
 
-      const settled = await Promise.allSettled(
-        SERIES_PROPOSAL_VARIANTS.map(async (variant) => {
-          const variantPrompt = [
-            promptForGeneration,
-            `【シリーズ案バリエーション】${variant.direction}`,
-            normalizedHint ? `【再生成の要望】${normalizedHint}` : "",
-            "出力は必ず同じ回答意図を守りつつ、差分が明確な別案にしてください。",
-          ]
-            .map((line) => line.trim())
-            .filter(Boolean)
-            .join("\n");
-
-          const aiDraft = await generateSeriesDraftViaMastra(
-            {
-              interview: interviewInput,
-              prompt: variantPrompt,
-              desiredEpisodeCount: 8,
-              generationMode: "proposal",
-              creatorId: userId || undefined,
-              existingIdentityPack,
-              identityRetcon: false,
-            },
-            {
-              signal: generationAbortController.signal,
-              timeoutMs: 210_000,
-              onProgress: (event) => {
-                if (!isMountedRef.current) return;
-                setLiveGenerationMessage(toSeriesPhaseMessage(event.phase, event.detail, variant.label));
-              },
-            }
-          );
-
-          const normalizedDraft: GeneratedSeriesDraft = {
-            ...aiDraft,
-            title: (aiDraft.title || titleCandidate || "新しいシリーズ").trim(),
-            aiRules:
-              aiDraft.aiRules?.trim() ||
-              "キャラクターと伏線の整合性を保ち、各話の結果を次話へ引き継ぐこと。",
-          };
-
-          return {
-            id: `${variant.id}-${generateId()}`,
-            axisLabel: variant.label,
-            draft: normalizedDraft,
-          } satisfies SeriesProposalCandidate;
-        })
+      const aiDraft = await generateSeriesDraftViaMastra(
+        {
+          interview: interviewInput,
+          prompt: promptForGeneration,
+          desiredEpisodeCount: 8,
+          creatorId: userId || undefined,
+          existingIdentityPack,
+          identityRetcon: false,
+        },
+        {
+          signal: generationAbortController.signal,
+          onProgress: (event) => {
+            if (!isMountedRef.current) return;
+            const nextMessage = toSeriesPhaseMessage(event.phase, event.detail);
+            setLatestGenerationPhase(event.phase);
+            setLiveGenerationMessage(nextMessage);
+            setGenerationProgressMessages((prev) => {
+              if (prev[prev.length - 1] === nextMessage) return prev;
+              return [...prev, nextMessage].slice(-6);
+            });
+          },
+        }
       );
 
-      const candidates: SeriesProposalCandidate[] = [];
-      const errors: string[] = [];
+      const normalizedDraft: GeneratedSeriesDraft = {
+        ...aiDraft,
+        title: (aiDraft.title || titleCandidate || "新しいシリーズ").trim(),
+        aiRules:
+          aiDraft.aiRules?.trim() ||
+          "キャラクターと伏線の整合性を保ち、各話の結果を次話へ引き継ぐこと。",
+      };
 
-      for (let index = 0; index < settled.length; index += 1) {
-        const result = settled[index];
-        if (result.status === "fulfilled") {
-          candidates.push(result.value);
-          continue;
-        }
-        const reason = result.reason;
-        if (reason instanceof Error && reason.name === "AbortError") {
-          continue;
-        }
-        const message = reason instanceof Error ? reason.message : String(reason);
-        errors.push(`${SERIES_PROPOSAL_VARIANTS[index].label}: ${message}`);
+      const pushProgressMessage = (nextMessage: string) => {
+        if (!isMountedRef.current) return;
+        setLiveGenerationMessage(nextMessage);
+        setGenerationProgressMessages((prev) => {
+          if (prev[prev.length - 1] === nextMessage) return prev;
+          return [...prev, nextMessage].slice(-8);
+        });
+      };
+
+      pushProgressMessage("仕上げ中です。生成結果を整えています。");
+      const imageUris = collectSeriesDraftImageUris(normalizedDraft);
+      if (imageUris.length > 0) {
+        await prefetchSeriesDraftImages({
+          uris: imageUris,
+          timeoutMs: SERIES_RESULT_IMAGE_PREFETCH_TIMEOUT_MS,
+          signal: generationAbortController.signal,
+          onProgress: (done, total) => {
+            pushProgressMessage(`仕上げ中です。画像を準備しています (${done}/${total})`);
+          },
+        });
       }
 
-      if (candidates.length === 0) {
-        if (generationAbortController.signal.aborted) {
-          const abortError = new Error("生成を中止しました。");
-          (abortError as Error & { name: string }).name = "AbortError";
-          throw abortError;
-        }
-        throw new Error(errors[0] || "シリーズ案の生成に失敗しました。");
-      }
+      if (generationAbortController.signal.aborted) return;
+      pushProgressMessage("仕上げが完了しました。結果画面へ移動します。");
+      await wait(120);
+      if (!isMountedRef.current || generationAbortController.signal.aborted) return;
 
-      setProposalCandidates(candidates);
-      if (errors.length > 0) {
-        Alert.alert("一部のシリーズ案を生成できませんでした", errors.slice(0, 2).join("\n"));
-      }
+      navigation.replace("SeriesGenerationResult", {
+        generated: normalizedDraft,
+        sourcePrompt: promptForGeneration,
+        imagesPreloaded: true,
+      });
     } catch (error: any) {
       if (error instanceof Error && error.name === "AbortError") {
         return;
       }
-      console.error("CreateSeriesScreen: AI generation failed", error);
-
       const errorMessage = error?.message || "不明なエラー";
+      const isLikelyConnectionIssue = /Mastra APIに接続できません|Network request failed|Failed to fetch/i.test(
+        String(errorMessage)
+      );
+      if (isLikelyConnectionIssue) {
+        console.warn("CreateSeriesScreen: Mastra connection issue", errorMessage);
+      } else {
+        console.error("CreateSeriesScreen: AI generation failed", error);
+      }
       Alert.alert(
         "シリーズ生成に失敗しました",
         `AIによる生成中にエラーが発生しました。\n\n${errorMessage}\n\n時間をおいて再度お試しください。`
@@ -1106,7 +1479,7 @@ export const CreateSeriesScreen = ({ route }: Props) => {
         setIsGenerating(false);
       }
     }
-  }, [canSubmit, interviewInput, isSaving, seriesNameCandidate, sourcePrompt, userId]);
+  }, [canSubmit, interviewInput, isSaving, navigation, seriesNameCandidate, sourcePrompt, userId]);
 
   const handleCancelGeneration = useCallback(() => {
     generationAbortRef.current?.abort();
@@ -1114,19 +1487,11 @@ export const CreateSeriesScreen = ({ route }: Props) => {
     if (isMountedRef.current) {
       setIsSaving(false);
       setIsGenerating(false);
-      setLiveGenerationMessage(FORGING_STATUS_MESSAGES[0]);
+      setLatestGenerationPhase("request_received");
+      setLiveGenerationMessage(SERIES_PHASE_USER_COPY.request_received);
+      setGenerationProgressMessages([]);
     }
   }, []);
-
-  const handleSelectProposal = useCallback(
-    (candidate: SeriesProposalCandidate) => {
-      navigation.replace("SeriesGenerationResult", {
-        generated: candidate.draft,
-        sourcePrompt,
-      });
-    },
-    [navigation, sourcePrompt]
-  );
 
   const currentSelectionCount = selectedKeywords.length;
   const canAdvanceCurrentStep = useMemo(() => {
@@ -1138,35 +1503,6 @@ export const CreateSeriesScreen = ({ route }: Props) => {
     if (currentSelectionCount >= currentStep.minSelect) return true;
     return hasText;
   }, [currentSelectionCount, currentStep, seriesChatInput]);
-
-  const summarizeProposalConcept = useCallback((draft: GeneratedSeriesDraft) => {
-    const premise = (draft.premise || "").trim();
-    if (premise) return premise;
-    const firstLine = (draft.overview || "").split(/[。.!?]/)[0]?.trim() || "";
-    return firstLine || "一言コンセプトを生成中";
-  }, []);
-
-  const summarizeProposalCharacters = useCallback((draft: GeneratedSeriesDraft) => {
-    const seeds = (draft.characters || []).slice(0, 2);
-    if (seeds.length === 0) return "固定キャラ情報を生成中";
-    return seeds.map((character) => `${character.name}（${character.role}）`).join(" / ");
-  }, []);
-
-  const summarizeProposalFlow = useCallback((draft: GeneratedSeriesDraft) => {
-    const checkpoints = (draft.checkpoints || []).slice(0, 3);
-    if (checkpoints.length > 0) {
-      return checkpoints
-        .map((checkpoint, index) => `${index + 1}. ${checkpoint.title}`)
-        .join("  →  ");
-    }
-    const episodes = (draft.episodeBlueprints || []).slice(0, 3);
-    if (episodes.length > 0) {
-      return episodes
-        .map((episode, index) => `${index + 1}. ${episode.title}`)
-        .join("  →  ");
-    }
-    return "3話分の進行を生成中";
-  }, []);
 
   return (
     <View className="flex-1 bg-[#F8F7F6]">
@@ -1249,54 +1585,13 @@ export const CreateSeriesScreen = ({ route }: Props) => {
               )
             )}
 
-            {proposalCandidates.length > 0 ? (
-              <View className="mt-3 gap-3">
-                <View className="px-1">
-                  <Text className="text-[12px] text-[#7A6855]" style={{ fontFamily: fonts.bodyMedium, letterSpacing: 0.6 }}>
-                    シリーズ案を3つ生成しました。気になる案を選んでください。
-                  </Text>
-                </View>
-                {proposalCandidates.map((candidate) => (
-                  <View key={candidate.id} className="rounded-2xl border border-[#E7DDCF] bg-white px-4 py-4">
-                    <View className="flex-row items-center justify-between mb-2">
-                      <Text className="text-[11px] text-[#EE8C2B]" style={{ fontFamily: fonts.displayBold, letterSpacing: 0.8 }}>
-                        {candidate.axisLabel}
-                      </Text>
-                      <Text className="text-[11px] text-[#8E7B69]" style={{ fontFamily: fonts.bodyMedium }}>
-                        {normalizeCopy(candidate.draft.tone, "トーン未設定")}
-                      </Text>
-                    </View>
-                    <Text className="text-[18px] text-[#2B1E16] mb-2" style={{ fontFamily: fonts.displayBold }}>
-                      {normalizeCopy(candidate.draft.title, "新しいシリーズ")}
-                    </Text>
-                    <Text className="text-[12px] text-[#5E4A39] leading-5 mb-2" style={{ fontFamily: fonts.bodyRegular }}>
-                      一言コンセプト: {summarizeProposalConcept(candidate.draft)}
-                    </Text>
-                    <Text className="text-[12px] text-[#5E4A39] leading-5 mb-2" style={{ fontFamily: fonts.bodyRegular }}>
-                      固定キャラ: {summarizeProposalCharacters(candidate.draft)}
-                    </Text>
-                    <Text className="text-[12px] text-[#5E4A39] leading-5 mb-3" style={{ fontFamily: fonts.bodyRegular }}>
-                      3話の進み方: {summarizeProposalFlow(candidate.draft)}
-                    </Text>
-                    <Pressable
-                      onPress={() => handleSelectProposal(candidate)}
-                      className="h-10 rounded-xl bg-[#EE8C2B] items-center justify-center"
-                    >
-                      <Text className="text-white text-[13px]" style={{ fontFamily: fonts.displayBold }}>
-                        この案で進む
-                      </Text>
-                    </Pressable>
-                  </View>
-                ))}
-              </View>
-            ) : null}
           </View>
         </ScrollView>
 
         <SafeAreaView edges={["bottom"]} className="bg-[#F8F7F6]">
           <View className="px-4 pt-2 pb-3">
             {isInterviewComplete ? (
-              <View className="w-full gap-2">
+              <View className="w-full">
                 <Pressable
                   onPress={() => {
                     void handleGenerateSeries();
@@ -1321,45 +1616,18 @@ export const CreateSeriesScreen = ({ route }: Props) => {
                     <>
                       <ActivityIndicator color="#FFFFFF" />
                       <Text className="text-base text-white" style={{ fontFamily: fonts.displayBold }}>
-                        3案を生成中...
+                        シリーズを生成中...
                       </Text>
                     </>
                   ) : (
                     <>
                       <Ionicons name="sparkles" size={18} color="#FFFFFF" />
                       <Text className="text-base text-white" style={{ fontFamily: fonts.displayBold, letterSpacing: 0.5 }}>
-                        {proposalCandidates.length > 0 ? "3案をもう一度生成" : "シリーズ案を3つ生成"}
+                        シリーズを生成
                       </Text>
                     </>
                   )}
                 </Pressable>
-
-                {proposalCandidates.length > 0 ? (
-                  <View className="flex-row gap-2">
-                    <Pressable
-                      onPress={() => {
-                        void handleGenerateSeries("もう少し恋愛寄り");
-                      }}
-                      disabled={interactionLocked}
-                      className={`flex-1 h-10 rounded-xl items-center justify-center ${interactionLocked ? "bg-[#D9D1C8]" : "bg-white border border-[#E7DDCF]"}`}
-                    >
-                      <Text className="text-[12px] text-[#6B5846]" style={{ fontFamily: fonts.bodyMedium }}>
-                        もう少し恋愛寄り
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => {
-                        void handleGenerateSeries("もっと不思議寄り");
-                      }}
-                      disabled={interactionLocked}
-                      className={`flex-1 h-10 rounded-xl items-center justify-center ${interactionLocked ? "bg-[#D9D1C8]" : "bg-white border border-[#E7DDCF]"}`}
-                    >
-                      <Text className="text-[12px] text-[#6B5846]" style={{ fontFamily: fonts.bodyMedium }}>
-                        もっと不思議寄り
-                      </Text>
-                    </Pressable>
-                  </View>
-                ) : null}
               </View>
             ) : (
               <View className="w-full">
@@ -1446,11 +1714,9 @@ export const CreateSeriesScreen = ({ route }: Props) => {
 
       {isGenerating ? (
         <StoryForgeLoadingOverlay
-          message={
-            liveGenerationMessage && liveGenerationMessage !== FORGING_STATUS_MESSAGES[0]
-              ? liveGenerationMessage
-              : FORGING_STATUS_MESSAGES[loadingMessageIndex]
-          }
+          message={liveGenerationMessage}
+          stages={workflowStageRows}
+          progressMessages={generationProgressMessages}
           onCancel={handleCancelGeneration}
         />
       ) : null}

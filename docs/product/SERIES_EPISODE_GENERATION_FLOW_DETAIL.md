@@ -220,8 +220,8 @@ flowchart TD
 - 出力: `resolved_spots`（実名・座標・訪問順）。
 - ここで初めて `spot_name` を確定する。
 
-#### Step E9: Spot本文/謎生成
-- 実装: `generateSpotsContent` -> `generateChapter` + `generatePuzzle`。
+#### Step E9: Spot本文生成
+- 実装: `generateSpotsContent` -> `generateChapter`（puzzle LLM生成は停止）。
 - 入力: `resolved_spots`。
 
 #### Step E10: Assemble -> 保存

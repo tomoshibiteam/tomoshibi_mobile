@@ -1,7 +1,13 @@
 import React from "react";
-import { View } from "react-native";
+import { View, type StyleProp, type ViewStyle } from "react-native";
 
-export default function MapViewMock(props: { children?: React.ReactNode; style?: unknown; [key: string]: unknown }) {
+type MapViewMockProps = {
+  children?: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+  [key: string]: unknown;
+};
+
+export default function MapViewMock(props: MapViewMockProps) {
   return <View style={props.style}>{props.children}</View>;
 }
 

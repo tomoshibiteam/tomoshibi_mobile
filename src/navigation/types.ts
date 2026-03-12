@@ -26,6 +26,7 @@ export type RootStackParamList = {
   SeriesGenerationResult: {
     generated: GeneratedSeriesDraft;
     sourcePrompt: string;
+    imagesPreloaded?: boolean;
   };
   AddEpisode:
     | {

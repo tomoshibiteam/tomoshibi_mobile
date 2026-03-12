@@ -9,14 +9,2034 @@
 [series-consistency-agent] attempt 1/2 — LLM呼び出し中
 [series-consistency-agent] attempt 1 — LLM応答受信
 [series-episode-pipeline] 開始 — series: 汐鳴港の黄昏迷宮, location: 浅草, purpose: 歴史観光と街歩き, spots: 5, wishes: レトロな街並みを楽しみつつ、次話が気になる導線にしてほしい
-[series-episode-pipeline] Step 1/3: エピソード設計
-[episode-planner] 入力データ確認:
-[episode-planner]   シリーズ: 汐鳴港の黄昏迷宮
-[episode-planner]   概要: 歴史ある港町・汐鳴を舞台に、青年・凪と相棒・宗介が「古い海図の切れ端」を求めて坂道や路地裏を歩き続ける探索ミステリーです。全6話を通じて、黄昏時の街並みに隠され
-[episode-planner]   世界観: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。
-[episode-planner]   前提: 歴史ある港町・汐鳴の路地裏を歩き、年上の頼れる相棒と共に街に眠る古い謎と現代の事件を解き明かす。 各話は徒歩で巡れる複数スポット（目安2〜4箇所）を移動しながら
-[episode-planner]   シーズン目標: 街の各所に隠された「古い海図の切れ端」を全て集め、汐鳴の歴史を揺るがす大きな秘密を解き明かすこと。
-[episode-planner]   キャラクター(3人): 海藤 凪(汐鳴港の歴史に魅せられ、古い海図の謎を追う若き探求者。), 鳴海 宗介(汐鳴港の裏事情に精通し、凪を導き守る元刑事の喫茶店マスター。), 月島 玲子(汐鳴港の郷土史料館で働き、二人に重要なヒントをもたらすミステリアスな司書。)
-[episode-planner]   完了話数: 0 → 今回は第1話
-[episode-planner]   場所: 浅草, 目的: 歴史観光と街歩き, スポット希望: 5
-[episode-planner] attempt 1/2 — LLM呼び出し中
+{
+  "timestamp": "2026-03-10T23:49:12.650Z",
+  "mode": {
+    "runtime_fallback": true
+  },
+  "summary": {
+    "total": 23,
+    "passed": 23,
+    "failed": 0
+  },
+  "series": {
+    "title": "汐鳴港の黄昏迷宮",
+    "checkpoints": 4,
+    "primary_count": 2,
+    "secondary_count": 1,
+    "spot_requirement_count": 3,
+    "seed_dry_run": {
+      "feasible": true,
+      "selected_spots": [
+        "架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。 石畳路地",
+        "架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。 運河テラス",
+        "架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。 文化案内所前"
+      ],
+      "failure_reasons": [],
+      "route_metrics": {
+        "optimizer": "heuristic_dp_fallback_v1",
+        "total_estimated_walk_minutes": 27,
+        "transfer_minutes": 6,
+        "max_leg_minutes": 3,
+        "max_total_walk_minutes": 110,
+        "feasible": true,
+        "failure_reasons": [],
+        "optimized_order_indices": [
+          0,
+          1,
+          2
+        ],
+        "optimized_order_spot_names": [
+          "架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。 石畳路地",
+          "架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。 運河テラス",
+          "架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。 文化案内所前"
+        ]
+      },
+      "route_score": 0.764,
+      "continuity_score": 0.619
+    },
+    "progress_phases": [
+      "sanitize_series_request_start",
+      "sanitize_series_request_done",
+      "generate_series_concept_start",
+      "generate_series_concept_done",
+      "generate_series_characters_start",
+      "generate_series_characters_done",
+      "build_series_identity_pack_start",
+      "build_series_identity_pack_done",
+      "generate_series_checkpoints_start",
+      "generate_series_checkpoints_done",
+      "seed_route_dry_run_start",
+      "seed_route_dry_run_done",
+      "finalize_series_blueprint_start",
+      "generate_series_cover_candidates_start",
+      "generate_series_cover_candidates_done",
+      "validate_cover_identity_start",
+      "validate_cover_identity_done",
+      "finalize_series_blueprint_done"
+    ]
+  },
+  "episode": {
+    "title": "第1話: 浅草の歴史観光と街歩き",
+    "spot_count": 5,
+    "episode_unique_character_count": 2,
+    "episode_world_title": "浅草で紡ぐ歴史観光と街歩きの章",
+    "carry_over_hook": "最後に残された問いが、次回の行動を促す。",
+    "generation_trace": {
+      "stage_location": "浅草",
+      "candidate_spots": [
+        {
+          "requirement_id": "spot_1",
+          "scene_role": "起",
+          "spot_role": "物語の起点となるレトロな喫茶店",
+          "candidates": [
+            {
+              "spot_name": "浅草 石畳路地",
+              "tourism_focus": "歴史的建造物・レトロ文化を感じられる地点",
+              "estimated_walk_minutes": 5,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 歴史資料館前",
+              "tourism_focus": "歴史的建造物・レトロ文化を感じられる地点",
+              "estimated_walk_minutes": 7,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 神社参道",
+              "tourism_focus": "歴史的建造物・レトロ文化を感じられる地点",
+              "estimated_walk_minutes": 9,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 市場通り",
+              "tourism_focus": "歴史的建造物・レトロ文化を感じられる地点",
+              "estimated_walk_minutes": 11,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 文化交流広場",
+              "tourism_focus": "歴史的建造物・レトロ文化を感じられる地点",
+              "estimated_walk_minutes": 13,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 駅前広場",
+              "tourism_focus": "歴史的建造物・レトロ文化を感じられる地点",
+              "estimated_walk_minutes": 15,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 商店街",
+              "tourism_focus": "歴史的建造物・レトロ文化を感じられる地点",
+              "estimated_walk_minutes": 17,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 公共広場",
+              "tourism_focus": "歴史的建造物・レトロ文化を感じられる地点",
+              "estimated_walk_minutes": 19,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            }
+          ]
+        },
+        {
+          "requirement_id": "spot_2",
+          "scene_role": "承",
+          "spot_role": "海図のヒントを辿る途中の古い坂道または階段",
+          "candidates": [
+            {
+              "spot_name": "浅草 運河テラス",
+              "tourism_focus": "景観・ノスタルジーを感じられる地点",
+              "estimated_walk_minutes": 7,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 川沿い遊歩道",
+              "tourism_focus": "景観・ノスタルジーを感じられる地点",
+              "estimated_walk_minutes": 9,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 水辺プロムナード",
+              "tourism_focus": "景観・ノスタルジーを感じられる地点",
+              "estimated_walk_minutes": 11,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 歴史資料館前",
+              "tourism_focus": "景観・ノスタルジーを感じられる地点",
+              "estimated_walk_minutes": 13,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 神社参道",
+              "tourism_focus": "景観・ノスタルジーを感じられる地点",
+              "estimated_walk_minutes": 15,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 展望デッキ",
+              "tourism_focus": "景観・ノスタルジーを感じられる地点",
+              "estimated_walk_minutes": 17,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 高台公園",
+              "tourism_focus": "景観・ノスタルジーを感じられる地点",
+              "estimated_walk_minutes": 19,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 駅前広場",
+              "tourism_focus": "景観・ノスタルジーを感じられる地点",
+              "estimated_walk_minutes": 20,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            }
+          ]
+        },
+        {
+          "requirement_id": "spot_3",
+          "scene_role": "結",
+          "spot_role": "紋章が刻まれた古い石碑がある小さな広場または神社",
+          "candidates": [
+            {
+              "spot_name": "浅草 文化案内所前",
+              "tourism_focus": "史跡・地域信仰を感じられる地点",
+              "estimated_walk_minutes": 9,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.35,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 川沿い遊歩道",
+              "tourism_focus": "史跡・地域信仰を感じられる地点",
+              "estimated_walk_minutes": 11,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.35,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 水辺プロムナード",
+              "tourism_focus": "史跡・地域信仰を感じられる地点",
+              "estimated_walk_minutes": 13,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.35,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 歴史資料館前",
+              "tourism_focus": "史跡・地域信仰を感じられる地点",
+              "estimated_walk_minutes": 15,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.35,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 神社参道",
+              "tourism_focus": "史跡・地域信仰を感じられる地点",
+              "estimated_walk_minutes": 17,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.35,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 駅前広場",
+              "tourism_focus": "史跡・地域信仰を感じられる地点",
+              "estimated_walk_minutes": 19,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.35,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 商店街",
+              "tourism_focus": "史跡・地域信仰を感じられる地点",
+              "estimated_walk_minutes": 20,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.35,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 公共広場",
+              "tourism_focus": "史跡・地域信仰を感じられる地点",
+              "estimated_walk_minutes": 20,
+              "public_accessible": true,
+              "role_match_score": 0.5,
+              "tourism_match_score": 0.35,
+              "locality_score": 0.95
+            }
+          ]
+        },
+        {
+          "requirement_id": "req_4",
+          "scene_role": "転",
+          "spot_role": "核心前の意思決定が起きる結節点",
+          "candidates": [
+            {
+              "spot_name": "浅草 橋詰広場",
+              "tourism_focus": "文化体験を感じられる地点",
+              "estimated_walk_minutes": 11,
+              "public_accessible": true,
+              "role_match_score": 0.35,
+              "tourism_match_score": 0.35,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 市場通り",
+              "tourism_focus": "文化体験を感じられる地点",
+              "estimated_walk_minutes": 13,
+              "public_accessible": true,
+              "role_match_score": 0.35,
+              "tourism_match_score": 0.35,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 文化交流広場",
+              "tourism_focus": "文化体験を感じられる地点",
+              "estimated_walk_minutes": 15,
+              "public_accessible": true,
+              "role_match_score": 0.35,
+              "tourism_match_score": 0.35,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 駅前広場",
+              "tourism_focus": "文化体験を感じられる地点",
+              "estimated_walk_minutes": 17,
+              "public_accessible": true,
+              "role_match_score": 0.35,
+              "tourism_match_score": 0.35,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 商店街",
+              "tourism_focus": "文化体験を感じられる地点",
+              "estimated_walk_minutes": 19,
+              "public_accessible": true,
+              "role_match_score": 0.35,
+              "tourism_match_score": 0.35,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 公共広場",
+              "tourism_focus": "文化体験を感じられる地点",
+              "estimated_walk_minutes": 20,
+              "public_accessible": true,
+              "role_match_score": 0.35,
+              "tourism_match_score": 0.35,
+              "locality_score": 0.95
+            }
+          ]
+        },
+        {
+          "requirement_id": "req_5",
+          "scene_role": "結",
+          "spot_role": "最後の余韻に向く見晴らし地点",
+          "candidates": [
+            {
+              "spot_name": "浅草 歴史掲示板前",
+              "tourism_focus": "景観を感じられる地点",
+              "estimated_walk_minutes": 13,
+              "public_accessible": true,
+              "role_match_score": 0.35,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 展望デッキ",
+              "tourism_focus": "景観を感じられる地点",
+              "estimated_walk_minutes": 15,
+              "public_accessible": true,
+              "role_match_score": 0.35,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 高台公園",
+              "tourism_focus": "景観を感じられる地点",
+              "estimated_walk_minutes": 17,
+              "public_accessible": true,
+              "role_match_score": 0.35,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 駅前広場",
+              "tourism_focus": "景観を感じられる地点",
+              "estimated_walk_minutes": 19,
+              "public_accessible": true,
+              "role_match_score": 0.35,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 商店街",
+              "tourism_focus": "景観を感じられる地点",
+              "estimated_walk_minutes": 20,
+              "public_accessible": true,
+              "role_match_score": 0.35,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            },
+            {
+              "spot_name": "浅草 公共広場",
+              "tourism_focus": "景観を感じられる地点",
+              "estimated_walk_minutes": 20,
+              "public_accessible": true,
+              "role_match_score": 0.35,
+              "tourism_match_score": 0.7,
+              "locality_score": 0.95
+            }
+          ]
+        }
+      ],
+      "selected_spots": [
+        {
+          "requirement_id": "spot_1",
+          "scene_role": "起",
+          "spot_name": "浅草 石畳路地",
+          "tourism_focus": "歴史的建造物・レトロ文化を感じられる地点",
+          "estimated_walk_minutes": 5
+        },
+        {
+          "requirement_id": "spot_2",
+          "scene_role": "承",
+          "spot_name": "浅草 運河テラス",
+          "tourism_focus": "景観・ノスタルジーを感じられる地点",
+          "estimated_walk_minutes": 7
+        },
+        {
+          "requirement_id": "spot_3",
+          "scene_role": "結",
+          "spot_name": "浅草 文化案内所前",
+          "tourism_focus": "史跡・地域信仰を感じられる地点",
+          "estimated_walk_minutes": 9
+        },
+        {
+          "requirement_id": "req_4",
+          "scene_role": "転",
+          "spot_name": "浅草 橋詰広場",
+          "tourism_focus": "文化体験を感じられる地点",
+          "estimated_walk_minutes": 11
+        },
+        {
+          "requirement_id": "req_5",
+          "scene_role": "結",
+          "spot_name": "浅草 歴史掲示板前",
+          "tourism_focus": "景観を感じられる地点",
+          "estimated_walk_minutes": 13
+        }
+      ],
+      "eligibility_reject_reasons": [],
+      "mmr_scores": [
+        {
+          "requirement_id": "spot_1",
+          "spot_name": "浅草 石畳路地",
+          "relevance_score": 0.6824999999999999,
+          "redundancy_penalty": 0,
+          "mmr_score": 0.4913999999999999
+        },
+        {
+          "requirement_id": "spot_1",
+          "spot_name": "浅草 歴史資料館前",
+          "relevance_score": 0.6824999999999999,
+          "redundancy_penalty": 0.3333333333333333,
+          "mmr_score": 0.39806666666666657
+        },
+        {
+          "requirement_id": "spot_1",
+          "spot_name": "浅草 神社参道",
+          "relevance_score": 0.6824999999999999,
+          "redundancy_penalty": 0.3333333333333333,
+          "mmr_score": 0.39806666666666657
+        },
+        {
+          "requirement_id": "spot_2",
+          "spot_name": "浅草 運河テラス",
+          "relevance_score": 0.6824999999999999,
+          "redundancy_penalty": 0,
+          "mmr_score": 0.4913999999999999
+        },
+        {
+          "requirement_id": "spot_2",
+          "spot_name": "浅草 川沿い遊歩道",
+          "relevance_score": 0.6824999999999999,
+          "redundancy_penalty": 0.3333333333333333,
+          "mmr_score": 0.39806666666666657
+        },
+        {
+          "requirement_id": "spot_2",
+          "spot_name": "浅草 水辺プロムナード",
+          "relevance_score": 0.6824999999999999,
+          "redundancy_penalty": 0.3333333333333333,
+          "mmr_score": 0.39806666666666657
+        },
+        {
+          "requirement_id": "spot_3",
+          "spot_name": "浅草 文化案内所前",
+          "relevance_score": 0.56,
+          "redundancy_penalty": 0,
+          "mmr_score": 0.4032
+        },
+        {
+          "requirement_id": "spot_3",
+          "spot_name": "浅草 川沿い遊歩道",
+          "relevance_score": 0.56,
+          "redundancy_penalty": 0.3333333333333333,
+          "mmr_score": 0.3098666666666667
+        },
+        {
+          "requirement_id": "spot_3",
+          "spot_name": "浅草 水辺プロムナード",
+          "relevance_score": 0.56,
+          "redundancy_penalty": 0.3333333333333333,
+          "mmr_score": 0.3098666666666667
+        },
+        {
+          "requirement_id": "req_4",
+          "spot_name": "浅草 橋詰広場",
+          "relevance_score": 0.49999999999999994,
+          "redundancy_penalty": 0,
+          "mmr_score": 0.35999999999999993
+        },
+        {
+          "requirement_id": "req_4",
+          "spot_name": "浅草 市場通り",
+          "relevance_score": 0.49999999999999994,
+          "redundancy_penalty": 0.3333333333333333,
+          "mmr_score": 0.2666666666666666
+        },
+        {
+          "requirement_id": "req_4",
+          "spot_name": "浅草 文化交流広場",
+          "relevance_score": 0.49999999999999994,
+          "redundancy_penalty": 0.3333333333333333,
+          "mmr_score": 0.2666666666666666
+        },
+        {
+          "requirement_id": "req_5",
+          "spot_name": "浅草 歴史掲示板前",
+          "relevance_score": 0.6224999999999999,
+          "redundancy_penalty": 0,
+          "mmr_score": 0.44819999999999993
+        },
+        {
+          "requirement_id": "req_5",
+          "spot_name": "浅草 展望デッキ",
+          "relevance_score": 0.6224999999999999,
+          "redundancy_penalty": 0.3333333333333333,
+          "mmr_score": 0.3548666666666666
+        },
+        {
+          "requirement_id": "req_5",
+          "spot_name": "浅草 高台公園",
+          "relevance_score": 0.6224999999999999,
+          "redundancy_penalty": 0.3333333333333333,
+          "mmr_score": 0.3548666666666666
+        }
+      ],
+      "route_metrics": {
+        "optimizer": "heuristic_dp_fallback_v1",
+        "total_estimated_walk_minutes": 63,
+        "transfer_minutes": 18,
+        "max_leg_minutes": 6,
+        "max_total_walk_minutes": 135,
+        "feasible": true,
+        "failure_reasons": [],
+        "optimized_order_indices": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "optimized_order_spot_names": [
+          "浅草 石畳路地",
+          "浅草 運河テラス",
+          "浅草 文化案内所前",
+          "浅草 橋詰広場",
+          "浅草 歴史掲示板前"
+        ]
+      },
+      "route_score": 0.61,
+      "continuity_score": 0.584
+    },
+    "progress_phases": [
+      "pipeline_start",
+      "fallback_plan_start",
+      "spot_resolution_start",
+      "spot_resolution_done",
+      "fallback_plan_done",
+      "episode_assemble_start",
+      "episode_assemble_done"
+    ]
+  },
+  "raw": {
+    "series": {
+      "title": "汐鳴港の黄昏迷宮",
+      "overview": "歴史ある港町・汐鳴を舞台に、青年・凪と相棒・宗介が「古い海図の切れ端」を求めて坂道や路地裏を歩き続ける探索ミステリーです。全6話を通じて、黄昏時の街並みに隠された過去の遺物と現代の陰謀を、徒歩による実地調査で解き明かします。二人の絆の深化と、街の歴史を守るための知的な戦いを描きます。",
+      "ai_rules": "- 各エピソードは徒歩で2〜4スポットを巡る地上の街歩き導線を維持する。\n- 単一屋内拠点だけで完結させず、街路や公共空間を含む移動を必ず入れる。\n- 空中都市・宇宙・海底・閉鎖施設内のみなど街歩き不能な舞台へ逸脱しない。\n- 1話につき必ず2〜4箇所の屋外スポットを徒歩で移動する描写を組み込み、単一屋内での完結を禁止する。\n- 各話の結末で必ず『海図の切れ端』と『次なる目的地（役割仕様）』を提示し、連続性を担保すること。\n- 相棒の宗介は常に冷静な導き手として描き、凪の成長を促す対話劇を重視すること。\n- 謎解きのギミックには、必ず汐鳴の歴史、地理、または古い建築様式に関連する要素を含めること。",
+      "genre": "現代ミステリー / 街歩きアドベンチャー",
+      "tone": "ノスタルジック、知的なワクワク感、静かな緊張感",
+      "premise": "歴史ある港町・汐鳴の路地裏を歩き、年上の頼れる相棒と共に街に眠る古い謎と現代の事件を解き明かす。 各話は徒歩で巡れる複数スポット（目安2〜4箇所）を移動しながら進行する。",
+      "season_goal": "街の各所に隠された「古い海図の切れ端」を全て集め、汐鳴の歴史を揺るがす大きな秘密を解き明かすこと。",
+      "visual_style_preset": "cinematic",
+      "visual_style_notes": "夕景、暖色、ややノスタルジック",
+      "cover_image_prompt": "style preset: シネマティックアニメ, style canon: cinematic anime illustration, clean line art, cel-shaded coloring, controlled warm lighting, high readability silhouettes, user style direction: 夕景、暖色、ややノスタルジック, style guardrails: consistent line thickness, painterly but stylized textures, limited cinematic palette, strong key light and rim light, negative style constraints: photorealistic skin pores, live-action photo look, gritty documentary realism, 3D render look, single cohesive illustration art direction shared across cover, character portraits, and world visuals, genre mood: 現代ミステリー / 街歩きアドベンチャー, emotional tone: ノスタルジック、知的なワクワク感、静かな緊張感, setting texture: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, palette anchors: 翡翠 / 群青 / 金, visual motifs: 錆びた真鍮の鍵 / 夕暮れ時に響く海猫の鳴き声, for series 汐鳴港の黄昏迷宮, hard constraint: preserve exact same style canon as character portraits and world visuals, hard constraint: do not drift into photorealistic or mixed-media styles, world concept poster composition, hard constraint: do not depict any person or character, hard constraint: no face, no body, no human silhouette, no crowd, hard constraint: express the world through architecture, props, weather, lighting, and atmosphere, 汐鳴港の黄昏迷宮, 現代ミステリー / 街歩きアドベンチャー, ノスタルジック、知的なワクワク感、静かな緊張感, set in 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, theme: 歴史ある港町・汐鳴の路地裏を歩き、年上の頼れる相棒と共に街に眠る古い謎と現代の事件を解き明かす。 各話は徒歩で巡れる複数スポット（目安2〜4箇所）を移動しながら進行する。, world concept poster only, no people, no human silhouettes, no character portraits, dramatic lighting, high detail, no text, no watermark",
+      "cover_image_url": "http://127.0.0.1:4111/api/series/image?prompt=style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterly+but+stylized+textures%2C+limited+cinematic+palette%2C+strong+key+light+and+rim+light%2C+negative+style+constraints%3A+photorealistic+skin+pores%2C+live-action+photo+look%2C+gri&seed=755696320&width=1024&height=1365&purpose=cover&style_ref=style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterly+but+stylized+textures%2C+limited+cinematic+palette%2C+strong+key+light+and+rim+light%2C+negative+style+constraints%3A+photorealistic+skin+pores%2C+live-action+photo+look%2C+gritty+documentary+realism%2C+3D+render+look%2C+single+cohesive+illustration+art+direction+shared+across+cover%2C+character+portraits%2C+and+world+visuals%2C+genre+mood%3A+%E7%8F%BE%E4%BB%A3%E3%83%9F%E3%82%B9%E3%83%86%E3%83%AA%E3%83%BC+%2F+%E8%A1%97%E6%AD%A9%E3%81%8D%E3%82%A2%E3%83%89%E3%83%99%E3%83%B3%E3%83%81%E3%83%A3%E3%83%BC%2C+emotional+tone%3A+%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%E3%80%81%E7%9F%A5%E7%9A%84%E3%81%AA%E3%83%AF%E3%82%AF%E3%83%AF%E3%82%AF%E6%84%9F%E3%80%81%E9%9D%99%E3%81%8B%E3%81%AA%E7%B7%8A%E5%BC%B5%E6%84%9F%2C+setting+texture%3A+%E6%9E%B6%E7%A9%BA%E3%81%AE%E6%B8%AF%E7%94%BA%E3%80%8C%E6%B1%90%E9%B3%B4%EF%BC%88%E3%81%97%E3%81%8A%E3%81%AA%E3%82%8A%EF%BC%89%E3%80%8D%E3%80%82%E6%B5%B7%E6%B2%BF%E3%81%84%E3%81%AE%E3%83%AC%E3%83%B3%E3%82%AC%E5%80%89%E5%BA%AB%E7%BE%A4%E3%80%81%E7%9F%B3%E7%95%B3%E3%81%AE%E6%80%A5%E3%81%AA%E5%9D%82%E9%81%93%E3%80%81%E5%85%A5%E3%82%8A%E7%B5%84%E3%82%93%E3%81%A0%E8%B7%AF%E5%9C%B0%E8%A3%8F%E3%80%81%E9%AB%98%E5%8F%B0%E3%81%AE%E5%8F%A4%E3%81%84%E6%B4%8B%E9%A4%A8%E3%81%8C%E7%82%B9%E5%9C%A8%E3%81%97%E3%80%81%E5%BE%92%E6%AD%A9%E3%81%A7%E3%81%AE%E6%95%A3%E7%AD%96%E3%81%AB%E9%81%A9%E3%81%97%E3%81%9F%E8%A1%97%E3%80%82%2C+palette+anchors%3A+%E7%BF%A1%E7%BF%A0+%2F+%E7%BE%A4%E9%9D%92+%2F+%E9%87%91%2C+visual+motifs%3A+%E9%8C%86%E3%81%B3%E3%81%9F%E7%9C%9F%E9%8D%AE%E3%81%AE%E9%8D%B5+%2F+%E5%A4%95%E6%9A%AE%E3%82%8C%E6%99%82%E3%81%AB%E9%9F%BF%E3%81%8F%E6%B5%B7%E7%8C%AB%E3%81%AE%E9%B3%B4%E3%81%8D%E5%A3%B0%2C+for+series+%E6%B1%90%E9%B3%B4%E6%B8%AF%E3%81%AE%E9%BB%84%E6%98%8F%E8%BF%B7%E5%AE%AE",
+      "world": {
+        "era": "現代（ただし明治・大正期のレトロな建築や文化が色濃く残る）",
+        "setting": "架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。",
+        "social_structure": "古くからの景観と伝統を守ろうとする地元住民のコミュニティと、観光地化・再開発を推し進めようとする外部企業との間の静かな摩擦が存在する。",
+        "core_conflict": "街の歴史的価値を金銭に変えようとする者たちと、街の記憶と文化を純粋に愛し守ろうとする主人公たちとの対立。",
+        "taboo_rules": [
+          "夕暮れ時の『海猫坂』では決して振り返ってはならないという古い言い伝えがある。",
+          "旧灯台の地下にある書庫には、街の長老の許可なく立ち入ってはならない。"
+        ],
+        "recurring_motifs": [
+          "錆びた真鍮の鍵",
+          "夕暮れ時に響く海猫の鳴き声",
+          "古い海図の切れ端"
+        ],
+        "visual_assets": [
+          {
+            "id": "upper_area",
+            "title": "上層エリア",
+            "description": "古くからの景観と伝統を守ろうとする地元住民のコミュニティと、観光地化・再開発を推し進めようとする外部企業との間の静かな摩擦が存在する。",
+            "prompt": "style preset: シネマティックアニメ, style canon: cinematic anime illustration, clean line art, cel-shaded coloring, controlled warm lighting, high readability silhouettes, user style direction: 夕景、暖色、ややノスタルジック, style guardrails: consistent line thickness, painterly but stylized textures, limited cinematic palette, strong key light and rim light, negative style constraints: photorealistic skin pores, live-action photo look, gritty documentary realism, 3D render look, single cohesive illustration art direction shared across cover, character portraits, and world visuals, genre mood: 現代ミステリー / 街歩きアドベンチャー, emotional tone: ノスタルジック、知的なワクワク感、静かな緊張感, setting texture: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, palette anchors: 翡翠 / 群青 / 金, visual motifs: 錆びた真鍮の鍵 / 夕暮れ時に響く海猫の鳴き声, for series 汐鳴港の黄昏迷宮, environment concept art, street-level perspective, walkable city district, same style bible as cover and character portraits, hard constraint: maintain the same rendering family, brush treatment, and color grading, 上層エリア, 古くからの景観と伝統を守ろうとする地元住民のコミュニティと、観光地化・再開発を推し進めようとする外部企業との間の静かな摩擦が存在する。, setting: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, 現代ミステリー / 街歩きアドベンチャー, ノスタルジック、知的なワクワク感、静かな緊張感, ノスタルジック、知的なワクワク感、静かな緊張感, from series 汐鳴港の黄昏迷宮, high detail, no text, no logo, no watermark",
+            "image_url": "http://127.0.0.1:4111/api/series/image?prompt=style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterly+but+stylized+textures%2C+limited+cinematic+palette%2C+strong+key+light+and+rim+light%2C+negative+style+constraints%3A+photorealistic+skin+pores%2C+live-action+photo+look%2C+gri&seed=1946847747&width=960&height=640&purpose=world_visual&style_ref=style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterly+but+stylized+textures%2C+limited+cinematic+palette%2C+strong+key+light+and+rim+light%2C+negative+style+constraints%3A+photorealistic+skin+pores%2C+live-action+photo+look%2C+gritty+documentary+realism%2C+3D+render+look%2C+single+cohesive+illustration+art+direction+shared+across+cover%2C+character+portraits%2C+and+world+visuals%2C+genre+mood%3A+%E7%8F%BE%E4%BB%A3%E3%83%9F%E3%82%B9%E3%83%86%E3%83%AA%E3%83%BC+%2F+%E8%A1%97%E6%AD%A9%E3%81%8D%E3%82%A2%E3%83%89%E3%83%99%E3%83%B3%E3%83%81%E3%83%A3%E3%83%BC%2C+emotional+tone%3A+%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%E3%80%81%E7%9F%A5%E7%9A%84%E3%81%AA%E3%83%AF%E3%82%AF%E3%83%AF%E3%82%AF%E6%84%9F%E3%80%81%E9%9D%99%E3%81%8B%E3%81%AA%E7%B7%8A%E5%BC%B5%E6%84%9F%2C+setting+texture%3A+%E6%9E%B6%E7%A9%BA%E3%81%AE%E6%B8%AF%E7%94%BA%E3%80%8C%E6%B1%90%E9%B3%B4%EF%BC%88%E3%81%97%E3%81%8A%E3%81%AA%E3%82%8A%EF%BC%89%E3%80%8D%E3%80%82%E6%B5%B7%E6%B2%BF%E3%81%84%E3%81%AE%E3%83%AC%E3%83%B3%E3%82%AC%E5%80%89%E5%BA%AB%E7%BE%A4%E3%80%81%E7%9F%B3%E7%95%B3%E3%81%AE%E6%80%A5%E3%81%AA%E5%9D%82%E9%81%93%E3%80%81%E5%85%A5%E3%82%8A%E7%B5%84%E3%82%93%E3%81%A0%E8%B7%AF%E5%9C%B0%E8%A3%8F%E3%80%81%E9%AB%98%E5%8F%B0%E3%81%AE%E5%8F%A4%E3%81%84%E6%B4%8B%E9%A4%A8%E3%81%8C%E7%82%B9%E5%9C%A8%E3%81%97%E3%80%81%E5%BE%92%E6%AD%A9%E3%81%A7%E3%81%AE%E6%95%A3%E7%AD%96%E3%81%AB%E9%81%A9%E3%81%97%E3%81%9F%E8%A1%97%E3%80%82%2C+palette+anchors%3A+%E7%BF%A1%E7%BF%A0+%2F+%E7%BE%A4%E9%9D%92+%2F+%E9%87%91%2C+visual+motifs%3A+%E9%8C%86%E3%81%B3%E3%81%9F%E7%9C%9F%E9%8D%AE%E3%81%AE%E9%8D%B5+%2F+%E5%A4%95%E6%9A%AE%E3%82%8C%E6%99%82%E3%81%AB%E9%9F%BF%E3%81%8F%E6%B5%B7%E7%8C%AB%E3%81%AE%E9%B3%B4%E3%81%8D%E5%A3%B0%2C+for+series+%E6%B1%90%E9%B3%B4%E6%B8%AF%E3%81%AE%E9%BB%84%E6%98%8F%E8%BF%B7%E5%AE%AE"
+          },
+          {
+            "id": "lower_area",
+            "title": "下層エリア",
+            "description": "街の歴史的価値を金銭に変えようとする者たちと、街の記憶と文化を純粋に愛し守ろうとする主人公たちとの対立。",
+            "prompt": "style preset: シネマティックアニメ, style canon: cinematic anime illustration, clean line art, cel-shaded coloring, controlled warm lighting, high readability silhouettes, user style direction: 夕景、暖色、ややノスタルジック, style guardrails: consistent line thickness, painterly but stylized textures, limited cinematic palette, strong key light and rim light, negative style constraints: photorealistic skin pores, live-action photo look, gritty documentary realism, 3D render look, single cohesive illustration art direction shared across cover, character portraits, and world visuals, genre mood: 現代ミステリー / 街歩きアドベンチャー, emotional tone: ノスタルジック、知的なワクワク感、静かな緊張感, setting texture: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, palette anchors: 翡翠 / 群青 / 金, visual motifs: 錆びた真鍮の鍵 / 夕暮れ時に響く海猫の鳴き声, for series 汐鳴港の黄昏迷宮, environment concept art, street-level perspective, walkable city district, same style bible as cover and character portraits, hard constraint: maintain the same rendering family, brush treatment, and color grading, 下層エリア, 街の歴史的価値を金銭に変えようとする者たちと、街の記憶と文化を純粋に愛し守ろうとする主人公たちとの対立。, setting: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, 現代ミステリー / 街歩きアドベンチャー, ノスタルジック、知的なワクワク感、静かな緊張感, 宗介が過去に調査を断念した未解決事件が、現在集めている海図の謎と密接に関わっていることが発覚する。, from series 汐鳴港の黄昏迷宮, high detail, no text, no logo, no watermark",
+            "image_url": "http://127.0.0.1:4111/api/series/image?prompt=style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterly+but+stylized+textures%2C+limited+cinematic+palette%2C+strong+key+light+and+rim+light%2C+negative+style+constraints%3A+photorealistic+skin+pores%2C+live-action+photo+look%2C+gri&seed=1730119746&width=960&height=640&purpose=world_visual&style_ref=style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterly+but+stylized+textures%2C+limited+cinematic+palette%2C+strong+key+light+and+rim+light%2C+negative+style+constraints%3A+photorealistic+skin+pores%2C+live-action+photo+look%2C+gritty+documentary+realism%2C+3D+render+look%2C+single+cohesive+illustration+art+direction+shared+across+cover%2C+character+portraits%2C+and+world+visuals%2C+genre+mood%3A+%E7%8F%BE%E4%BB%A3%E3%83%9F%E3%82%B9%E3%83%86%E3%83%AA%E3%83%BC+%2F+%E8%A1%97%E6%AD%A9%E3%81%8D%E3%82%A2%E3%83%89%E3%83%99%E3%83%B3%E3%83%81%E3%83%A3%E3%83%BC%2C+emotional+tone%3A+%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%E3%80%81%E7%9F%A5%E7%9A%84%E3%81%AA%E3%83%AF%E3%82%AF%E3%83%AF%E3%82%AF%E6%84%9F%E3%80%81%E9%9D%99%E3%81%8B%E3%81%AA%E7%B7%8A%E5%BC%B5%E6%84%9F%2C+setting+texture%3A+%E6%9E%B6%E7%A9%BA%E3%81%AE%E6%B8%AF%E7%94%BA%E3%80%8C%E6%B1%90%E9%B3%B4%EF%BC%88%E3%81%97%E3%81%8A%E3%81%AA%E3%82%8A%EF%BC%89%E3%80%8D%E3%80%82%E6%B5%B7%E6%B2%BF%E3%81%84%E3%81%AE%E3%83%AC%E3%83%B3%E3%82%AC%E5%80%89%E5%BA%AB%E7%BE%A4%E3%80%81%E7%9F%B3%E7%95%B3%E3%81%AE%E6%80%A5%E3%81%AA%E5%9D%82%E9%81%93%E3%80%81%E5%85%A5%E3%82%8A%E7%B5%84%E3%82%93%E3%81%A0%E8%B7%AF%E5%9C%B0%E8%A3%8F%E3%80%81%E9%AB%98%E5%8F%B0%E3%81%AE%E5%8F%A4%E3%81%84%E6%B4%8B%E9%A4%A8%E3%81%8C%E7%82%B9%E5%9C%A8%E3%81%97%E3%80%81%E5%BE%92%E6%AD%A9%E3%81%A7%E3%81%AE%E6%95%A3%E7%AD%96%E3%81%AB%E9%81%A9%E3%81%97%E3%81%9F%E8%A1%97%E3%80%82%2C+palette+anchors%3A+%E7%BF%A1%E7%BF%A0+%2F+%E7%BE%A4%E9%9D%92+%2F+%E9%87%91%2C+visual+motifs%3A+%E9%8C%86%E3%81%B3%E3%81%9F%E7%9C%9F%E9%8D%AE%E3%81%AE%E9%8D%B5+%2F+%E5%A4%95%E6%9A%AE%E3%82%8C%E6%99%82%E3%81%AB%E9%9F%BF%E3%81%8F%E6%B5%B7%E7%8C%AB%E3%81%AE%E9%B3%B4%E3%81%8D%E5%A3%B0%2C+for+series+%E6%B1%90%E9%B3%B4%E6%B8%AF%E3%81%AE%E9%BB%84%E6%98%8F%E8%BF%B7%E5%AE%AE"
+          }
+        ]
+      },
+      "characters": [
+        {
+          "id": "char_1",
+          "name": "海藤 凪",
+          "role": "汐鳴港の歴史に魅せられ、古い海図の謎を追う若き探求者。",
+          "tier": "primary",
+          "must_appear": true,
+          "goal": "街に散らばる「古い海図の切れ端」を全て集め、汐鳴の隠された真実を解き明かすこと。",
+          "arc_start": "好奇心旺盛だが、街の暗部にはまだ触れていない純粋な青年。",
+          "arc_end": "歴史の重みと街の秘密を受け入れ、真実を背負う覚悟を持った探偵へと成長する。",
+          "personality": "物静かだが、謎を前にすると熱中して周りが見えなくなる探求肌。",
+          "appearance": "少し癖のある黒髪に、歩きやすいキャンバス地のスニーカーと機能的なマウンテンパーカーを身につけている。",
+          "portrait_prompt": "海藤 凪, 汐鳴港の歴史に魅せられ、古い海図の謎を追う若き探求者。, hair anchor: 黒髪, silhouette anchor: 鋭角的, outfit anchor item: 象徴的な衣装アイテム, color theme: 翡翠, notable feature: 右目の下に古い傷痕, style preset: シネマティックアニメ, style canon: cinematic anime illustration, clean line art, cel-shaded coloring, controlled warm lighting, high readability silhouettes, user style direction: 夕景、暖色、ややノスタルジック, style guardrails: consistent line thickness, painterly but stylized textures, limited cinematic palette, strong key light and rim light, negative style constraints: photorealistic skin pores, live-action photo look, gritty documentary realism, 3D render look, single cohesive illustration art direction shared across cover, character portraits, and world visuals, genre mood: 現代ミステリー / 街歩きアドベンチャー, emotional tone: ノスタルジック、知的なワクワク感、静かな緊張感, setting texture: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, palette anchors: 翡翠 / 群青 / 金, visual motifs: 錆びた真鍮の鍵 / 夕暮れ時に響く海猫の鳴き声, for series 汐鳴港の黄昏迷宮, character portrait, waist-up, must match cover and world visual style bible, hard constraint: do not switch style family (no photorealistic drift, no random mixed media), identity lock: keep the same face identity and anchor traits whenever this character appears again, hard constraint: this person must be visually distinct from every other cast member, 少し癖のある黒髪に、歩きやすいキャンバス地のスニーカーと機能的なマウンテンパーカーを身につけている。, build: 中肉中背で姿勢の良い, 物静かだが、謎を前にすると熱中して周りが見えなくなる探求肌。, background hint: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, 現代ミステリー / 街歩きアドベンチャー, ノスタルジック、知的なワクワク感、静かな緊張感, from series 汐鳴港の黄昏迷宮, clean composition, no text, no watermark",
+          "portrait_image_url": "http://127.0.0.1:4111/api/series/image?prompt=%E6%B5%B7%E8%97%A4+%E5%87%AA%2C+%E6%B1%90%E9%B3%B4%E6%B8%AF%E3%81%AE%E6%AD%B4%E5%8F%B2%E3%81%AB%E9%AD%85%E3%81%9B%E3%82%89%E3%82%8C%E3%80%81%E5%8F%A4%E3%81%84%E6%B5%B7%E5%9B%B3%E3%81%AE%E8%AC%8E%E3%82%92%E8%BF%BD%E3%81%86%E8%8B%A5%E3%81%8D%E6%8E%A2%E6%B1%82%E8%80%85%E3%80%82%2C+hair+anchor%3A+%E9%BB%92%E9%AB%AA%2C+silhouette+anchor%3A+%E9%8B%AD%E8%A7%92%E7%9A%84%2C+outfit+anchor+item%3A+%E8%B1%A1%E5%BE%B4%E7%9A%84%E3%81%AA%E8%A1%A3%E8%A3%85%E3%82%A2%E3%82%A4%E3%83%86%E3%83%A0%2C+color+theme%3A+%E7%BF%A1%E7%BF%A0%2C+notable+feature%3A+%E5%8F%B3%E7%9B%AE%E3%81%AE%E4%B8%8B%E3%81%AB%E5%8F%A4%E3%81%84%E5%82%B7%E7%97%95%2C+style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterly+but+stylize&seed=1719375313&width=768&height=1024&purpose=character_portrait&style_ref=style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterly+but+stylized+textures%2C+limited+cinematic+palette%2C+strong+key+light+and+rim+light%2C+negative+style+constraints%3A+photorealistic+skin+pores%2C+live-action+photo+look%2C+gritty+documentary+realism%2C+3D+render+look%2C+single+cohesive+illustration+art+direction+shared+across+cover%2C+character+portraits%2C+and+world+visuals%2C+genre+mood%3A+%E7%8F%BE%E4%BB%A3%E3%83%9F%E3%82%B9%E3%83%86%E3%83%AA%E3%83%BC+%2F+%E8%A1%97%E6%AD%A9%E3%81%8D%E3%82%A2%E3%83%89%E3%83%99%E3%83%B3%E3%83%81%E3%83%A3%E3%83%BC%2C+emotional+tone%3A+%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%E3%80%81%E7%9F%A5%E7%9A%84%E3%81%AA%E3%83%AF%E3%82%AF%E3%83%AF%E3%82%AF%E6%84%9F%E3%80%81%E9%9D%99%E3%81%8B%E3%81%AA%E7%B7%8A%E5%BC%B5%E6%84%9F%2C+setting+texture%3A+%E6%9E%B6%E7%A9%BA%E3%81%AE%E6%B8%AF%E7%94%BA%E3%80%8C%E6%B1%90%E9%B3%B4%EF%BC%88%E3%81%97%E3%81%8A%E3%81%AA%E3%82%8A%EF%BC%89%E3%80%8D%E3%80%82%E6%B5%B7%E6%B2%BF%E3%81%84%E3%81%AE%E3%83%AC%E3%83%B3%E3%82%AC%E5%80%89%E5%BA%AB%E7%BE%A4%E3%80%81%E7%9F%B3%E7%95%B3%E3%81%AE%E6%80%A5%E3%81%AA%E5%9D%82%E9%81%93%E3%80%81%E5%85%A5%E3%82%8A%E7%B5%84%E3%82%93%E3%81%A0%E8%B7%AF%E5%9C%B0%E8%A3%8F%E3%80%81%E9%AB%98%E5%8F%B0%E3%81%AE%E5%8F%A4%E3%81%84%E6%B4%8B%E9%A4%A8%E3%81%8C%E7%82%B9%E5%9C%A8%E3%81%97%E3%80%81%E5%BE%92%E6%AD%A9%E3%81%A7%E3%81%AE%E6%95%A3%E7%AD%96%E3%81%AB%E9%81%A9%E3%81%97%E3%81%9F%E8%A1%97%E3%80%82%2C+palette+anchors%3A+%E7%BF%A1%E7%BF%A0+%2F+%E7%BE%A4%E9%9D%92+%2F+%E9%87%91%2C+visual+motifs%3A+%E9%8C%86%E3%81%B3%E3%81%9F%E7%9C%9F%E9%8D%AE%E3%81%AE%E9%8D%B5+%2F+%E5%A4%95%E6%9A%AE%E3%82%8C%E6%99%82%E3%81%AB%E9%9F%BF%E3%81%8F%E6%B5%B7%E7%8C%AB%E3%81%AE%E9%B3%B4%E3%81%8D%E5%A3%B0%2C+for+series+%E6%B1%90%E9%B3%B4%E6%B8%AF%E3%81%AE%E9%BB%84%E6%98%8F%E8%BF%B7%E5%AE%AE",
+          "secrets": [
+            "実は汐鳴港の開拓者の末裔であるが、本人はまだその事実を知らない。"
+          ],
+          "relationship_hooks": [
+            "相棒の過去に対して強い関心を抱いている。"
+          ],
+          "archetype": "Hero",
+          "drive": "知りたいという衝動と、見て見ぬふりできない性分",
+          "dilemma": "真実を追うほど大切な人を危険に晒す矛盾",
+          "arc_midpoint": "信頼していた前提が崩れ、自分の判断基準を問い直す。",
+          "arc_trigger": "相棒が隠していた事実が発覚する場面",
+          "backstory": "かつて重要な選択を誤り、その後悔が行動の根底にある。安定した日常を捨てて真実を追い始めたのは、あの日の償いでもある。",
+          "big_five": {
+            "openness": 75,
+            "conscientiousness": 60,
+            "extraversion": 45,
+            "agreeableness": 55,
+            "neuroticism": 65
+          },
+          "enneagram_type": 5,
+          "core_fear": "無能で無力であること",
+          "core_desire": "有能で理解すること",
+          "speech_pattern": "丁寧語ベースだが、核心に触れると急にタメ口になる",
+          "catchphrase": "……これ、偶然じゃないよな。",
+          "quirks": [
+            "考え込むと左手で首の後ろを触る",
+            "重要なことほど小声になる"
+          ],
+          "relationships": [
+            {
+              "target_id": "char_2",
+              "type": "trust",
+              "description": "最も信頼する存在だが、依存と自立の間で揺れている",
+              "tension_level": 45
+            },
+            {
+              "target_id": "char_3",
+              "type": "debt",
+              "description": "過去に助けられた恩義があり、頭が上がらない",
+              "tension_level": 30
+            }
+          ],
+          "visual_design": {
+            "dominant_color": "翡翠",
+            "body_type": "中肉中背で姿勢の良い",
+            "silhouette_keyword": "鋭角的",
+            "distinguishing_feature": "右目の下に古い傷痕"
+          },
+          "is_key_person": true,
+          "identity_anchor_tokens": {
+            "hair": "黒髪",
+            "silhouette": "鋭角的",
+            "dominant_color": "翡翠",
+            "outfit_key_item": "象徴的な衣装アイテム",
+            "distinguishing_feature": "右目の下に古い傷痕"
+          }
+        },
+        {
+          "id": "char_2",
+          "name": "鳴海 宗介",
+          "role": "汐鳴港の裏事情に精通し、凪を導き守る元刑事の喫茶店マスター。",
+          "tier": "primary",
+          "must_appear": true,
+          "goal": "過去の未解決事件の真相を突き止めつつ、凪を危険から遠ざけること。",
+          "arc_start": "過去の失敗から他者と深く関わることを避けている孤独な男。",
+          "arc_end": "凪との絆を通じて過去のトラウマを乗り越え、再び前を向いて歩き出す。",
+          "personality": "皮肉屋でぶっきらぼうだが、根は面倒見が良く義理堅い。",
+          "appearance": "無精髭を生やし、使い込まれた革のジャケットと銀縁の眼鏡がトレードマークの長身の男。",
+          "portrait_prompt": "鳴海 宗介, 汐鳴港の裏事情に精通し、凪を導き守る元刑事の喫茶店マスター。, hair anchor: 印象的な髪型, silhouette anchor: 流線型, outfit anchor item: ジャケット, color theme: 群青, notable feature: 常に手袋を外さない（左手に秘密がある）, style preset: シネマティックアニメ, style canon: cinematic anime illustration, clean line art, cel-shaded coloring, controlled warm lighting, high readability silhouettes, user style direction: 夕景、暖色、ややノスタルジック, style guardrails: consistent line thickness, painterly but stylized textures, limited cinematic palette, strong key light and rim light, negative style constraints: photorealistic skin pores, live-action photo look, gritty documentary realism, 3D render look, single cohesive illustration art direction shared across cover, character portraits, and world visuals, genre mood: 現代ミステリー / 街歩きアドベンチャー, emotional tone: ノスタルジック、知的なワクワク感、静かな緊張感, setting texture: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, palette anchors: 翡翠 / 群青 / 金, visual motifs: 錆びた真鍮の鍵 / 夕暮れ時に響く海猫の鳴き声, for series 汐鳴港の黄昏迷宮, character portrait, waist-up, must match cover and world visual style bible, hard constraint: do not switch style family (no photorealistic drift, no random mixed media), identity lock: keep the same face identity and anchor traits whenever this character appears again, hard constraint: this person must be visually distinct from every other cast member, 無精髭を生やし、使い込まれた革のジャケットと銀縁の眼鏡がトレードマークの長身の男。, build: 長身で引き締まった, 皮肉屋でぶっきらぼうだが、根は面倒見が良く義理堅い。, background hint: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, 現代ミステリー / 街歩きアドベンチャー, ノスタルジック、知的なワクワク感、静かな緊張感, from series 汐鳴港の黄昏迷宮, clean composition, no text, no watermark",
+          "portrait_image_url": "http://127.0.0.1:4111/api/series/image?prompt=%E9%B3%B4%E6%B5%B7+%E5%AE%97%E4%BB%8B%2C+%E6%B1%90%E9%B3%B4%E6%B8%AF%E3%81%AE%E8%A3%8F%E4%BA%8B%E6%83%85%E3%81%AB%E7%B2%BE%E9%80%9A%E3%81%97%E3%80%81%E5%87%AA%E3%82%92%E5%B0%8E%E3%81%8D%E5%AE%88%E3%82%8B%E5%85%83%E5%88%91%E4%BA%8B%E3%81%AE%E5%96%AB%E8%8C%B6%E5%BA%97%E3%83%9E%E3%82%B9%E3%82%BF%E3%83%BC%E3%80%82%2C+hair+anchor%3A+%E5%8D%B0%E8%B1%A1%E7%9A%84%E3%81%AA%E9%AB%AA%E5%9E%8B%2C+silhouette+anchor%3A+%E6%B5%81%E7%B7%9A%E5%9E%8B%2C+outfit+anchor+item%3A+%E3%82%B8%E3%83%A3%E3%82%B1%E3%83%83%E3%83%88%2C+color+theme%3A+%E7%BE%A4%E9%9D%92%2C+notable+feature%3A+%E5%B8%B8%E3%81%AB%E6%89%8B%E8%A2%8B%E3%82%92%E5%A4%96%E3%81%95%E3%81%AA%E3%81%84%EF%BC%88%E5%B7%A6%E6%89%8B%E3%81%AB%E7%A7%98%E5%AF%86%E3%81%8C%E3%81%82%E3%82%8B%EF%BC%89%2C+style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterl&seed=936045656&width=768&height=1024&purpose=character_portrait&style_ref=style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterly+but+stylized+textures%2C+limited+cinematic+palette%2C+strong+key+light+and+rim+light%2C+negative+style+constraints%3A+photorealistic+skin+pores%2C+live-action+photo+look%2C+gritty+documentary+realism%2C+3D+render+look%2C+single+cohesive+illustration+art+direction+shared+across+cover%2C+character+portraits%2C+and+world+visuals%2C+genre+mood%3A+%E7%8F%BE%E4%BB%A3%E3%83%9F%E3%82%B9%E3%83%86%E3%83%AA%E3%83%BC+%2F+%E8%A1%97%E6%AD%A9%E3%81%8D%E3%82%A2%E3%83%89%E3%83%99%E3%83%B3%E3%83%81%E3%83%A3%E3%83%BC%2C+emotional+tone%3A+%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%E3%80%81%E7%9F%A5%E7%9A%84%E3%81%AA%E3%83%AF%E3%82%AF%E3%83%AF%E3%82%AF%E6%84%9F%E3%80%81%E9%9D%99%E3%81%8B%E3%81%AA%E7%B7%8A%E5%BC%B5%E6%84%9F%2C+setting+texture%3A+%E6%9E%B6%E7%A9%BA%E3%81%AE%E6%B8%AF%E7%94%BA%E3%80%8C%E6%B1%90%E9%B3%B4%EF%BC%88%E3%81%97%E3%81%8A%E3%81%AA%E3%82%8A%EF%BC%89%E3%80%8D%E3%80%82%E6%B5%B7%E6%B2%BF%E3%81%84%E3%81%AE%E3%83%AC%E3%83%B3%E3%82%AC%E5%80%89%E5%BA%AB%E7%BE%A4%E3%80%81%E7%9F%B3%E7%95%B3%E3%81%AE%E6%80%A5%E3%81%AA%E5%9D%82%E9%81%93%E3%80%81%E5%85%A5%E3%82%8A%E7%B5%84%E3%82%93%E3%81%A0%E8%B7%AF%E5%9C%B0%E8%A3%8F%E3%80%81%E9%AB%98%E5%8F%B0%E3%81%AE%E5%8F%A4%E3%81%84%E6%B4%8B%E9%A4%A8%E3%81%8C%E7%82%B9%E5%9C%A8%E3%81%97%E3%80%81%E5%BE%92%E6%AD%A9%E3%81%A7%E3%81%AE%E6%95%A3%E7%AD%96%E3%81%AB%E9%81%A9%E3%81%97%E3%81%9F%E8%A1%97%E3%80%82%2C+palette+anchors%3A+%E7%BF%A1%E7%BF%A0+%2F+%E7%BE%A4%E9%9D%92+%2F+%E9%87%91%2C+visual+motifs%3A+%E9%8C%86%E3%81%B3%E3%81%9F%E7%9C%9F%E9%8D%AE%E3%81%AE%E9%8D%B5+%2F+%E5%A4%95%E6%9A%AE%E3%82%8C%E6%99%82%E3%81%AB%E9%9F%BF%E3%81%8F%E6%B5%B7%E7%8C%AB%E3%81%AE%E9%B3%B4%E3%81%8D%E5%A3%B0%2C+for+series+%E6%B1%90%E9%B3%B4%E6%B8%AF%E3%81%AE%E9%BB%84%E6%98%8F%E8%BF%B7%E5%AE%AE",
+          "secrets": [
+            "かつて「古い海図」に関わる事件で相棒を失っている。"
+          ],
+          "relationship_hooks": [
+            "凪の危なっかしい行動を放っておけず、つい世話を焼いてしまう。"
+          ],
+          "archetype": "Caregiver",
+          "drive": "守りたいものを守る。そのためなら手を汚す覚悟もある",
+          "dilemma": "効率と情のどちらを優先すべきか、答えが出ない",
+          "arc_midpoint": "効率だけでは守れないと悟り、感情に向き合う。",
+          "arc_trigger": "主人公が危険に陥り、合理的判断だけでは救えない場面",
+          "backstory": "かつて組織に属していた時期があり、その頃の人脈と経験が今の実務能力の源。しかし組織を離れた理由は本人しか知らない。",
+          "big_five": {
+            "openness": 40,
+            "conscientiousness": 85,
+            "extraversion": 55,
+            "agreeableness": 50,
+            "neuroticism": 30
+          },
+          "enneagram_type": 6,
+          "core_fear": "支えを失い孤立すること",
+          "core_desire": "安全と確実さ",
+          "speech_pattern": "簡潔で断定的。専門用語を自然に混ぜる",
+          "catchphrase": "事実だけ見ろ。感情は後だ。",
+          "quirks": [
+            "考え事をするとき腕時計を回す",
+            "甘いものに目がない（本人は認めない）"
+          ],
+          "relationships": [
+            {
+              "target_id": "char_1",
+              "type": "trust",
+              "description": "主人公を守る使命感と、対等でいたい葛藤",
+              "tension_level": 40
+            },
+            {
+              "target_id": "char_4",
+              "type": "secret",
+              "description": "過去の組織時代に面識があり、その事実を隠している",
+              "tension_level": 75
+            }
+          ],
+          "visual_design": {
+            "dominant_color": "群青",
+            "body_type": "長身で引き締まった",
+            "silhouette_keyword": "流線型",
+            "distinguishing_feature": "常に手袋を外さない（左手に秘密がある）"
+          },
+          "is_key_person": true,
+          "identity_anchor_tokens": {
+            "hair": "印象的な髪型",
+            "silhouette": "流線型",
+            "dominant_color": "群青",
+            "outfit_key_item": "ジャケット",
+            "distinguishing_feature": "常に手袋を外さない（左手に秘密がある）"
+          }
+        },
+        {
+          "id": "char_3",
+          "name": "月島 玲子",
+          "role": "汐鳴港の郷土史料館で働き、二人に重要なヒントをもたらすミステリアスな司書。",
+          "tier": "secondary",
+          "must_appear": false,
+          "goal": "一族が代々守ってきた汐鳴の「裏の歴史」を正しい形で後世に残すこと。",
+          "arc_start": "部外者である凪たちを警戒し、情報を小出しにして試している。",
+          "arc_end": "二人の覚悟を認め、一族の秘密を託す最大の協力者となる。",
+          "personality": "常に冷静沈着で、優雅な微笑みの裏に本心を隠している。",
+          "appearance": "綺麗に切り揃えられたボブヘアで、アンティークな着物やレトロなワンピースを上品に着こなす女性。",
+          "portrait_prompt": "月島 玲子, 汐鳴港の郷土史料館で働き、二人に重要なヒントをもたらすミステリアスな司書。, hair anchor: 黒髪ショート, silhouette anchor: 柔らかく丸みのある, outfit anchor item: 長いコート, color theme: 金, notable feature: 左手首に古い革の腕輪（両親の形見）, style preset: シネマティックアニメ, style canon: cinematic anime illustration, clean line art, cel-shaded coloring, controlled warm lighting, high readability silhouettes, user style direction: 夕景、暖色、ややノスタルジック, style guardrails: consistent line thickness, painterly but stylized textures, limited cinematic palette, strong key light and rim light, negative style constraints: photorealistic skin pores, live-action photo look, gritty documentary realism, 3D render look, single cohesive illustration art direction shared across cover, character portraits, and world visuals, genre mood: 現代ミステリー / 街歩きアドベンチャー, emotional tone: ノスタルジック、知的なワクワク感、静かな緊張感, setting texture: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, palette anchors: 翡翠 / 群青 / 金, visual motifs: 錆びた真鍮の鍵 / 夕暮れ時に響く海猫の鳴き声, for series 汐鳴港の黄昏迷宮, character portrait, waist-up, must match cover and world visual style bible, hard constraint: do not switch style family (no photorealistic drift, no random mixed media), identity lock: keep the same face identity and anchor traits whenever this character appears again, hard constraint: this person must be visually distinct from every other cast member, 綺麗に切り揃えられたボブヘアで、アンティークな着物やレトロなワンピースを上品に着こなす女性。, build: 華奢ながら芯のある, 常に冷静沈着で、優雅な微笑みの裏に本心を隠している。, background hint: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, 現代ミステリー / 街歩きアドベンチャー, ノスタルジック、知的なワクワク感、静かな緊張感, from series 汐鳴港の黄昏迷宮, clean composition, no text, no watermark",
+          "portrait_image_url": "http://127.0.0.1:4111/api/series/image?prompt=%E6%9C%88%E5%B3%B6+%E7%8E%B2%E5%AD%90%2C+%E6%B1%90%E9%B3%B4%E6%B8%AF%E3%81%AE%E9%83%B7%E5%9C%9F%E5%8F%B2%E6%96%99%E9%A4%A8%E3%81%A7%E5%83%8D%E3%81%8D%E3%80%81%E4%BA%8C%E4%BA%BA%E3%81%AB%E9%87%8D%E8%A6%81%E3%81%AA%E3%83%92%E3%83%B3%E3%83%88%E3%82%92%E3%82%82%E3%81%9F%E3%82%89%E3%81%99%E3%83%9F%E3%82%B9%E3%83%86%E3%83%AA%E3%82%A2%E3%82%B9%E3%81%AA%E5%8F%B8%E6%9B%B8%E3%80%82%2C+hair+anchor%3A+%E9%BB%92%E9%AB%AA%E3%82%B7%E3%83%A7%E3%83%BC%E3%83%88%2C+silhouette+anchor%3A+%E6%9F%94%E3%82%89%E3%81%8B%E3%81%8F%E4%B8%B8%E3%81%BF%E3%81%AE%E3%81%82%E3%82%8B%2C+outfit+anchor+item%3A+%E9%95%B7%E3%81%84%E3%82%B3%E3%83%BC%E3%83%88%2C+color+theme%3A+%E9%87%91%2C+notable+feature%3A+%E5%B7%A6%E6%89%8B%E9%A6%96%E3%81%AB%E5%8F%A4%E3%81%84%E9%9D%A9%E3%81%AE%E8%85%95%E8%BC%AA%EF%BC%88%E4%B8%A1%E8%A6%AA%E3%81%AE%E5%BD%A2%E8%A6%8B%EF%BC%89%2C+style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness&seed=963832422&width=768&height=1024&purpose=character_portrait&style_ref=style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterly+but+stylized+textures%2C+limited+cinematic+palette%2C+strong+key+light+and+rim+light%2C+negative+style+constraints%3A+photorealistic+skin+pores%2C+live-action+photo+look%2C+gritty+documentary+realism%2C+3D+render+look%2C+single+cohesive+illustration+art+direction+shared+across+cover%2C+character+portraits%2C+and+world+visuals%2C+genre+mood%3A+%E7%8F%BE%E4%BB%A3%E3%83%9F%E3%82%B9%E3%83%86%E3%83%AA%E3%83%BC+%2F+%E8%A1%97%E6%AD%A9%E3%81%8D%E3%82%A2%E3%83%89%E3%83%99%E3%83%B3%E3%83%81%E3%83%A3%E3%83%BC%2C+emotional+tone%3A+%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%E3%80%81%E7%9F%A5%E7%9A%84%E3%81%AA%E3%83%AF%E3%82%AF%E3%83%AF%E3%82%AF%E6%84%9F%E3%80%81%E9%9D%99%E3%81%8B%E3%81%AA%E7%B7%8A%E5%BC%B5%E6%84%9F%2C+setting+texture%3A+%E6%9E%B6%E7%A9%BA%E3%81%AE%E6%B8%AF%E7%94%BA%E3%80%8C%E6%B1%90%E9%B3%B4%EF%BC%88%E3%81%97%E3%81%8A%E3%81%AA%E3%82%8A%EF%BC%89%E3%80%8D%E3%80%82%E6%B5%B7%E6%B2%BF%E3%81%84%E3%81%AE%E3%83%AC%E3%83%B3%E3%82%AC%E5%80%89%E5%BA%AB%E7%BE%A4%E3%80%81%E7%9F%B3%E7%95%B3%E3%81%AE%E6%80%A5%E3%81%AA%E5%9D%82%E9%81%93%E3%80%81%E5%85%A5%E3%82%8A%E7%B5%84%E3%82%93%E3%81%A0%E8%B7%AF%E5%9C%B0%E8%A3%8F%E3%80%81%E9%AB%98%E5%8F%B0%E3%81%AE%E5%8F%A4%E3%81%84%E6%B4%8B%E9%A4%A8%E3%81%8C%E7%82%B9%E5%9C%A8%E3%81%97%E3%80%81%E5%BE%92%E6%AD%A9%E3%81%A7%E3%81%AE%E6%95%A3%E7%AD%96%E3%81%AB%E9%81%A9%E3%81%97%E3%81%9F%E8%A1%97%E3%80%82%2C+palette+anchors%3A+%E7%BF%A1%E7%BF%A0+%2F+%E7%BE%A4%E9%9D%92+%2F+%E9%87%91%2C+visual+motifs%3A+%E9%8C%86%E3%81%B3%E3%81%9F%E7%9C%9F%E9%8D%AE%E3%81%AE%E9%8D%B5+%2F+%E5%A4%95%E6%9A%AE%E3%82%8C%E6%99%82%E3%81%AB%E9%9F%BF%E3%81%8F%E6%B5%B7%E7%8C%AB%E3%81%AE%E9%B3%B4%E3%81%8D%E5%A3%B0%2C+for+series+%E6%B1%90%E9%B3%B4%E6%B8%AF%E3%81%AE%E9%BB%84%E6%98%8F%E8%BF%B7%E5%AE%AE",
+          "secrets": [
+            "彼女の祖父が「古い海図」を分割して街に隠した張本人である。"
+          ],
+          "relationship_hooks": [
+            "宗介の過去を知っており、時折彼を試すような言葉を投げかける。"
+          ],
+          "archetype": "Sage",
+          "drive": "争いが生む痛みを誰にも味わわせたくない",
+          "dilemma": "中立を守ることで、結果的に悪を見逃しているのではないか",
+          "arc_midpoint": "中立のままでは守れないものがあると気づく。",
+          "arc_trigger": "自分の中立姿勢が原因で誰かが傷つく場面",
+          "backstory": "両親が対立する陣営に属していた過去があり、幼少期から板挟みの世界で育った。争いの無意味さを骨身に知っている。",
+          "big_five": {
+            "openness": 60,
+            "conscientiousness": 70,
+            "extraversion": 65,
+            "agreeableness": 80,
+            "neuroticism": 40
+          },
+          "enneagram_type": 9,
+          "core_fear": "衝突と断絶",
+          "core_desire": "内なる平穏",
+          "speech_pattern": "柔らかい口調。疑問形で相手に考えさせる話法",
+          "catchphrase": "それは本当に、あなたが望んでいることですか？",
+          "quirks": [
+            "紅茶を淹れる所作が異様に丁寧",
+            "嘘を見抜く直感が鋭い"
+          ],
+          "relationships": [
+            {
+              "target_id": "char_1",
+              "type": "mentor",
+              "description": "主人公に助言を与えるが、全てを打ち明けてはいない",
+              "tension_level": 35
+            },
+            {
+              "target_id": "char_4",
+              "type": "rivalry",
+              "description": "対抗者の目的を理解しつつも容認できない",
+              "tension_level": 60
+            }
+          ],
+          "visual_design": {
+            "dominant_color": "金",
+            "body_type": "華奢ながら芯のある",
+            "silhouette_keyword": "柔らかく丸みのある",
+            "distinguishing_feature": "左手首に古い革の腕輪（両親の形見）"
+          },
+          "is_key_person": true,
+          "identity_anchor_tokens": {
+            "hair": "黒髪ショート",
+            "silhouette": "柔らかく丸みのある",
+            "dominant_color": "金",
+            "outfit_key_item": "長いコート",
+            "distinguishing_feature": "左手首に古い革の腕輪（両親の形見）"
+          }
+        }
+      ],
+      "cover_focus_characters": [
+        {
+          "character_id": "char_1",
+          "name": "海藤 凪",
+          "role": "汐鳴港の歴史に魅せられ、古い海図の謎を追う若き探求者。",
+          "focus_reason": "物語の節目で鍵を握るキーパーソン",
+          "visual_anchor": "翡翠 / 右目の下に古い傷痕 / 鋭角的 / 少し癖のある黒髪に、歩きやすいキャンバス地のスニーカーと機能的なマウンテンパーカーを身につけている"
+        },
+        {
+          "character_id": "char_2",
+          "name": "鳴海 宗介",
+          "role": "汐鳴港の裏事情に精通し、凪を導き守る元刑事の喫茶店マスター。",
+          "focus_reason": "物語の節目で鍵を握るキーパーソン",
+          "visual_anchor": "群青 / 常に手袋を外さない（左手に秘密がある） / 流線型 / 無精髭を生やし、使い込まれた革のジャケットと銀縁の眼鏡がトレードマークの長身の男"
+        },
+        {
+          "character_id": "char_3",
+          "name": "月島 玲子",
+          "role": "汐鳴港の郷土史料館で働き、二人に重要なヒントをもたらすミステリアスな司書。",
+          "focus_reason": "物語の節目で鍵を握るキーパーソン",
+          "visual_anchor": "金 / 左手首に古い革の腕輪（両親の形見） / 柔らかく丸みのある / 綺麗に切り揃えられたボブヘアで、アンティークな着物やレトロなワンピースを上品に着こなす女性"
+        }
+      ],
+      "identity_pack": {
+        "version": 1,
+        "source": "generated",
+        "style_bible": "style preset: シネマティックアニメ, style canon: cinematic anime illustration, clean line art, cel-shaded coloring, controlled warm lighting, high readability silhouettes, user style direction: 夕景、暖色、ややノスタルジック, style guardrails: consistent line thickness, painterly but stylized textures, limited cinematic palette, strong key light and rim light, negative style constraints: photorealistic skin pores, live-action photo look, gritty documentary realism, 3D render look, single cohesive illustration art direction shared across cover, character portraits, and world visuals, genre mood: 現代ミステリー / 街歩きアドベンチャー, emotional tone: ノスタルジック、知的なワクワク感、静かな緊張感, setting texture: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, palette anchors: 翡翠 / 群青 / 金, visual motifs: 錆びた真鍮の鍵 / 夕暮れ時に響く海猫の鳴き声, for series 汐鳴港の黄昏迷宮",
+        "key_person_character_ids": [
+          "char_1",
+          "char_2",
+          "char_3"
+        ],
+        "characters": [
+          {
+            "character_id": "char_1",
+            "name": "海藤 凪",
+            "role": "汐鳴港の歴史に魅せられ、古い海図の謎を追う若き探求者。",
+            "is_key_person": true,
+            "identity_anchor_tokens": {
+              "hair": "黒髪",
+              "silhouette": "鋭角的",
+              "dominant_color": "翡翠",
+              "outfit_key_item": "象徴的な衣装アイテム",
+              "distinguishing_feature": "右目の下に古い傷痕"
+            },
+            "portrait_prompt": "海藤 凪, 汐鳴港の歴史に魅せられ、古い海図の謎を追う若き探求者。, hair anchor: 黒髪, silhouette anchor: 鋭角的, outfit anchor item: 象徴的な衣装アイテム, color theme: 翡翠, notable feature: 右目の下に古い傷痕, style preset: シネマティックアニメ, style canon: cinematic anime illustration, clean line art, cel-shaded coloring, controlled warm lighting, high readability silhouettes, user style direction: 夕景、暖色、ややノスタルジック, style guardrails: consistent line thickness, painterly but stylized textures, limited cinematic palette, strong key light and rim light, negative style constraints: photorealistic skin pores, live-action photo look, gritty documentary realism, 3D render look, single cohesive illustration art direction shared across cover, character portraits, and world visuals, genre mood: 現代ミステリー / 街歩きアドベンチャー, emotional tone: ノスタルジック、知的なワクワク感、静かな緊張感, setting texture: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, palette anchors: 翡翠 / 群青 / 金, visual motifs: 錆びた真鍮の鍵 / 夕暮れ時に響く海猫の鳴き声, for series 汐鳴港の黄昏迷宮, character portrait, waist-up, must match cover and world visual style bible, hard constraint: do not switch style family (no photorealistic drift, no random mixed media), identity lock: keep the same face identity and anchor traits whenever this character appears again, hard constraint: this person must be visually distinct from every other cast member, 少し癖のある黒髪に、歩きやすいキャンバス地のスニーカーと機能的なマウンテンパーカーを身につけている。, build: 中肉中背で姿勢の良い, 物静かだが、謎を前にすると熱中して周りが見えなくなる探求肌。, background hint: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, 現代ミステリー / 街歩きアドベンチャー, ノスタルジック、知的なワクワク感、静かな緊張感, from series 汐鳴港の黄昏迷宮, clean composition, no text, no watermark",
+            "portrait_image_url": "http://127.0.0.1:4111/api/series/image?prompt=%E6%B5%B7%E8%97%A4+%E5%87%AA%2C+%E6%B1%90%E9%B3%B4%E6%B8%AF%E3%81%AE%E6%AD%B4%E5%8F%B2%E3%81%AB%E9%AD%85%E3%81%9B%E3%82%89%E3%82%8C%E3%80%81%E5%8F%A4%E3%81%84%E6%B5%B7%E5%9B%B3%E3%81%AE%E8%AC%8E%E3%82%92%E8%BF%BD%E3%81%86%E8%8B%A5%E3%81%8D%E6%8E%A2%E6%B1%82%E8%80%85%E3%80%82%2C+hair+anchor%3A+%E9%BB%92%E9%AB%AA%2C+silhouette+anchor%3A+%E9%8B%AD%E8%A7%92%E7%9A%84%2C+outfit+anchor+item%3A+%E8%B1%A1%E5%BE%B4%E7%9A%84%E3%81%AA%E8%A1%A3%E8%A3%85%E3%82%A2%E3%82%A4%E3%83%86%E3%83%A0%2C+color+theme%3A+%E7%BF%A1%E7%BF%A0%2C+notable+feature%3A+%E5%8F%B3%E7%9B%AE%E3%81%AE%E4%B8%8B%E3%81%AB%E5%8F%A4%E3%81%84%E5%82%B7%E7%97%95%2C+style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterly+but+stylize&seed=1719375313&width=768&height=1024&purpose=character_portrait&style_ref=style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterly+but+stylized+textures%2C+limited+cinematic+palette%2C+strong+key+light+and+rim+light%2C+negative+style+constraints%3A+photorealistic+skin+pores%2C+live-action+photo+look%2C+gritty+documentary+realism%2C+3D+render+look%2C+single+cohesive+illustration+art+direction+shared+across+cover%2C+character+portraits%2C+and+world+visuals%2C+genre+mood%3A+%E7%8F%BE%E4%BB%A3%E3%83%9F%E3%82%B9%E3%83%86%E3%83%AA%E3%83%BC+%2F+%E8%A1%97%E6%AD%A9%E3%81%8D%E3%82%A2%E3%83%89%E3%83%99%E3%83%B3%E3%83%81%E3%83%A3%E3%83%BC%2C+emotional+tone%3A+%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%E3%80%81%E7%9F%A5%E7%9A%84%E3%81%AA%E3%83%AF%E3%82%AF%E3%83%AF%E3%82%AF%E6%84%9F%E3%80%81%E9%9D%99%E3%81%8B%E3%81%AA%E7%B7%8A%E5%BC%B5%E6%84%9F%2C+setting+texture%3A+%E6%9E%B6%E7%A9%BA%E3%81%AE%E6%B8%AF%E7%94%BA%E3%80%8C%E6%B1%90%E9%B3%B4%EF%BC%88%E3%81%97%E3%81%8A%E3%81%AA%E3%82%8A%EF%BC%89%E3%80%8D%E3%80%82%E6%B5%B7%E6%B2%BF%E3%81%84%E3%81%AE%E3%83%AC%E3%83%B3%E3%82%AC%E5%80%89%E5%BA%AB%E7%BE%A4%E3%80%81%E7%9F%B3%E7%95%B3%E3%81%AE%E6%80%A5%E3%81%AA%E5%9D%82%E9%81%93%E3%80%81%E5%85%A5%E3%82%8A%E7%B5%84%E3%82%93%E3%81%A0%E8%B7%AF%E5%9C%B0%E8%A3%8F%E3%80%81%E9%AB%98%E5%8F%B0%E3%81%AE%E5%8F%A4%E3%81%84%E6%B4%8B%E9%A4%A8%E3%81%8C%E7%82%B9%E5%9C%A8%E3%81%97%E3%80%81%E5%BE%92%E6%AD%A9%E3%81%A7%E3%81%AE%E6%95%A3%E7%AD%96%E3%81%AB%E9%81%A9%E3%81%97%E3%81%9F%E8%A1%97%E3%80%82%2C+palette+anchors%3A+%E7%BF%A1%E7%BF%A0+%2F+%E7%BE%A4%E9%9D%92+%2F+%E9%87%91%2C+visual+motifs%3A+%E9%8C%86%E3%81%B3%E3%81%9F%E7%9C%9F%E9%8D%AE%E3%81%AE%E9%8D%B5+%2F+%E5%A4%95%E6%9A%AE%E3%82%8C%E6%99%82%E3%81%AB%E9%9F%BF%E3%81%8F%E6%B5%B7%E7%8C%AB%E3%81%AE%E9%B3%B4%E3%81%8D%E5%A3%B0%2C+for+series+%E6%B1%90%E9%B3%B4%E6%B8%AF%E3%81%AE%E9%BB%84%E6%98%8F%E8%BF%B7%E5%AE%AE"
+          },
+          {
+            "character_id": "char_2",
+            "name": "鳴海 宗介",
+            "role": "汐鳴港の裏事情に精通し、凪を導き守る元刑事の喫茶店マスター。",
+            "is_key_person": true,
+            "identity_anchor_tokens": {
+              "hair": "印象的な髪型",
+              "silhouette": "流線型",
+              "dominant_color": "群青",
+              "outfit_key_item": "ジャケット",
+              "distinguishing_feature": "常に手袋を外さない（左手に秘密がある）"
+            },
+            "portrait_prompt": "鳴海 宗介, 汐鳴港の裏事情に精通し、凪を導き守る元刑事の喫茶店マスター。, hair anchor: 印象的な髪型, silhouette anchor: 流線型, outfit anchor item: ジャケット, color theme: 群青, notable feature: 常に手袋を外さない（左手に秘密がある）, style preset: シネマティックアニメ, style canon: cinematic anime illustration, clean line art, cel-shaded coloring, controlled warm lighting, high readability silhouettes, user style direction: 夕景、暖色、ややノスタルジック, style guardrails: consistent line thickness, painterly but stylized textures, limited cinematic palette, strong key light and rim light, negative style constraints: photorealistic skin pores, live-action photo look, gritty documentary realism, 3D render look, single cohesive illustration art direction shared across cover, character portraits, and world visuals, genre mood: 現代ミステリー / 街歩きアドベンチャー, emotional tone: ノスタルジック、知的なワクワク感、静かな緊張感, setting texture: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, palette anchors: 翡翠 / 群青 / 金, visual motifs: 錆びた真鍮の鍵 / 夕暮れ時に響く海猫の鳴き声, for series 汐鳴港の黄昏迷宮, character portrait, waist-up, must match cover and world visual style bible, hard constraint: do not switch style family (no photorealistic drift, no random mixed media), identity lock: keep the same face identity and anchor traits whenever this character appears again, hard constraint: this person must be visually distinct from every other cast member, 無精髭を生やし、使い込まれた革のジャケットと銀縁の眼鏡がトレードマークの長身の男。, build: 長身で引き締まった, 皮肉屋でぶっきらぼうだが、根は面倒見が良く義理堅い。, background hint: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, 現代ミステリー / 街歩きアドベンチャー, ノスタルジック、知的なワクワク感、静かな緊張感, from series 汐鳴港の黄昏迷宮, clean composition, no text, no watermark",
+            "portrait_image_url": "http://127.0.0.1:4111/api/series/image?prompt=%E9%B3%B4%E6%B5%B7+%E5%AE%97%E4%BB%8B%2C+%E6%B1%90%E9%B3%B4%E6%B8%AF%E3%81%AE%E8%A3%8F%E4%BA%8B%E6%83%85%E3%81%AB%E7%B2%BE%E9%80%9A%E3%81%97%E3%80%81%E5%87%AA%E3%82%92%E5%B0%8E%E3%81%8D%E5%AE%88%E3%82%8B%E5%85%83%E5%88%91%E4%BA%8B%E3%81%AE%E5%96%AB%E8%8C%B6%E5%BA%97%E3%83%9E%E3%82%B9%E3%82%BF%E3%83%BC%E3%80%82%2C+hair+anchor%3A+%E5%8D%B0%E8%B1%A1%E7%9A%84%E3%81%AA%E9%AB%AA%E5%9E%8B%2C+silhouette+anchor%3A+%E6%B5%81%E7%B7%9A%E5%9E%8B%2C+outfit+anchor+item%3A+%E3%82%B8%E3%83%A3%E3%82%B1%E3%83%83%E3%83%88%2C+color+theme%3A+%E7%BE%A4%E9%9D%92%2C+notable+feature%3A+%E5%B8%B8%E3%81%AB%E6%89%8B%E8%A2%8B%E3%82%92%E5%A4%96%E3%81%95%E3%81%AA%E3%81%84%EF%BC%88%E5%B7%A6%E6%89%8B%E3%81%AB%E7%A7%98%E5%AF%86%E3%81%8C%E3%81%82%E3%82%8B%EF%BC%89%2C+style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterl&seed=936045656&width=768&height=1024&purpose=character_portrait&style_ref=style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterly+but+stylized+textures%2C+limited+cinematic+palette%2C+strong+key+light+and+rim+light%2C+negative+style+constraints%3A+photorealistic+skin+pores%2C+live-action+photo+look%2C+gritty+documentary+realism%2C+3D+render+look%2C+single+cohesive+illustration+art+direction+shared+across+cover%2C+character+portraits%2C+and+world+visuals%2C+genre+mood%3A+%E7%8F%BE%E4%BB%A3%E3%83%9F%E3%82%B9%E3%83%86%E3%83%AA%E3%83%BC+%2F+%E8%A1%97%E6%AD%A9%E3%81%8D%E3%82%A2%E3%83%89%E3%83%99%E3%83%B3%E3%83%81%E3%83%A3%E3%83%BC%2C+emotional+tone%3A+%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%E3%80%81%E7%9F%A5%E7%9A%84%E3%81%AA%E3%83%AF%E3%82%AF%E3%83%AF%E3%82%AF%E6%84%9F%E3%80%81%E9%9D%99%E3%81%8B%E3%81%AA%E7%B7%8A%E5%BC%B5%E6%84%9F%2C+setting+texture%3A+%E6%9E%B6%E7%A9%BA%E3%81%AE%E6%B8%AF%E7%94%BA%E3%80%8C%E6%B1%90%E9%B3%B4%EF%BC%88%E3%81%97%E3%81%8A%E3%81%AA%E3%82%8A%EF%BC%89%E3%80%8D%E3%80%82%E6%B5%B7%E6%B2%BF%E3%81%84%E3%81%AE%E3%83%AC%E3%83%B3%E3%82%AC%E5%80%89%E5%BA%AB%E7%BE%A4%E3%80%81%E7%9F%B3%E7%95%B3%E3%81%AE%E6%80%A5%E3%81%AA%E5%9D%82%E9%81%93%E3%80%81%E5%85%A5%E3%82%8A%E7%B5%84%E3%82%93%E3%81%A0%E8%B7%AF%E5%9C%B0%E8%A3%8F%E3%80%81%E9%AB%98%E5%8F%B0%E3%81%AE%E5%8F%A4%E3%81%84%E6%B4%8B%E9%A4%A8%E3%81%8C%E7%82%B9%E5%9C%A8%E3%81%97%E3%80%81%E5%BE%92%E6%AD%A9%E3%81%A7%E3%81%AE%E6%95%A3%E7%AD%96%E3%81%AB%E9%81%A9%E3%81%97%E3%81%9F%E8%A1%97%E3%80%82%2C+palette+anchors%3A+%E7%BF%A1%E7%BF%A0+%2F+%E7%BE%A4%E9%9D%92+%2F+%E9%87%91%2C+visual+motifs%3A+%E9%8C%86%E3%81%B3%E3%81%9F%E7%9C%9F%E9%8D%AE%E3%81%AE%E9%8D%B5+%2F+%E5%A4%95%E6%9A%AE%E3%82%8C%E6%99%82%E3%81%AB%E9%9F%BF%E3%81%8F%E6%B5%B7%E7%8C%AB%E3%81%AE%E9%B3%B4%E3%81%8D%E5%A3%B0%2C+for+series+%E6%B1%90%E9%B3%B4%E6%B8%AF%E3%81%AE%E9%BB%84%E6%98%8F%E8%BF%B7%E5%AE%AE"
+          },
+          {
+            "character_id": "char_3",
+            "name": "月島 玲子",
+            "role": "汐鳴港の郷土史料館で働き、二人に重要なヒントをもたらすミステリアスな司書。",
+            "is_key_person": true,
+            "identity_anchor_tokens": {
+              "hair": "黒髪ショート",
+              "silhouette": "柔らかく丸みのある",
+              "dominant_color": "金",
+              "outfit_key_item": "長いコート",
+              "distinguishing_feature": "左手首に古い革の腕輪（両親の形見）"
+            },
+            "portrait_prompt": "月島 玲子, 汐鳴港の郷土史料館で働き、二人に重要なヒントをもたらすミステリアスな司書。, hair anchor: 黒髪ショート, silhouette anchor: 柔らかく丸みのある, outfit anchor item: 長いコート, color theme: 金, notable feature: 左手首に古い革の腕輪（両親の形見）, style preset: シネマティックアニメ, style canon: cinematic anime illustration, clean line art, cel-shaded coloring, controlled warm lighting, high readability silhouettes, user style direction: 夕景、暖色、ややノスタルジック, style guardrails: consistent line thickness, painterly but stylized textures, limited cinematic palette, strong key light and rim light, negative style constraints: photorealistic skin pores, live-action photo look, gritty documentary realism, 3D render look, single cohesive illustration art direction shared across cover, character portraits, and world visuals, genre mood: 現代ミステリー / 街歩きアドベンチャー, emotional tone: ノスタルジック、知的なワクワク感、静かな緊張感, setting texture: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, palette anchors: 翡翠 / 群青 / 金, visual motifs: 錆びた真鍮の鍵 / 夕暮れ時に響く海猫の鳴き声, for series 汐鳴港の黄昏迷宮, character portrait, waist-up, must match cover and world visual style bible, hard constraint: do not switch style family (no photorealistic drift, no random mixed media), identity lock: keep the same face identity and anchor traits whenever this character appears again, hard constraint: this person must be visually distinct from every other cast member, 綺麗に切り揃えられたボブヘアで、アンティークな着物やレトロなワンピースを上品に着こなす女性。, build: 華奢ながら芯のある, 常に冷静沈着で、優雅な微笑みの裏に本心を隠している。, background hint: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, 現代ミステリー / 街歩きアドベンチャー, ノスタルジック、知的なワクワク感、静かな緊張感, from series 汐鳴港の黄昏迷宮, clean composition, no text, no watermark",
+            "portrait_image_url": "http://127.0.0.1:4111/api/series/image?prompt=%E6%9C%88%E5%B3%B6+%E7%8E%B2%E5%AD%90%2C+%E6%B1%90%E9%B3%B4%E6%B8%AF%E3%81%AE%E9%83%B7%E5%9C%9F%E5%8F%B2%E6%96%99%E9%A4%A8%E3%81%A7%E5%83%8D%E3%81%8D%E3%80%81%E4%BA%8C%E4%BA%BA%E3%81%AB%E9%87%8D%E8%A6%81%E3%81%AA%E3%83%92%E3%83%B3%E3%83%88%E3%82%92%E3%82%82%E3%81%9F%E3%82%89%E3%81%99%E3%83%9F%E3%82%B9%E3%83%86%E3%83%AA%E3%82%A2%E3%82%B9%E3%81%AA%E5%8F%B8%E6%9B%B8%E3%80%82%2C+hair+anchor%3A+%E9%BB%92%E9%AB%AA%E3%82%B7%E3%83%A7%E3%83%BC%E3%83%88%2C+silhouette+anchor%3A+%E6%9F%94%E3%82%89%E3%81%8B%E3%81%8F%E4%B8%B8%E3%81%BF%E3%81%AE%E3%81%82%E3%82%8B%2C+outfit+anchor+item%3A+%E9%95%B7%E3%81%84%E3%82%B3%E3%83%BC%E3%83%88%2C+color+theme%3A+%E9%87%91%2C+notable+feature%3A+%E5%B7%A6%E6%89%8B%E9%A6%96%E3%81%AB%E5%8F%A4%E3%81%84%E9%9D%A9%E3%81%AE%E8%85%95%E8%BC%AA%EF%BC%88%E4%B8%A1%E8%A6%AA%E3%81%AE%E5%BD%A2%E8%A6%8B%EF%BC%89%2C+style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness&seed=963832422&width=768&height=1024&purpose=character_portrait&style_ref=style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterly+but+stylized+textures%2C+limited+cinematic+palette%2C+strong+key+light+and+rim+light%2C+negative+style+constraints%3A+photorealistic+skin+pores%2C+live-action+photo+look%2C+gritty+documentary+realism%2C+3D+render+look%2C+single+cohesive+illustration+art+direction+shared+across+cover%2C+character+portraits%2C+and+world+visuals%2C+genre+mood%3A+%E7%8F%BE%E4%BB%A3%E3%83%9F%E3%82%B9%E3%83%86%E3%83%AA%E3%83%BC+%2F+%E8%A1%97%E6%AD%A9%E3%81%8D%E3%82%A2%E3%83%89%E3%83%99%E3%83%B3%E3%83%81%E3%83%A3%E3%83%BC%2C+emotional+tone%3A+%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%E3%80%81%E7%9F%A5%E7%9A%84%E3%81%AA%E3%83%AF%E3%82%AF%E3%83%AF%E3%82%AF%E6%84%9F%E3%80%81%E9%9D%99%E3%81%8B%E3%81%AA%E7%B7%8A%E5%BC%B5%E6%84%9F%2C+setting+texture%3A+%E6%9E%B6%E7%A9%BA%E3%81%AE%E6%B8%AF%E7%94%BA%E3%80%8C%E6%B1%90%E9%B3%B4%EF%BC%88%E3%81%97%E3%81%8A%E3%81%AA%E3%82%8A%EF%BC%89%E3%80%8D%E3%80%82%E6%B5%B7%E6%B2%BF%E3%81%84%E3%81%AE%E3%83%AC%E3%83%B3%E3%82%AC%E5%80%89%E5%BA%AB%E7%BE%A4%E3%80%81%E7%9F%B3%E7%95%B3%E3%81%AE%E6%80%A5%E3%81%AA%E5%9D%82%E9%81%93%E3%80%81%E5%85%A5%E3%82%8A%E7%B5%84%E3%82%93%E3%81%A0%E8%B7%AF%E5%9C%B0%E8%A3%8F%E3%80%81%E9%AB%98%E5%8F%B0%E3%81%AE%E5%8F%A4%E3%81%84%E6%B4%8B%E9%A4%A8%E3%81%8C%E7%82%B9%E5%9C%A8%E3%81%97%E3%80%81%E5%BE%92%E6%AD%A9%E3%81%A7%E3%81%AE%E6%95%A3%E7%AD%96%E3%81%AB%E9%81%A9%E3%81%97%E3%81%9F%E8%A1%97%E3%80%82%2C+palette+anchors%3A+%E7%BF%A1%E7%BF%A0+%2F+%E7%BE%A4%E9%9D%92+%2F+%E9%87%91%2C+visual+motifs%3A+%E9%8C%86%E3%81%B3%E3%81%9F%E7%9C%9F%E9%8D%AE%E3%81%AE%E9%8D%B5+%2F+%E5%A4%95%E6%9A%AE%E3%82%8C%E6%99%82%E3%81%AB%E9%9F%BF%E3%81%8F%E6%B5%B7%E7%8C%AB%E3%81%AE%E9%B3%B4%E3%81%8D%E5%A3%B0%2C+for+series+%E6%B1%90%E9%B3%B4%E6%B8%AF%E3%81%AE%E9%BB%84%E6%98%8F%E8%BF%B7%E5%AE%AE"
+          }
+        ],
+        "locked_at": "2026-03-10T23:49:12.637Z"
+      },
+      "cover_consistency_report": {
+        "mode": "quality_first",
+        "thresholds": {
+          "required_axes_per_character": 3,
+          "min_average_pass_rate": 0.75,
+          "min_style_similarity": 0.45
+        },
+        "validation_rounds": 1,
+        "selected_candidate_index": 1,
+        "selected_cover_image_url": "http://127.0.0.1:4111/api/series/image?prompt=style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterly+but+stylized+textures%2C+limited+cinematic+palette%2C+strong+key+light+and+rim+light%2C+negative+style+constraints%3A+photorealistic+skin+pores%2C+live-action+photo+look%2C+gri&seed=755696320&width=1024&height=1365&purpose=cover&style_ref=style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterly+but+stylized+textures%2C+limited+cinematic+palette%2C+strong+key+light+and+rim+light%2C+negative+style+constraints%3A+photorealistic+skin+pores%2C+live-action+photo+look%2C+gritty+documentary+realism%2C+3D+render+look%2C+single+cohesive+illustration+art+direction+shared+across+cover%2C+character+portraits%2C+and+world+visuals%2C+genre+mood%3A+%E7%8F%BE%E4%BB%A3%E3%83%9F%E3%82%B9%E3%83%86%E3%83%AA%E3%83%BC+%2F+%E8%A1%97%E6%AD%A9%E3%81%8D%E3%82%A2%E3%83%89%E3%83%99%E3%83%B3%E3%83%81%E3%83%A3%E3%83%BC%2C+emotional+tone%3A+%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%E3%80%81%E7%9F%A5%E7%9A%84%E3%81%AA%E3%83%AF%E3%82%AF%E3%83%AF%E3%82%AF%E6%84%9F%E3%80%81%E9%9D%99%E3%81%8B%E3%81%AA%E7%B7%8A%E5%BC%B5%E6%84%9F%2C+setting+texture%3A+%E6%9E%B6%E7%A9%BA%E3%81%AE%E6%B8%AF%E7%94%BA%E3%80%8C%E6%B1%90%E9%B3%B4%EF%BC%88%E3%81%97%E3%81%8A%E3%81%AA%E3%82%8A%EF%BC%89%E3%80%8D%E3%80%82%E6%B5%B7%E6%B2%BF%E3%81%84%E3%81%AE%E3%83%AC%E3%83%B3%E3%82%AC%E5%80%89%E5%BA%AB%E7%BE%A4%E3%80%81%E7%9F%B3%E7%95%B3%E3%81%AE%E6%80%A5%E3%81%AA%E5%9D%82%E9%81%93%E3%80%81%E5%85%A5%E3%82%8A%E7%B5%84%E3%82%93%E3%81%A0%E8%B7%AF%E5%9C%B0%E8%A3%8F%E3%80%81%E9%AB%98%E5%8F%B0%E3%81%AE%E5%8F%A4%E3%81%84%E6%B4%8B%E9%A4%A8%E3%81%8C%E7%82%B9%E5%9C%A8%E3%81%97%E3%80%81%E5%BE%92%E6%AD%A9%E3%81%A7%E3%81%AE%E6%95%A3%E7%AD%96%E3%81%AB%E9%81%A9%E3%81%97%E3%81%9F%E8%A1%97%E3%80%82%2C+palette+anchors%3A+%E7%BF%A1%E7%BF%A0+%2F+%E7%BE%A4%E9%9D%92+%2F+%E9%87%91%2C+visual+motifs%3A+%E9%8C%86%E3%81%B3%E3%81%9F%E7%9C%9F%E9%8D%AE%E3%81%AE%E9%8D%B5+%2F+%E5%A4%95%E6%9A%AE%E3%82%8C%E6%99%82%E3%81%AB%E9%9F%BF%E3%81%8F%E6%B5%B7%E7%8C%AB%E3%81%AE%E9%B3%B4%E3%81%8D%E5%A3%B0%2C+for+series+%E6%B1%90%E9%B3%B4%E6%B8%AF%E3%81%AE%E9%BB%84%E6%98%8F%E8%BF%B7%E5%AE%AE",
+        "selected_cover_image_prompt": "style preset: シネマティックアニメ, style canon: cinematic anime illustration, clean line art, cel-shaded coloring, controlled warm lighting, high readability silhouettes, user style direction: 夕景、暖色、ややノスタルジック, style guardrails: consistent line thickness, painterly but stylized textures, limited cinematic palette, strong key light and rim light, negative style constraints: photorealistic skin pores, live-action photo look, gritty documentary realism, 3D render look, single cohesive illustration art direction shared across cover, character portraits, and world visuals, genre mood: 現代ミステリー / 街歩きアドベンチャー, emotional tone: ノスタルジック、知的なワクワク感、静かな緊張感, setting texture: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, palette anchors: 翡翠 / 群青 / 金, visual motifs: 錆びた真鍮の鍵 / 夕暮れ時に響く海猫の鳴き声, for series 汐鳴港の黄昏迷宮, hard constraint: preserve exact same style canon as character portraits and world visuals, hard constraint: do not drift into photorealistic or mixed-media styles, world concept poster composition, hard constraint: do not depict any person or character, hard constraint: no face, no body, no human silhouette, no crowd, hard constraint: express the world through architecture, props, weather, lighting, and atmosphere, 汐鳴港の黄昏迷宮, 現代ミステリー / 街歩きアドベンチャー, ノスタルジック、知的なワクワク感、静かな緊張感, set in 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, theme: 歴史ある港町・汐鳴の路地裏を歩き、年上の頼れる相棒と共に街に眠る古い謎と現代の事件を解き明かす。 各話は徒歩で巡れる複数スポット（目安2〜4箇所）を移動しながら進行する。, world concept poster only, no people, no human silhouettes, no character portraits, dramatic lighting, high detail, no text, no watermark",
+        "selected_provider": "fast-proposal",
+        "passed": true,
+        "summary": "提案モードのため高速カバー生成を適用しました。",
+        "candidate_reports": [
+          {
+            "candidate_index": 1,
+            "round_index": 1,
+            "image_url": "http://127.0.0.1:4111/api/series/image?prompt=style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterly+but+stylized+textures%2C+limited+cinematic+palette%2C+strong+key+light+and+rim+light%2C+negative+style+constraints%3A+photorealistic+skin+pores%2C+live-action+photo+look%2C+gri&seed=755696320&width=1024&height=1365&purpose=cover&style_ref=style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+user+style+direction%3A+%E5%A4%95%E6%99%AF%E3%80%81%E6%9A%96%E8%89%B2%E3%80%81%E3%82%84%E3%82%84%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%2C+style+guardrails%3A+consistent+line+thickness%2C+painterly+but+stylized+textures%2C+limited+cinematic+palette%2C+strong+key+light+and+rim+light%2C+negative+style+constraints%3A+photorealistic+skin+pores%2C+live-action+photo+look%2C+gritty+documentary+realism%2C+3D+render+look%2C+single+cohesive+illustration+art+direction+shared+across+cover%2C+character+portraits%2C+and+world+visuals%2C+genre+mood%3A+%E7%8F%BE%E4%BB%A3%E3%83%9F%E3%82%B9%E3%83%86%E3%83%AA%E3%83%BC+%2F+%E8%A1%97%E6%AD%A9%E3%81%8D%E3%82%A2%E3%83%89%E3%83%99%E3%83%B3%E3%83%81%E3%83%A3%E3%83%BC%2C+emotional+tone%3A+%E3%83%8E%E3%82%B9%E3%82%BF%E3%83%AB%E3%82%B8%E3%83%83%E3%82%AF%E3%80%81%E7%9F%A5%E7%9A%84%E3%81%AA%E3%83%AF%E3%82%AF%E3%83%AF%E3%82%AF%E6%84%9F%E3%80%81%E9%9D%99%E3%81%8B%E3%81%AA%E7%B7%8A%E5%BC%B5%E6%84%9F%2C+setting+texture%3A+%E6%9E%B6%E7%A9%BA%E3%81%AE%E6%B8%AF%E7%94%BA%E3%80%8C%E6%B1%90%E9%B3%B4%EF%BC%88%E3%81%97%E3%81%8A%E3%81%AA%E3%82%8A%EF%BC%89%E3%80%8D%E3%80%82%E6%B5%B7%E6%B2%BF%E3%81%84%E3%81%AE%E3%83%AC%E3%83%B3%E3%82%AC%E5%80%89%E5%BA%AB%E7%BE%A4%E3%80%81%E7%9F%B3%E7%95%B3%E3%81%AE%E6%80%A5%E3%81%AA%E5%9D%82%E9%81%93%E3%80%81%E5%85%A5%E3%82%8A%E7%B5%84%E3%82%93%E3%81%A0%E8%B7%AF%E5%9C%B0%E8%A3%8F%E3%80%81%E9%AB%98%E5%8F%B0%E3%81%AE%E5%8F%A4%E3%81%84%E6%B4%8B%E9%A4%A8%E3%81%8C%E7%82%B9%E5%9C%A8%E3%81%97%E3%80%81%E5%BE%92%E6%AD%A9%E3%81%A7%E3%81%AE%E6%95%A3%E7%AD%96%E3%81%AB%E9%81%A9%E3%81%97%E3%81%9F%E8%A1%97%E3%80%82%2C+palette+anchors%3A+%E7%BF%A1%E7%BF%A0+%2F+%E7%BE%A4%E9%9D%92+%2F+%E9%87%91%2C+visual+motifs%3A+%E9%8C%86%E3%81%B3%E3%81%9F%E7%9C%9F%E9%8D%AE%E3%81%AE%E9%8D%B5+%2F+%E5%A4%95%E6%9A%AE%E3%82%8C%E6%99%82%E3%81%AB%E9%9F%BF%E3%81%8F%E6%B5%B7%E7%8C%AB%E3%81%AE%E9%B3%B4%E3%81%8D%E5%A3%B0%2C+for+series+%E6%B1%90%E9%B3%B4%E6%B8%AF%E3%81%AE%E9%BB%84%E6%98%8F%E8%BF%B7%E5%AE%AE",
+            "provider": "fast-proposal",
+            "prompt": "style preset: シネマティックアニメ, style canon: cinematic anime illustration, clean line art, cel-shaded coloring, controlled warm lighting, high readability silhouettes, user style direction: 夕景、暖色、ややノスタルジック, style guardrails: consistent line thickness, painterly but stylized textures, limited cinematic palette, strong key light and rim light, negative style constraints: photorealistic skin pores, live-action photo look, gritty documentary realism, 3D render look, single cohesive illustration art direction shared across cover, character portraits, and world visuals, genre mood: 現代ミステリー / 街歩きアドベンチャー, emotional tone: ノスタルジック、知的なワクワク感、静かな緊張感, setting texture: 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, palette anchors: 翡翠 / 群青 / 金, visual motifs: 錆びた真鍮の鍵 / 夕暮れ時に響く海猫の鳴き声, for series 汐鳴港の黄昏迷宮, hard constraint: preserve exact same style canon as character portraits and world visuals, hard constraint: do not drift into photorealistic or mixed-media styles, world concept poster composition, hard constraint: do not depict any person or character, hard constraint: no face, no body, no human silhouette, no crowd, hard constraint: express the world through architecture, props, weather, lighting, and atmosphere, 汐鳴港の黄昏迷宮, 現代ミステリー / 街歩きアドベンチャー, ノスタルジック、知的なワクワク感、静かな緊張感, set in 架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。, theme: 歴史ある港町・汐鳴の路地裏を歩き、年上の頼れる相棒と共に街に眠る古い謎と現代の事件を解き明かす。 各話は徒歩で巡れる複数スポット（目安2〜4箇所）を移動しながら進行する。, world concept poster only, no people, no human silhouettes, no character portraits, dramatic lighting, high detail, no text, no watermark",
+            "arcface_avg": 1,
+            "clip_avg": 0.72,
+            "vision_anchor_avg": 0.72,
+            "style_similarity": 0.72,
+            "pass_rate": 1,
+            "passed": true,
+            "character_scores": []
+          }
+        ]
+      },
+      "checkpoints": [
+        {
+          "checkpoint_no": 1,
+          "title": "第一話：潮風が運ぶ古い謎",
+          "purpose": "最初の海図の切れ端の謎を解き、宗介と共に探索の第一歩を踏み出す",
+          "unlock_hint": "喫茶店のマスターが持つ古い記憶",
+          "expected_emotion": "未知へのワクワク感とノスタルジー",
+          "carry_over": "最初の海図の切れ端と、次なる目的地を示す暗号"
+        },
+        {
+          "checkpoint_no": 2,
+          "title": "第二話：郷土史料館の沈黙",
+          "purpose": "玲子と接触し、海図の歴史的背景と2枚目の切れ端を入手する",
+          "unlock_hint": "史料館の閉架書庫に眠る記録",
+          "expected_emotion": "知的な興奮と静かな緊張感",
+          "carry_over": "2枚目の切れ端と、開発業者の影への警戒"
+        },
+        {
+          "checkpoint_no": 3,
+          "title": "第三話：赤レンガの記憶",
+          "purpose": "開発業者の妨害を避けつつ、古い倉庫街で3枚目の切れ端を探す",
+          "unlock_hint": "取り壊し予定の倉庫に残された荷印",
+          "expected_emotion": "焦燥感と相棒との絆",
+          "carry_over": "3枚目の切れ端と、宗介の過去の事件との繋がり"
+        },
+        {
+          "checkpoint_no": 4,
+          "title": "第四話：港の見える丘の追憶",
+          "purpose": "宗介の過去の未解決事件の現場を巡り、事件と海図の関連を暴く",
+          "unlock_hint": "丘の上の展望台から見える旧港の形",
+          "expected_emotion": "哀愁と真実への渇望",
+          "carry_over": "4枚目の切れ端と、玲子の一族の秘密への手がかり"
+        }
+      ],
+      "first_episode_seed": {
+        "title": "潮風が運ぶ古い謎",
+        "objective": "鳴海宗介の喫茶店を起点に、古い海図の最初の切れ端が示す路地裏の目印を見つけ出す。",
+        "opening_scene": "夕暮れの汐鳴港。海藤凪は古書店で見つけた奇妙な海図の切れ端を手に、元刑事・鳴海宗介が営むレトロな喫茶店を訪れる。",
+        "expected_duration_minutes": 25,
+        "route_style": "徒歩中心の路地裏探索",
+        "completion_condition": "海図に描かれた『三つの波紋』の紋章が刻まれた古い石碑を発見し、そこに隠されたメッセージを読み取る。",
+        "carry_over_hint": "石碑の裏には、次なる目的地を示す暗号と、開発業者が探しているという不穏なメモが残されていた。宗介は静かにタバコを揉み消し、「厄介なことになりそうだ」と呟く。",
+        "spot_requirements": [
+          {
+            "requirement_id": "spot_1",
+            "scene_role": "起",
+            "spot_role": "物語の起点となるレトロな喫茶店",
+            "required_attributes": [
+              "静かな雰囲気",
+              "古い調度品",
+              "路地裏に位置する"
+            ],
+            "visit_constraints": [
+              "外観の確認が可能",
+              "周辺の路地が歩ける"
+            ],
+            "tourism_value_type": "歴史的建造物・レトロ文化"
+          },
+          {
+            "requirement_id": "spot_2",
+            "scene_role": "承",
+            "spot_role": "海図のヒントを辿る途中の古い坂道または階段",
+            "required_attributes": [
+              "港が見下ろせる",
+              "石畳または古いコンクリート",
+              "生活感がある"
+            ],
+            "visit_constraints": [
+              "徒歩でのみアクセス可能",
+              "明るい時間帯または街灯がある"
+            ],
+            "tourism_value_type": "景観・ノスタルジー"
+          },
+          {
+            "requirement_id": "spot_3",
+            "scene_role": "結",
+            "spot_role": "紋章が刻まれた古い石碑がある小さな広場または神社",
+            "required_attributes": [
+              "歴史的な石造物がある",
+              "人目が少ない",
+              "海風を感じる場所"
+            ],
+            "visit_constraints": [
+              "常時立ち入り可能",
+              "静かに探索できる"
+            ],
+            "tourism_value_type": "史跡・地域信仰"
+          }
+        ]
+      },
+      "progress_state": {
+        "last_completed_episode_no": 0,
+        "unresolved_threads": [
+          "汐鳴の繁栄を支えた『失われた航路』の正体と、それを隠蔽・独占しようとする現代の開発業者の真の狙い。"
+        ],
+        "revealed_facts": [],
+        "relationship_state_summary": "主要キャラクターとの関係は導入段階。",
+        "relationship_flags": [],
+        "recent_relation_shift": [],
+        "companion_trust_level": 40,
+        "next_hook": "石碑の裏には、次なる目的地を示す暗号と、開発業者が探しているという不穏なメモが残されていた。宗介は静かにタバコを揉み消し、「厄介なことになりそうだ」と呟く。"
+      },
+      "episode_blueprints": [],
+      "continuity": {
+        "global_mystery": "汐鳴の繁栄を支えた『失われた航路』の正体と、それを隠蔽・独占しようとする現代の開発業者の真の狙い。",
+        "mid_season_twist": "宗介が過去に調査を断念した未解決事件が、現在集めている海図の謎と密接に関わっていることが発覚する。",
+        "finale_payoff": "全ての海図が揃うことで街の歴史的価値が証明され、開発による破壊を阻止すると同時に、凪が一人前の探偵として自立する。",
+        "invariant_rules": [
+          "舞台は地上で歩行可能な都市・街区に限定する。",
+          "各話で最低2スポット以上の徒歩移動を行う。",
+          "屋内のみで完結する構成を採用しない。",
+          "舞台は常に徒歩移動が可能な地上の街区に限定し、非現実的な空間や閉鎖施設への逸脱を認めない。",
+          "解決手段は暴力ではなく、観察、聞き込み、歴史的資料の照合といった知的なプロセスに限定する。",
+          "夕暮れから夜にかけてのノスタルジックな時間軸と、潮風を感じさせる環境描写を維持する。"
+        ],
+        "episode_link_policy": [
+          "次回冒頭で前話の移動経路または到達地点を参照する。",
+          "各話の終わりに次回で向かう街区・スポットを明示する。",
+          "シリーズ進行に合わせて徒歩ルートを段階的に拡張する。",
+          "前話の『carry_over』で得たアイテムや情報を、次話の最初のスポットを特定する鍵として必ず使用する。",
+          "凪のキャラクターの弧（未熟から覚悟へ）を反映し、話が進むごとに彼が主導して発見する描写を増やす。",
+          "各話のスポット選定は『拠点』『移動経路』『目的地』の役割を持たせ、街歩きの臨場感を損なわないようにする。"
+        ]
+      }
+    },
+    "series_meta": {
+      "desired_episode_count": 6,
+      "generated_checkpoint_count": 4,
+      "workflow_version": "series-workflow-v7-role-planner",
+      "warnings": [
+        "第2話の史料館や第3話の倉庫など、屋内が中心になりやすい回でも、必ずそこに至る路地裏や周辺の公園などの屋外描写を必須としてください。",
+        "スポット要件は『〇〇史料館』といった固有名詞ではなく、『歴史的記録が眠る公共施設』『潮風に晒された古いレンガ造りの区画』といった役割仕様で定義してください。"
+      ],
+      "first_episode_seed_dry_run": {
+        "feasible": true,
+        "selected_spots": [
+          "架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。 石畳路地",
+          "架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。 運河テラス",
+          "架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。 文化案内所前"
+        ],
+        "failure_reasons": [],
+        "route_metrics": {
+          "optimizer": "heuristic_dp_fallback_v1",
+          "total_estimated_walk_minutes": 27,
+          "transfer_minutes": 6,
+          "max_leg_minutes": 3,
+          "max_total_walk_minutes": 110,
+          "feasible": true,
+          "failure_reasons": [],
+          "optimized_order_indices": [
+            0,
+            1,
+            2
+          ],
+          "optimized_order_spot_names": [
+            "架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。 石畳路地",
+            "架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。 運河テラス",
+            "架空の港町「汐鳴（しおなり）」。海沿いのレンガ倉庫群、石畳の急な坂道、入り組んだ路地裏、高台の古い洋館が点在し、徒歩での散策に適した街。 文化案内所前"
+          ]
+        },
+        "route_score": 0.764,
+        "continuity_score": 0.619
+      }
+    },
+    "episode": {
+      "title": "第1話: 浅草の歴史観光と街歩き",
+      "summary": "浅草 石畳路地に到着する。歴史的建造物・レトロ文化を感じられる地点→浅草 運河テラスに到着する。景観・ノスタルジーを感じられる地点→浅草 橋詰広場に到着する。文化体験を感じられる地点→浅草 文化案内所前に到着する。史跡・地域信仰を感じられる地点→浅草 歴史掲示板前に到着する。景観を感じられる地点",
+      "one_liner": "浅草を歩き、新たな手がかりを探す。",
+      "main_plot": {
+        "premise": "汐鳴港の黄昏迷宮の一章。浅草で物語が動く。",
+        "goal": "新しい手がかりを1つ得て、次の展開への布石を打つ。"
+      },
+      "characters": [
+        {
+          "id": "char_1",
+          "name": "海藤 凪",
+          "role": "汐鳴港の歴史に魅せられ、古い海図の謎を追う若き探求者。",
+          "personality": "物静かだが、謎を前にすると熱中して周りが見えなくなる探求肌。",
+          "origin": "series"
+        },
+        {
+          "id": "char_2",
+          "name": "鳴海 宗介",
+          "role": "汐鳴港の裏事情に精通し、凪を導き守る元刑事の喫茶店マスター。",
+          "personality": "皮肉屋でぶっきらぼうだが、根は面倒見が良く義理堅い。",
+          "origin": "series"
+        },
+        {
+          "id": "char_3",
+          "name": "月島 玲子",
+          "role": "汐鳴港の郷土史料館で働き、二人に重要なヒントをもたらすミステリアスな司書。",
+          "personality": "常に冷静沈着で、優雅な微笑みの裏に本心を隠している。",
+          "origin": "series"
+        },
+        {
+          "id": "char_4",
+          "name": "浅草の語り部",
+          "role": "地域の背景を知るキーパーソン",
+          "personality": "穏やかで含みのある話し方をする",
+          "origin": "episode"
+        },
+        {
+          "id": "char_5",
+          "name": "歴史観光と街歩きの現場担当",
+          "role": "現地導線を動かす実務的な人物",
+          "personality": "率直で行動が早い",
+          "origin": "episode"
+        }
+      ],
+      "episode_world": {
+        "title": "浅草で紡ぐ歴史観光と街歩きの章",
+        "mood": "発見と余韻が同居する街歩きミステリー",
+        "atmosphere": "浅草の土地感覚を活かした現実接続型の物語空間",
+        "sensory_keywords": [
+          "石畳",
+          "光と影",
+          "街の生活音",
+          "匂いの記憶"
+        ],
+        "story_axis": "街の断片情報をつなぎ、次話へ続く意味を見つける",
+        "emotional_arc": "導入の違和感→関係進展→真相の輪郭→次話への余韻",
+        "local_theme": "浅草らしさを体験として回収する"
+      },
+      "episode_unique_characters": [
+        {
+          "id": "ep_char_1",
+          "name": "浅草の語り部",
+          "role": "地域の背景を知るキーパーソン",
+          "personality": "穏やかで含みのある話し方をする",
+          "motivation": "土地の記憶を正しく受け継いでほしい",
+          "relation_to_series": "固定キャラが追う謎の断片に接続する証言者",
+          "introduction_scene": "起点スポットで短い違和感を提示する"
+        },
+        {
+          "id": "ep_char_2",
+          "name": "歴史観光と街歩きの現場担当",
+          "role": "現地導線を動かす実務的な人物",
+          "personality": "率直で行動が早い",
+          "motivation": "今日中に整理すべき未解決事項がある",
+          "relation_to_series": "固定キャラとの会話で次話のキー情報を引き出す",
+          "introduction_scene": "中盤スポットで具体的な行動ミッションを渡す"
+        }
+      ],
+      "spots": [
+        {
+          "spot_name": "浅草 石畳路地",
+          "scene_role": "起",
+          "scene_objective": "物語の起点となるレトロな喫茶店で次の判断材料を得る",
+          "scene_narration": "浅草 石畳路地に到着する。歴史的建造物・レトロ文化を感じられる地点",
+          "blocks": [
+            {
+              "type": "narration",
+              "text": "浅草 石畳路地に到着する。歴史的建造物・レトロ文化を感じられる地点"
+            },
+            {
+              "type": "dialogue",
+              "text": "ここで何か見つかるかもしれない。",
+              "speaker_id": "char_1",
+              "expression": "serious"
+            },
+            {
+              "type": "mission",
+              "text": "周囲を観察し、最初の手がかりを特定する"
+            }
+          ],
+          "question_text": "浅草 石畳路地で「物語の起点となるレトロな喫茶店で次の判断材料を得る」を成立させる答えは何ですか？",
+          "answer_text": "物語の起点となるレトロな",
+          "hint_text": "歴史的建造物・レトロ文化を感じられる地点に注目する。",
+          "explanation_text": "歴史的建造物・レトロ文化を感じられる地点が手がかりになる。だからこの答えに到達する。",
+          "pre_mission_dialogue": [],
+          "post_mission_dialogue": []
+        },
+        {
+          "spot_name": "浅草 運河テラス",
+          "scene_role": "承",
+          "scene_objective": "海図のヒントを辿る途中の古い坂道または階段で次の判断材料を得る",
+          "scene_narration": "浅草 運河テラスに到着する。景観・ノスタルジーを感じられる地点",
+          "blocks": [
+            {
+              "type": "narration",
+              "text": "浅草 運河テラスに到着する。景観・ノスタルジーを感じられる地点"
+            },
+            {
+              "type": "dialogue",
+              "text": "ここで何か見つかるかもしれない。",
+              "speaker_id": "char_1",
+              "expression": "serious"
+            },
+            {
+              "type": "mission",
+              "text": "歴史的痕跡から次地点に繋がる情報を抽出する"
+            }
+          ],
+          "question_text": "浅草 運河テラスで「海図のヒントを辿る途中の古い坂道または階段で次の判断材料を得る」を成立させる答えは何ですか？",
+          "answer_text": "海図のヒントを辿る途中の",
+          "hint_text": "景観・ノスタルジーを感じられる地点に注目する。",
+          "explanation_text": "景観・ノスタルジーを感じられる地点が手がかりになる。だからこの答えに到達する。",
+          "pre_mission_dialogue": [],
+          "post_mission_dialogue": []
+        },
+        {
+          "spot_name": "浅草 橋詰広場",
+          "scene_role": "転",
+          "scene_objective": "核心前の意思決定が起きる結節点で次の判断材料を得る",
+          "scene_narration": "浅草 橋詰広場に到着する。文化体験を感じられる地点",
+          "blocks": [
+            {
+              "type": "narration",
+              "text": "浅草 橋詰広場に到着する。文化体験を感じられる地点"
+            },
+            {
+              "type": "dialogue",
+              "text": "ここで何か見つかるかもしれない。",
+              "speaker_id": "char_1",
+              "expression": "serious"
+            },
+            {
+              "type": "mission",
+              "text": "観察結果を照合し、仮説の矛盾点を1つ潰す"
+            }
+          ],
+          "question_text": "浅草 橋詰広場で「核心前の意思決定が起きる結節点で次の判断材料を得る」を成立させる答えは何ですか？",
+          "answer_text": "核心前の意思決定が起きる",
+          "hint_text": "文化体験を感じられる地点に注目する。",
+          "explanation_text": "文化体験を感じられる地点が手がかりになる。だからこの答えに到達する。",
+          "pre_mission_dialogue": [],
+          "post_mission_dialogue": []
+        },
+        {
+          "spot_name": "浅草 文化案内所前",
+          "scene_role": "結",
+          "scene_objective": "紋章が刻まれた古い石碑がある小さな広場または神社で次の判断材料を得る",
+          "scene_narration": "浅草 文化案内所前に到着する。史跡・地域信仰を感じられる地点",
+          "blocks": [
+            {
+              "type": "narration",
+              "text": "浅草 文化案内所前に到着する。史跡・地域信仰を感じられる地点"
+            },
+            {
+              "type": "dialogue",
+              "text": "ここで何か見つかるかもしれない。",
+              "speaker_id": "char_1",
+              "expression": "serious"
+            },
+            {
+              "type": "mission",
+              "text": "現地要素から次地点に接続する根拠を1つ得る"
+            }
+          ],
+          "question_text": "浅草 文化案内所前で「紋章が刻まれた古い石碑がある小さな広場または神社で次の判断材料を得る」を成立させる答えは何ですか？",
+          "answer_text": "紋章が刻まれた古い石碑が",
+          "hint_text": "史跡・地域信仰を感じられる地点に注目する。",
+          "explanation_text": "史跡・地域信仰を感じられる地点が手がかりになる。だからこの答えに到達する。",
+          "pre_mission_dialogue": [],
+          "post_mission_dialogue": []
+        },
+        {
+          "spot_name": "浅草 歴史掲示板前",
+          "scene_role": "結",
+          "scene_objective": "最後の余韻に向く見晴らし地点で次の判断材料を得る",
+          "scene_narration": "浅草 歴史掲示板前に到着する。景観を感じられる地点",
+          "blocks": [
+            {
+              "type": "narration",
+              "text": "浅草 歴史掲示板前に到着する。景観を感じられる地点"
+            },
+            {
+              "type": "dialogue",
+              "text": "ここで何か見つかるかもしれない。",
+              "speaker_id": "char_1",
+              "expression": "serious"
+            },
+            {
+              "type": "mission",
+              "text": "得た情報を統合して、次話の問いを言語化する"
+            }
+          ],
+          "question_text": "浅草 歴史掲示板前で「最後の余韻に向く見晴らし地点で次の判断材料を得る」を成立させる答えは何ですか？",
+          "answer_text": "最後の余韻に向く見晴らし",
+          "hint_text": "景観を感じられる地点に注目する。",
+          "explanation_text": "景観を感じられる地点が手がかりになる。だからこの答えに到達する。",
+          "pre_mission_dialogue": [],
+          "post_mission_dialogue": []
+        }
+      ],
+      "completion_condition": "主要スポットで新しい手がかりを1つ得る。",
+      "carry_over_hook": "最後に残された問いが、次回の行動を促す。",
+      "estimated_duration_minutes": 20,
+      "progress_patch": {
+        "unresolved_threads_to_add": [],
+        "unresolved_threads_to_remove": [],
+        "revealed_facts_to_add": [
+          "浅草で得た新情報"
+        ],
+        "relationship_state_summary": "主要キャラクターとの関係は導入段階。 今回は海藤 凪・鳴海 宗介との相互理解が進んだ。",
+        "relationship_flags_to_add": [
+          "became_more_open",
+          "shared_new_context",
+          "responded_to_user_wish",
+          "primary_companion_engaged"
+        ],
+        "relationship_flags_to_remove": [],
+        "recent_relation_shift": [
+          "became_more_open",
+          "shared_new_context",
+          "responded_to_user_wish"
+        ],
+        "companion_trust_delta": 2,
+        "next_hook": "最後に残された問いが、次回の行動を促す。"
+      },
+      "generation_trace": {
+        "stage_location": "浅草",
+        "candidate_spots": [
+          {
+            "requirement_id": "spot_1",
+            "scene_role": "起",
+            "spot_role": "物語の起点となるレトロな喫茶店",
+            "candidates": [
+              {
+                "spot_name": "浅草 石畳路地",
+                "tourism_focus": "歴史的建造物・レトロ文化を感じられる地点",
+                "estimated_walk_minutes": 5,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 歴史資料館前",
+                "tourism_focus": "歴史的建造物・レトロ文化を感じられる地点",
+                "estimated_walk_minutes": 7,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 神社参道",
+                "tourism_focus": "歴史的建造物・レトロ文化を感じられる地点",
+                "estimated_walk_minutes": 9,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 市場通り",
+                "tourism_focus": "歴史的建造物・レトロ文化を感じられる地点",
+                "estimated_walk_minutes": 11,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 文化交流広場",
+                "tourism_focus": "歴史的建造物・レトロ文化を感じられる地点",
+                "estimated_walk_minutes": 13,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 駅前広場",
+                "tourism_focus": "歴史的建造物・レトロ文化を感じられる地点",
+                "estimated_walk_minutes": 15,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 商店街",
+                "tourism_focus": "歴史的建造物・レトロ文化を感じられる地点",
+                "estimated_walk_minutes": 17,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 公共広場",
+                "tourism_focus": "歴史的建造物・レトロ文化を感じられる地点",
+                "estimated_walk_minutes": 19,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              }
+            ]
+          },
+          {
+            "requirement_id": "spot_2",
+            "scene_role": "承",
+            "spot_role": "海図のヒントを辿る途中の古い坂道または階段",
+            "candidates": [
+              {
+                "spot_name": "浅草 運河テラス",
+                "tourism_focus": "景観・ノスタルジーを感じられる地点",
+                "estimated_walk_minutes": 7,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 川沿い遊歩道",
+                "tourism_focus": "景観・ノスタルジーを感じられる地点",
+                "estimated_walk_minutes": 9,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 水辺プロムナード",
+                "tourism_focus": "景観・ノスタルジーを感じられる地点",
+                "estimated_walk_minutes": 11,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 歴史資料館前",
+                "tourism_focus": "景観・ノスタルジーを感じられる地点",
+                "estimated_walk_minutes": 13,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 神社参道",
+                "tourism_focus": "景観・ノスタルジーを感じられる地点",
+                "estimated_walk_minutes": 15,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 展望デッキ",
+                "tourism_focus": "景観・ノスタルジーを感じられる地点",
+                "estimated_walk_minutes": 17,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 高台公園",
+                "tourism_focus": "景観・ノスタルジーを感じられる地点",
+                "estimated_walk_minutes": 19,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 駅前広場",
+                "tourism_focus": "景観・ノスタルジーを感じられる地点",
+                "estimated_walk_minutes": 20,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              }
+            ]
+          },
+          {
+            "requirement_id": "spot_3",
+            "scene_role": "結",
+            "spot_role": "紋章が刻まれた古い石碑がある小さな広場または神社",
+            "candidates": [
+              {
+                "spot_name": "浅草 文化案内所前",
+                "tourism_focus": "史跡・地域信仰を感じられる地点",
+                "estimated_walk_minutes": 9,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.35,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 川沿い遊歩道",
+                "tourism_focus": "史跡・地域信仰を感じられる地点",
+                "estimated_walk_minutes": 11,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.35,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 水辺プロムナード",
+                "tourism_focus": "史跡・地域信仰を感じられる地点",
+                "estimated_walk_minutes": 13,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.35,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 歴史資料館前",
+                "tourism_focus": "史跡・地域信仰を感じられる地点",
+                "estimated_walk_minutes": 15,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.35,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 神社参道",
+                "tourism_focus": "史跡・地域信仰を感じられる地点",
+                "estimated_walk_minutes": 17,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.35,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 駅前広場",
+                "tourism_focus": "史跡・地域信仰を感じられる地点",
+                "estimated_walk_minutes": 19,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.35,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 商店街",
+                "tourism_focus": "史跡・地域信仰を感じられる地点",
+                "estimated_walk_minutes": 20,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.35,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 公共広場",
+                "tourism_focus": "史跡・地域信仰を感じられる地点",
+                "estimated_walk_minutes": 20,
+                "public_accessible": true,
+                "role_match_score": 0.5,
+                "tourism_match_score": 0.35,
+                "locality_score": 0.95
+              }
+            ]
+          },
+          {
+            "requirement_id": "req_4",
+            "scene_role": "転",
+            "spot_role": "核心前の意思決定が起きる結節点",
+            "candidates": [
+              {
+                "spot_name": "浅草 橋詰広場",
+                "tourism_focus": "文化体験を感じられる地点",
+                "estimated_walk_minutes": 11,
+                "public_accessible": true,
+                "role_match_score": 0.35,
+                "tourism_match_score": 0.35,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 市場通り",
+                "tourism_focus": "文化体験を感じられる地点",
+                "estimated_walk_minutes": 13,
+                "public_accessible": true,
+                "role_match_score": 0.35,
+                "tourism_match_score": 0.35,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 文化交流広場",
+                "tourism_focus": "文化体験を感じられる地点",
+                "estimated_walk_minutes": 15,
+                "public_accessible": true,
+                "role_match_score": 0.35,
+                "tourism_match_score": 0.35,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 駅前広場",
+                "tourism_focus": "文化体験を感じられる地点",
+                "estimated_walk_minutes": 17,
+                "public_accessible": true,
+                "role_match_score": 0.35,
+                "tourism_match_score": 0.35,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 商店街",
+                "tourism_focus": "文化体験を感じられる地点",
+                "estimated_walk_minutes": 19,
+                "public_accessible": true,
+                "role_match_score": 0.35,
+                "tourism_match_score": 0.35,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 公共広場",
+                "tourism_focus": "文化体験を感じられる地点",
+                "estimated_walk_minutes": 20,
+                "public_accessible": true,
+                "role_match_score": 0.35,
+                "tourism_match_score": 0.35,
+                "locality_score": 0.95
+              }
+            ]
+          },
+          {
+            "requirement_id": "req_5",
+            "scene_role": "結",
+            "spot_role": "最後の余韻に向く見晴らし地点",
+            "candidates": [
+              {
+                "spot_name": "浅草 歴史掲示板前",
+                "tourism_focus": "景観を感じられる地点",
+                "estimated_walk_minutes": 13,
+                "public_accessible": true,
+                "role_match_score": 0.35,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 展望デッキ",
+                "tourism_focus": "景観を感じられる地点",
+                "estimated_walk_minutes": 15,
+                "public_accessible": true,
+                "role_match_score": 0.35,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 高台公園",
+                "tourism_focus": "景観を感じられる地点",
+                "estimated_walk_minutes": 17,
+                "public_accessible": true,
+                "role_match_score": 0.35,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 駅前広場",
+                "tourism_focus": "景観を感じられる地点",
+                "estimated_walk_minutes": 19,
+                "public_accessible": true,
+                "role_match_score": 0.35,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 商店街",
+                "tourism_focus": "景観を感じられる地点",
+                "estimated_walk_minutes": 20,
+                "public_accessible": true,
+                "role_match_score": 0.35,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              },
+              {
+                "spot_name": "浅草 公共広場",
+                "tourism_focus": "景観を感じられる地点",
+                "estimated_walk_minutes": 20,
+                "public_accessible": true,
+                "role_match_score": 0.35,
+                "tourism_match_score": 0.7,
+                "locality_score": 0.95
+              }
+            ]
+          }
+        ],
+        "selected_spots": [
+          {
+            "requirement_id": "spot_1",
+            "scene_role": "起",
+            "spot_name": "浅草 石畳路地",
+            "tourism_focus": "歴史的建造物・レトロ文化を感じられる地点",
+            "estimated_walk_minutes": 5
+          },
+          {
+            "requirement_id": "spot_2",
+            "scene_role": "承",
+            "spot_name": "浅草 運河テラス",
+            "tourism_focus": "景観・ノスタルジーを感じられる地点",
+            "estimated_walk_minutes": 7
+          },
+          {
+            "requirement_id": "spot_3",
+            "scene_role": "結",
+            "spot_name": "浅草 文化案内所前",
+            "tourism_focus": "史跡・地域信仰を感じられる地点",
+            "estimated_walk_minutes": 9
+          },
+          {
+            "requirement_id": "req_4",
+            "scene_role": "転",
+            "spot_name": "浅草 橋詰広場",
+            "tourism_focus": "文化体験を感じられる地点",
+            "estimated_walk_minutes": 11
+          },
+          {
+            "requirement_id": "req_5",
+            "scene_role": "結",
+            "spot_name": "浅草 歴史掲示板前",
+            "tourism_focus": "景観を感じられる地点",
+            "estimated_walk_minutes": 13
+          }
+        ],
+        "eligibility_reject_reasons": [],
+        "mmr_scores": [
+          {
+            "requirement_id": "spot_1",
+            "spot_name": "浅草 石畳路地",
+            "relevance_score": 0.6824999999999999,
+            "redundancy_penalty": 0,
+            "mmr_score": 0.4913999999999999
+          },
+          {
+            "requirement_id": "spot_1",
+            "spot_name": "浅草 歴史資料館前",
+            "relevance_score": 0.6824999999999999,
+            "redundancy_penalty": 0.3333333333333333,
+            "mmr_score": 0.39806666666666657
+          },
+          {
+            "requirement_id": "spot_1",
+            "spot_name": "浅草 神社参道",
+            "relevance_score": 0.6824999999999999,
+            "redundancy_penalty": 0.3333333333333333,
+            "mmr_score": 0.39806666666666657
+          },
+          {
+            "requirement_id": "spot_2",
+            "spot_name": "浅草 運河テラス",
+            "relevance_score": 0.6824999999999999,
+            "redundancy_penalty": 0,
+            "mmr_score": 0.4913999999999999
+          },
+          {
+            "requirement_id": "spot_2",
+            "spot_name": "浅草 川沿い遊歩道",
+            "relevance_score": 0.6824999999999999,
+            "redundancy_penalty": 0.3333333333333333,
+            "mmr_score": 0.39806666666666657
+          },
+          {
+            "requirement_id": "spot_2",
+            "spot_name": "浅草 水辺プロムナード",
+            "relevance_score": 0.6824999999999999,
+            "redundancy_penalty": 0.3333333333333333,
+            "mmr_score": 0.39806666666666657
+          },
+          {
+            "requirement_id": "spot_3",
+            "spot_name": "浅草 文化案内所前",
+            "relevance_score": 0.56,
+            "redundancy_penalty": 0,
+            "mmr_score": 0.4032
+          },
+          {
+            "requirement_id": "spot_3",
+            "spot_name": "浅草 川沿い遊歩道",
+            "relevance_score": 0.56,
+            "redundancy_penalty": 0.3333333333333333,
+            "mmr_score": 0.3098666666666667
+          },
+          {
+            "requirement_id": "spot_3",
+            "spot_name": "浅草 水辺プロムナード",
+            "relevance_score": 0.56,
+            "redundancy_penalty": 0.3333333333333333,
+            "mmr_score": 0.3098666666666667
+          },
+          {
+            "requirement_id": "req_4",
+            "spot_name": "浅草 橋詰広場",
+            "relevance_score": 0.49999999999999994,
+            "redundancy_penalty": 0,
+            "mmr_score": 0.35999999999999993
+          },
+          {
+            "requirement_id": "req_4",
+            "spot_name": "浅草 市場通り",
+            "relevance_score": 0.49999999999999994,
+            "redundancy_penalty": 0.3333333333333333,
+            "mmr_score": 0.2666666666666666
+          },
+          {
+            "requirement_id": "req_4",
+            "spot_name": "浅草 文化交流広場",
+            "relevance_score": 0.49999999999999994,
+            "redundancy_penalty": 0.3333333333333333,
+            "mmr_score": 0.2666666666666666
+          },
+          {
+            "requirement_id": "req_5",
+            "spot_name": "浅草 歴史掲示板前",
+            "relevance_score": 0.6224999999999999,
+            "redundancy_penalty": 0,
+            "mmr_score": 0.44819999999999993
+          },
+          {
+            "requirement_id": "req_5",
+            "spot_name": "浅草 展望デッキ",
+            "relevance_score": 0.6224999999999999,
+            "redundancy_penalty": 0.3333333333333333,
+            "mmr_score": 0.3548666666666666
+          },
+          {
+            "requirement_id": "req_5",
+            "spot_name": "浅草 高台公園",
+            "relevance_score": 0.6224999999999999,
+            "redundancy_penalty": 0.3333333333333333,
+            "mmr_score": 0.3548666666666666
+          }
+        ],
+        "route_metrics": {
+          "optimizer": "heuristic_dp_fallback_v1",
+          "total_estimated_walk_minutes": 63,
+          "transfer_minutes": 18,
+          "max_leg_minutes": 6,
+          "max_total_walk_minutes": 135,
+          "feasible": true,
+          "failure_reasons": [],
+          "optimized_order_indices": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "optimized_order_spot_names": [
+            "浅草 石畳路地",
+            "浅草 運河テラス",
+            "浅草 文化案内所前",
+            "浅草 橋詰広場",
+            "浅草 歴史掲示板前"
+          ]
+        },
+        "route_score": 0.61,
+        "continuity_score": 0.584
+      }
+    }
+  },
+  "checks": [
+    {
+      "name": "series.title non-empty",
+      "pass": true
+    },
+    {
+      "name": "series.checkpoints 4-8",
+      "pass": true
+    },
+    {
+      "name": "series.primary characters 1-2",
+      "pass": true,
+      "detail": "primary=2"
+    },
+    {
+      "name": "series.secondary characters <=3",
+      "pass": true,
+      "detail": "secondary=1"
+    },
+    {
+      "name": "series.first_episode_seed.spot_requirements 2-4",
+      "pass": true,
+      "detail": "requirements=3"
+    },
+    {
+      "name": "series.progress_state relationship fields present",
+      "pass": true
+    },
+    {
+      "name": "series S6 dry-run meta exists",
+      "pass": true,
+      "detail": "feasible=true"
+    },
+    {
+      "name": "series progress contains S6 phases",
+      "pass": true
+    },
+    {
+      "name": "seed requirement[0] role fields complete",
+      "pass": true
+    },
+    {
+      "name": "seed requirement[1] role fields complete",
+      "pass": true
+    },
+    {
+      "name": "seed requirement[2] role fields complete",
+      "pass": true
+    },
+    {
+      "name": "episode.title non-empty",
+      "pass": true
+    },
+    {
+      "name": "episode.spots 5-7",
+      "pass": true
+    },
+    {
+      "name": "episode.episode_world fields present",
+      "pass": true
+    },
+    {
+      "name": "episode.episode_unique_characters 2-3",
+      "pass": true
+    },
+    {
+      "name": "episode.progress_patch relationship fields present",
+      "pass": true
+    },
+    {
+      "name": "episode.generation_trace exists",
+      "pass": true,
+      "detail": "optimizer=heuristic_dp_fallback_v1, feasible=true"
+    },
+    {
+      "name": "episode progress contains spot resolution phases",
+      "pass": true
+    },
+    {
+      "name": "episode.spot[0] puzzle fields non-empty",
+      "pass": true
+    },
+    {
+      "name": "episode.spot[1] puzzle fields non-empty",
+      "pass": true
+    },
+    {
+      "name": "episode.spot[2] puzzle fields non-empty",
+      "pass": true
+    },
+    {
+      "name": "episode.spot[3] puzzle fields non-empty",
+      "pass": true
+    },
+    {
+      "name": "episode.spot[4] puzzle fields non-empty",
+      "pass": true
+    }
+  ]
+}

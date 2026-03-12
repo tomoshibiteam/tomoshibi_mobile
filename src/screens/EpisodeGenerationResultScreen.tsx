@@ -15,6 +15,7 @@ import * as Location from "expo-location";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import {
+  applySeriesContinuityPatchVNext,
   applySeriesProgressPatch,
   createEpisodeForSeries,
   saveRuntimeEpisodeSpots,
@@ -243,6 +244,23 @@ export const EpisodeGenerationResultScreen = ({ navigation, route }: Props) => {
         });
       } catch (spotSaveError) {
         console.warn("EpisodeGenerationResult: saveRuntimeEpisodeSpots warning", spotSaveError);
+      }
+
+      if (runtimeEpisode.continuityPatchVNext && result.questId) {
+        try {
+          await applySeriesContinuityPatchVNext({
+            questId: result.questId,
+            userId,
+            savedEpisodeNo:
+              result.storage === "quest_episodes" ? result.episodeNo : undefined,
+            continuityPatch: runtimeEpisode.continuityPatchVNext,
+          });
+        } catch (continuityPatchError) {
+          console.warn(
+            "EpisodeGenerationResult: applySeriesContinuityPatchVNext warning",
+            continuityPatchError
+          );
+        }
       }
 
       if (runtimeEpisode.progressPatch && result.questId) {

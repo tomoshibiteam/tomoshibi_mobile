@@ -129,6 +129,29 @@ const hasModelApiKey = () =>
       process.env.ANTHROPIC_API_KEY
   );
 
+const toPositiveInt = (value: string | undefined, fallback: number) => {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const toGrowthFactor = (value: string | undefined, fallback: number) => {
+  const parsed = Number.parseFloat(String(value ?? ""));
+  return Number.isFinite(parsed) && parsed >= 1 ? parsed : fallback;
+};
+
+const EPISODE_PLANNER_MAX_ATTEMPTS = toPositiveInt(
+  process.env.SERIES_EPISODE_PLANNER_MAX_ATTEMPTS,
+  2
+);
+const EPISODE_PLANNER_BASE_TIMEOUT_MS = toPositiveInt(
+  process.env.SERIES_EPISODE_PLANNER_TIMEOUT_MS,
+  75_000
+);
+const EPISODE_PLANNER_TIMEOUT_GROWTH = toGrowthFactor(
+  process.env.SERIES_EPISODE_PLANNER_TIMEOUT_GROWTH,
+  1.35
+);
+
 const resolveCheckpointCount = (desiredEpisodeCount: number) =>
   Math.max(4, Math.min(8, Math.round(desiredEpisodeCount / 2)));
 
@@ -315,17 +338,32 @@ ${input.characters
 seriesEpisodePlannerAgentOutputSchema を満たす JSON を返してください。
 `;
 
-  const maxAttempts = 2;
-  const timeoutMs = 60_000;
+  const maxAttempts = EPISODE_PLANNER_MAX_ATTEMPTS;
   const logPrefix = "[series-episode-planner-agent]";
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const timeoutMs = Math.round(
+      EPISODE_PLANNER_BASE_TIMEOUT_MS *
+        Math.pow(EPISODE_PLANNER_TIMEOUT_GROWTH, Math.max(0, attempt - 1))
+    );
     try {
-      console.log(`${logPrefix} attempt ${attempt}/${maxAttempts} — LLM呼び出し中`);
+      console.log(
+        `${logPrefix} attempt ${attempt}/${maxAttempts} — LLM呼び出し中 (${Math.round(timeoutMs / 1000)}秒でタイムアウト)`
+      );
       const result = await Promise.race([
         seriesEpisodePlannerAgent.generate(prompt, {
           structuredOutput: { schema: seriesEpisodePlannerAgentOutputSchema },
         }),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`${timeoutMs / 1000}秒タイムアウト`)), timeoutMs)),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `エピソード計画生成が${Math.round(timeoutMs / 1000)}秒でタイムアウトしました。`
+                )
+              ),
+            timeoutMs
+          )
+        ),
       ]);
       console.log(`${logPrefix} attempt ${attempt} — LLM応答受信`);
       const normalized = normalizeEpisodeOutput(input, result.object);
@@ -336,6 +374,6 @@ seriesEpisodePlannerAgentOutputSchema を満たす JSON を返してください
     }
   }
 
-  console.error(`${logPrefix} 全試行失敗`);
-  throw new Error("エピソード計画の生成に失敗しました。AIモデルからの応答が得られませんでした。再度お試しください。");
+  console.error(`${logPrefix} 全試行失敗 — fallback plan を使用`);
+  return buildFallbackPlan(input);
 };

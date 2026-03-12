@@ -27,10 +27,10 @@ const MAX_CHUNKS = Math.max(1, Number.parseInt(process.env.MASTRA_SEED_ENRICH_MA
 const resolveTargetFiles = () => {
   const fromEnv = (process.env.MASTRA_SEED_ENRICH_FILES || "")
     .split(",")
-    .map((value) => value.trim())
+    .map((value: string) => value.trim())
     .filter(Boolean);
   if (fromEnv.length > 0) {
-    return fromEnv.map((value) =>
+    return fromEnv.map((value: string) =>
       path.isAbsolute(value) ? value : path.resolve(projectRoot, value)
     );
   }
@@ -115,4 +115,3 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-

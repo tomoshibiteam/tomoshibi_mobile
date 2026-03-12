@@ -1,0 +1,29 @@
+[verify-vnext][series] phase=sanitize_series_request_start detail=入力情報を正規化しています
+[verify-vnext][series] phase=sanitize_series_request_done detail=入力情報の正規化が完了しました
+[verify-vnext][series] phase=generate_series_concept_start detail=世界観と物語コンセプトを生成しています
+[verify-vnext][series] phase=generate_series_concept_done detail=コンセプト生成が完了しました（汐鳴港の黄昏迷宮）
+[verify-vnext][series] phase=generate_series_characters_start detail=主要キャラクターを設計しています
+[verify-vnext][series] phase=generate_series_characters_done detail=キャラクター生成が完了しました（3人）
+[verify-vnext][series] phase=build_series_identity_pack_start detail=キーパーソン定義と同一性アンカーを固定しています
+[verify-vnext][series] phase=build_series_identity_pack_done detail=同一性アンカーの固定が完了しました（key: char_1,char_2,char_3)
+[verify-vnext][series] phase=generate_series_checkpoints_start detail=エピソード進行チェックポイントを設計しています
+[verify-vnext][series] phase=generate_series_checkpoints_done detail=チェックポイント生成が完了しました（4件）
+[verify-vnext][series] phase=seed_route_dry_run_start detail=第1話seedの候補検索ドライランと適格性検証を行っています
+[verify-vnext][series] phase=seed_route_dry_run_done detail=seed導線の成立性を確認しました（候補3件）
+[verify-vnext][series] phase=finalize_series_blueprint_start detail=整合性チェックと最終統合を実施しています
+[verify-vnext][series] phase=generate_series_cover_candidates_start detail=カバー候補を複数パターン生成しています
+[verify-vnext][series] phase=generate_series_cover_candidates_done detail=カバー候補の生成が完了しました
+[verify-vnext][series] phase=validate_cover_identity_start detail=カバーが世界観ポスターとして成立しているかを検証しています
+[verify-vnext][series] phase=validate_cover_identity_done detail=提案モードのため高速カバー生成を適用しました。
+[verify-vnext][series] phase=finalize_series_blueprint_done detail=シリーズ設計の最終統合が完了しました
+[verify-vnext] phase=request_received detail=episode runtime request accepted
+[verify-vnext] phase=input_validated detail=runtime input validated
+[verify-vnext] phase=series_context_loaded detail=series blueprint loaded
+[verify-vnext] phase=continuity_context_built detail=continuity context prepared
+[verify-vnext] phase=episode_plan_start detail=episode planner started
+[episode-planner] attempt 1 失敗: [episode-planner] が 60秒でタイムアウト
+[verify-vnext] phase=episode_plan_done detail=エピソード設計が完了
+[verify-vnext] phase=spot_resolution_start detail=5件のスポット要件を解決
+[verify-vnext] phase=spot_resolution_done detail=スポット要件の解決が完了（5件）
+[verify-vnext] phase=scene_generation_start detail=浅草 石畳路地の情景を生成
+[verify-vnext] phase=scene_generation_done detail=浅草 石畳路地の謎解き生成が完了

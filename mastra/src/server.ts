@@ -18,9 +18,18 @@ import { withQuestProgress } from "./lib/questProgress";
 import {
   generateSeriesRuntimeEpisode,
   type SeriesRuntimeEpisodeOutput,
-  type SeriesRuntimeEpisodeProgressEvent,
   seriesRuntimeEpisodeRequestSchema,
 } from "./lib/agents/seriesRuntimeEpisodeAgent";
+import {
+  generateEpisodeRuntimeInputSchema,
+  rawSeriesGenerationRequestSchema,
+  type GenerateEpisodeRuntimeResult,
+  type SeriesGenerationResult,
+} from "./schemas/series-runtime-vnext";
+import {
+  generateEpisodeRuntimeVNext,
+  generateSeriesGenerationResultVNext,
+} from "./lib/runtime/seriesRuntimeVNext";
 import {
   buildSeriesImageProviderUrl,
   resolveSeriesImageAspectRatio,
@@ -600,13 +609,7 @@ const extractFailure = (value: any) => {
   return null;
 };
 
-type EpisodeJobProgressPhase =
-  | SeriesRuntimeEpisodeProgressEvent["phase"]
-  | "request_received"
-  | "input_validated"
-  | "characters_validated"
-  | "response_preparing"
-  | "completed";
+type EpisodeJobProgressPhase = string;
 
 type EpisodeJobProgressEvent = {
   phase: EpisodeJobProgressPhase;
@@ -619,7 +622,7 @@ type EpisodeJobProgressEvent = {
 
 type EpisodeGenerationMeta = {
   workflow_version: string;
-  spots_count: number;
+  spots_count?: number;
   elapsed_ms: number;
 };
 
@@ -630,7 +633,9 @@ type EpisodeGenerationJob = {
   updated_ms: number;
   events: EpisodeJobProgressEvent[];
   episode?: SeriesRuntimeEpisodeOutput;
+  result?: GenerateEpisodeRuntimeResult;
   meta?: EpisodeGenerationMeta;
+  mode?: "legacy" | "vnext";
   error?: string;
 };
 
@@ -670,16 +675,21 @@ const serializeEpisodeJob = (job: EpisodeGenerationJob, cursorRaw?: string | nul
   const parsedCursor = Number.parseInt(String(cursorRaw ?? "0"), 10);
   const cursor = Number.isFinite(parsedCursor) && parsedCursor >= 0 ? parsedCursor : 0;
   const events = job.events.slice(cursor);
+  const publicStatus =
+    job.status === "succeeded" ? "completed" : job.status === "running" ? "running" : "failed";
 
   return {
+    jobId: job.id,
     job_id: job.id,
-    status: job.status,
+    status: publicStatus,
     created_at: new Date(job.created_ms).toISOString(),
     updated_at: new Date(job.updated_ms).toISOString(),
     cursor,
     next_cursor: cursor + events.length,
     events,
+    progressEvents: events.map((event) => event.phase),
     ...(job.episode ? { episode: job.episode } : {}),
+    ...(job.result ? { result: job.result } : {}),
     ...(job.meta ? { meta: job.meta } : {}),
     ...(job.error ? { error: job.error } : {}),
   };
@@ -708,9 +718,20 @@ type SeriesGenerationJob = {
   error?: string;
 };
 
+type SeriesGenerationVNextJob = {
+  id: string;
+  status: "running" | "succeeded" | "failed";
+  created_ms: number;
+  updated_ms: number;
+  events: SeriesJobProgressEvent[];
+  result?: SeriesGenerationResult;
+  error?: string;
+};
+
 const SERIES_JOB_TTL_MS = 30 * 60 * 1000;
 const SERIES_JOB_MAX_EVENTS = 160;
 const seriesGenerationJobs = new Map<string, SeriesGenerationJob>();
+const seriesGenerationVNextJobs = new Map<string, SeriesGenerationVNextJob>();
 
 const pruneSeriesGenerationJobs = () => {
   const cutoff = Date.now() - SERIES_JOB_TTL_MS;
@@ -719,10 +740,15 @@ const pruneSeriesGenerationJobs = () => {
       seriesGenerationJobs.delete(id);
     }
   }
+  for (const [id, job] of seriesGenerationVNextJobs.entries()) {
+    if (job.updated_ms < cutoff) {
+      seriesGenerationVNextJobs.delete(id);
+    }
+  }
 };
 
 const appendSeriesJobEvent = (
-  job: SeriesGenerationJob,
+  job: SeriesGenerationJob | SeriesGenerationVNextJob,
   event: Omit<SeriesJobProgressEvent, "at"> & { at?: string }
 ) => {
   const normalizedAt = clean(event.at) || new Date().toISOString();
@@ -751,6 +777,28 @@ const serializeSeriesJob = (job: SeriesGenerationJob, cursorRaw?: string | null)
     next_cursor: cursor + events.length,
     events,
     ...(job.output ? job.output : {}),
+    ...(job.error ? { error: job.error } : {}),
+  };
+};
+
+const serializeSeriesVNextJob = (job: SeriesGenerationVNextJob, cursorRaw?: string | null) => {
+  const parsedCursor = Number.parseInt(String(cursorRaw ?? "0"), 10);
+  const cursor = Number.isFinite(parsedCursor) && parsedCursor >= 0 ? parsedCursor : 0;
+  const events = job.events.slice(cursor);
+  const publicStatus =
+    job.status === "succeeded" ? "completed" : job.status === "running" ? "running" : "failed";
+
+  return {
+    jobId: job.id,
+    job_id: job.id,
+    status: publicStatus,
+    created_at: new Date(job.created_ms).toISOString(),
+    updated_at: new Date(job.updated_ms).toISOString(),
+    cursor,
+    next_cursor: cursor + events.length,
+    events,
+    progressEvents: events.map((event) => event.phase),
+    ...(job.result ? job.result : {}),
     ...(job.error ? { error: job.error } : {}),
   };
 };
@@ -796,6 +844,134 @@ app.post("/api/quest", async (c) => {
       )
     );
   }
+});
+
+app.post("/api/series/generate", async (c) => {
+  const logPrefix = "[api/series/generate]";
+  try {
+    const raw = await c.req.json();
+    const parsed = rawSeriesGenerationRequestSchema.safeParse(raw);
+    if (!parsed.success) {
+      const msg = parsed.error.flatten().formErrors?.join("; ") || parsed.error.message;
+      console.error(`${logPrefix} invalid request:`, msg, parsed.error.flatten());
+      return c.json({ status: "failed", error: `リクエストが不正です: ${msg}` }, 400);
+    }
+
+    const result = await generateSeriesGenerationResultVNext(parsed.data);
+    return c.json(result);
+  } catch (error: any) {
+    console.error(`${logPrefix} error:`, error?.message || error);
+    return c.json(
+      {
+        status: "failed",
+        error: error?.message || "unknown error",
+      },
+      500
+    );
+  }
+});
+
+app.post("/api/series/generate/jobs", async (c) => {
+  const logPrefix = "[api/series/generate/jobs]";
+  try {
+    pruneSeriesGenerationJobs();
+
+    const raw = await c.req.json();
+    const parsed = rawSeriesGenerationRequestSchema.safeParse(raw);
+    if (!parsed.success) {
+      const msg = parsed.error.flatten().formErrors?.join("; ") || parsed.error.message;
+      console.error(`${logPrefix} invalid request:`, msg, parsed.error.flatten());
+      return c.json({ status: "failed", error: `リクエストが不正です: ${msg}` }, 400);
+    }
+
+    const jobId = randomUUID();
+    const now = Date.now();
+    const job: SeriesGenerationVNextJob = {
+      id: jobId,
+      status: "running",
+      created_ms: now,
+      updated_ms: now,
+      events: [],
+    };
+    seriesGenerationVNextJobs.set(jobId, job);
+
+    appendSeriesJobEvent(job, {
+      phase: "request_received",
+      detail: "vNextシリーズ生成リクエストを受領",
+    });
+    appendSeriesJobEvent(job, {
+      phase: "input_validated",
+      detail: "vNext入力スキーマ検証を完了",
+    });
+
+    void (async () => {
+      try {
+        console.log(`${logPrefix} ジョブ開始 — id: ${jobId}`);
+        const result = await generateSeriesGenerationResultVNext(parsed.data, {
+          onProgress: async (event) => {
+            appendSeriesJobEvent(job, event);
+          },
+        });
+
+        appendSeriesJobEvent(job, {
+          phase: "response_preparing",
+          detail: "レスポンス整形を実施",
+        });
+        job.status = "succeeded";
+        job.result = result;
+        appendSeriesJobEvent(job, {
+          phase: "completed",
+          detail: "vNextシリーズ生成が完了",
+        });
+        console.log(`${logPrefix} ジョブ成功 — id: ${jobId}, title: ${result.seriesBlueprint.concept.title}`);
+      } catch (error: any) {
+        const message = error?.message || "unknown error";
+        job.status = "failed";
+        job.error = message;
+        job.updated_ms = Date.now();
+        console.error(`${logPrefix} ジョブ失敗 — id: ${jobId}:`, message);
+      }
+    })();
+
+    return c.json(
+      {
+        jobId,
+        job_id: jobId,
+        status: "running",
+        pollPath: `/api/series/generate/jobs/${jobId}`,
+        poll_path: `/api/series/generate/jobs/${jobId}`,
+        cursor: 0,
+        next_cursor: job.events.length,
+        events: job.events,
+      },
+      202
+    );
+  } catch (error: any) {
+    console.error(`${logPrefix} error:`, error?.message || error);
+    return c.json(
+      {
+        status: "failed",
+        error: error?.message || "unknown error",
+      },
+      500
+    );
+  }
+});
+
+app.get("/api/series/generate/jobs/:jobId", async (c) => {
+  pruneSeriesGenerationJobs();
+  const jobId = c.req.param("jobId");
+  const job = seriesGenerationVNextJobs.get(jobId);
+  if (!job) {
+    return c.json(
+      {
+        status: "failed",
+        error: "job_not_found",
+      },
+      404
+    );
+  }
+  return c.json(serializeSeriesVNextJob(job, c.req.query("cursor")));
 });
 
 app.post("/api/series/jobs", async (c) => {
@@ -967,6 +1143,89 @@ app.post("/api/series/episode/jobs", async (c) => {
     pruneEpisodeGenerationJobs();
 
     const rawInput = await c.req.json();
+    const parsedVNext = generateEpisodeRuntimeInputSchema.safeParse(rawInput);
+    if (parsedVNext.success) {
+      const jobId = randomUUID();
+      const now = Date.now();
+      const job: EpisodeGenerationJob = {
+        id: jobId,
+        status: "running",
+        created_ms: now,
+        updated_ms: now,
+        events: [],
+        mode: "vnext",
+      };
+      episodeGenerationJobs.set(jobId, job);
+
+      appendEpisodeJobEvent(job, {
+        phase: "request_received",
+        detail: "vNextランタイム入力を受領",
+      });
+      appendEpisodeJobEvent(job, {
+        phase: "input_validated",
+        detail: "vNextスキーマ検証を完了",
+      });
+
+      void (async () => {
+        const startMs = Date.now();
+        try {
+          console.log(
+            `${epLog} vNextジョブ開始 — id: ${jobId}, series: ${parsedVNext.data.seriesBlueprint.concept.title}, location: ${parsedVNext.data.request.episodeRequest.locationContext.cityOrArea}`
+          );
+          const result = await generateEpisodeRuntimeVNext(parsedVNext.data, {
+            onProgress: async (event) => {
+              appendEpisodeJobEvent(job, {
+                phase: clean(event.phase) || "runtime_progress",
+                detail: clean(event.detail),
+                at: clean(event.at),
+              });
+            },
+          });
+
+          appendEpisodeJobEvent(job, {
+            phase: "response_preparing",
+            detail: "レスポンス整形を実施",
+          });
+
+          const elapsedMs = Date.now() - startMs;
+          job.status = "succeeded";
+          job.result = result;
+          job.meta = {
+            workflow_version: result.workflowVersion,
+            spots_count: result.episodeOutput.selectedSpots.length,
+            elapsed_ms: elapsedMs,
+          };
+          appendEpisodeJobEvent(job, {
+            phase: "completed",
+            detail: "vNextエピソード生成が完了",
+          });
+          console.log(
+            `${epLog} vNextジョブ成功 — id: ${jobId}, title: ${result.episodeOutput.episodeMeta.title}, spots: ${result.episodeOutput.selectedSpots.length}, elapsed: ${(elapsedMs / 1000).toFixed(1)}秒`
+          );
+        } catch (error: any) {
+          const message = error?.message || "unknown error";
+          job.status = "failed";
+          job.error = message;
+          job.updated_ms = Date.now();
+          console.error(`${epLog} vNextジョブ失敗 — id: ${jobId}:`, message);
+        }
+      })();
+
+      return c.json(
+        {
+          jobId,
+          job_id: jobId,
+          status: "running",
+          pollPath: `/api/series/episode/jobs/${jobId}`,
+          poll_path: `/api/series/episode/jobs/${jobId}`,
+          cursor: 0,
+          next_cursor: job.events.length,
+          events: job.events,
+        },
+        202
+      );
+    }
+
     const rawSeries = (rawInput as any)?.series;
     const rawChars = rawSeries?.characters;
     const charsLen = Array.isArray(rawChars) ? rawChars.length : "not-array";
@@ -1010,6 +1269,7 @@ app.post("/api/series/episode/jobs", async (c) => {
       created_ms: now,
       updated_ms: now,
       events: [],
+      mode: "legacy",
     };
     episodeGenerationJobs.set(jobId, job);
 
@@ -1071,8 +1331,10 @@ app.post("/api/series/episode/jobs", async (c) => {
 
     return c.json(
       {
+        jobId,
         job_id: jobId,
         status: "running",
+        pollPath: `/api/series/episode/jobs/${jobId}`,
         poll_path: `/api/series/episode/jobs/${jobId}`,
         cursor: 0,
         next_cursor: job.events.length,
@@ -1112,6 +1374,24 @@ app.post("/api/series/episode", async (c) => {
   const epLog = "[api/series/episode]";
   try {
     const rawInput = await c.req.json();
+    const parsedVNext = generateEpisodeRuntimeInputSchema.safeParse(rawInput);
+    if (parsedVNext.success) {
+      console.log(
+        `${epLog} vNext リクエスト受付 — series: ${parsedVNext.data.seriesBlueprint.concept.title}, location: ${parsedVNext.data.request.episodeRequest.locationContext.cityOrArea}, goal: ${parsedVNext.data.request.episodeRequest.tourismGoal}`
+      );
+      const startMs = Date.now();
+      const result = await generateEpisodeRuntimeVNext(parsedVNext.data);
+      const elapsedMs = Date.now() - startMs;
+      return c.json({
+        result,
+        meta: {
+          workflow_version: result.workflowVersion,
+          spots_count: result.episodeOutput.selectedSpots.length,
+          elapsed_ms: elapsedMs,
+        },
+      });
+    }
+
     const rawSeries = (rawInput as any)?.series;
     const rawChars = rawSeries?.characters;
     const charsLen = Array.isArray(rawChars) ? rawChars.length : "not-array";

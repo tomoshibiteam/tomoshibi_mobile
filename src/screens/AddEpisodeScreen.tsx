@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Animated,
   Alert,
+  Easing,
   Image,
   InteractionManager,
   KeyboardAvoidingView,
@@ -12,6 +13,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   View,
@@ -21,14 +23,15 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
 import { fonts } from "@/theme/fonts";
 import { useSessionUserId } from "@/hooks/useSessionUser";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import {
   createEpisodeForSeries,
   createQuestDraft,
+  fetchSeriesDetail,
   type SeriesEpisode,
-  type SeriesEpisodeRuntimeContext,
   fetchSeriesEpisodeRuntimeContext,
   fetchMySeriesOptions,
   fetchSeriesEpisodes,
@@ -39,6 +42,8 @@ import {
   generateSeriesEpisodeViaMastra,
   isMastraSeriesConfigured,
   type GeneratedRuntimeEpisode,
+  type RuntimeEpisodeGenerationEvent,
+  type RuntimeEpisodeGenerationPhase,
 } from "@/services/seriesAi";
 import { geocodeAddress } from "@/lib/geocode";
 
@@ -353,23 +358,462 @@ const buildMetaFromEpisodeLogs = (logs: Array<{ text: string }>): SeriesSummaryM
   };
 };
 
-const buildMetaFromRuntime = (
+const buildMetaFromEpisodesAndCharacterNames = (
   episodes: SeriesEpisode[],
-  runtimeCtx: SeriesEpisodeRuntimeContext | null
+  characterNames: string[]
 ): SeriesSummaryMeta => {
   const currentEpisodeNo = episodes.reduce((max, row) => Math.max(max, row.episodeNo || 0), 0);
   const latestEpisode = [...episodes].sort((left, right) => right.episodeNo - left.episodeNo)[0];
-  const characterNames = (runtimeCtx?.characters || [])
-    .map((row) => row.name.trim())
-    .filter(Boolean);
-
   return {
     currentEpisodeNo,
     nextEpisodeNo: Math.max(1, currentEpisodeNo + 1),
     episodeCount: episodes.length,
     latestEpisodeTitle: latestEpisode?.title || null,
-    characterNames,
+    characterNames: characterNames.map((name) => name.trim()).filter(Boolean),
   };
+};
+
+const EPISODE_PHASE_USER_COPY: Record<RuntimeEpisodeGenerationPhase, string> = {
+  request_received: "生成依頼を受け取りました。",
+  input_validated: "入力内容を確認しています。",
+  characters_validated: "固定キャラクター情報を検証しています。",
+  series_context_loaded: "シリーズの文脈を読み込んでいます。",
+  continuity_context_built: "前話までの継続情報を組み立てています。",
+  pipeline_start: "今回の生成パイプラインを起動しています。",
+  fallback_plan_start: "計画生成の復旧ルートを準備しています。",
+  fallback_plan_done: "復旧ルートの準備が完了しました。",
+  episode_plan_start: "今回話の構成を設計しています。",
+  episode_plan_done: "エピソード構成の設計が完了しました。",
+  spot_resolution_start: "物語目的に沿ってスポットを選定しています。",
+  spot_resolution_done: "スポット選定が完了しました。",
+  episode_cast_design_start: "固定キャラと現地キャラの配置を設計しています。",
+  episode_cast_design_done: "キャスト配置の設計が完了しました。",
+  scene_generation_start: "各スポットのシーンを生成しています。",
+  scene_generation_done: "シーン生成が完了しました。",
+  spot_chapter_start: "シーンの章立てを整えています。",
+  spot_chapter_done: "章立ての整形が完了しました。",
+  spot_puzzle_start: "シーン詳細を整えています。",
+  spot_puzzle_done: "シーン詳細の整形が完了しました。",
+  episode_assemble_start: "エピソード全体を統合しています。",
+  episode_assemble_done: "エピソード統合が完了しました。",
+  continuity_patch_build_start: "次話へ引き継ぐ継続差分を構築しています。",
+  continuity_patch_build_done: "継続差分の構築が完了しました。",
+  response_preparing: "仕上げ中です。結果を整えて返却準備をしています。",
+  completed: "エピソード生成が完了しました。",
+};
+
+type EpisodeWorkflowStageStatus = "pending" | "active" | "done";
+type EpisodeWorkflowStage = {
+  id: string;
+  label: string;
+  summary: string;
+  phases: readonly RuntimeEpisodeGenerationPhase[];
+};
+
+const EPISODE_WORKFLOW_STAGES: readonly EpisodeWorkflowStage[] = [
+  {
+    id: "request",
+    label: "受付と検証",
+    summary: "生成依頼と入力情報を検証します。",
+    phases: ["request_received", "input_validated", "characters_validated"],
+  },
+  {
+    id: "context",
+    label: "継続文脈の構築",
+    summary: "シリーズ文脈と継続状態を読み込みます。",
+    phases: ["series_context_loaded", "continuity_context_built", "pipeline_start"],
+  },
+  {
+    id: "plan",
+    label: "話構成の設計",
+    summary: "今回話の目的・進行・復旧方針を設計します。",
+    phases: [
+      "fallback_plan_start",
+      "fallback_plan_done",
+      "episode_plan_start",
+      "episode_plan_done",
+    ],
+  },
+  {
+    id: "spots_cast",
+    label: "スポットとキャスト設計",
+    summary: "スポット選定とキャラ配置を設計します。",
+    phases: [
+      "spot_resolution_start",
+      "spot_resolution_done",
+      "episode_cast_design_start",
+      "episode_cast_design_done",
+    ],
+  },
+  {
+    id: "scenes",
+    label: "シーン生成",
+    summary: "スポットごとのシーン表現を生成します。",
+    phases: [
+      "scene_generation_start",
+      "scene_generation_done",
+      "spot_chapter_start",
+      "spot_chapter_done",
+      "spot_puzzle_start",
+      "spot_puzzle_done",
+    ],
+  },
+  {
+    id: "assemble",
+    label: "統合と継続差分",
+    summary: "エピソード統合と継続パッチ構築を行います。",
+    phases: [
+      "episode_assemble_start",
+      "episode_assemble_done",
+      "continuity_patch_build_start",
+      "continuity_patch_build_done",
+      "response_preparing",
+    ],
+  },
+  {
+    id: "done",
+    label: "完了",
+    summary: "エピソードを返却します。",
+    phases: ["completed"],
+  },
+] as const;
+
+const normalizeUiCopy = (value?: string | null, fallback = "") => {
+  const cleaned = (value || "").replace(/\s+/g, " ").trim();
+  return cleaned || fallback;
+};
+
+const toEpisodePhaseMessage = (event: RuntimeEpisodeGenerationEvent) => {
+  const phaseCopy = EPISODE_PHASE_USER_COPY[event.phase];
+  const detail = normalizeUiCopy(event.detail).toLowerCase();
+  if (
+    detail &&
+    !detail.includes("attempt") &&
+    !detail.includes("llm") &&
+    !detail.includes("schema") &&
+    !detail.includes("timeout")
+  ) {
+    return phaseCopy;
+  }
+
+  const spotName = normalizeUiCopy(event.spotName);
+  if (spotName && (event.phase === "scene_generation_start" || event.phase === "spot_resolution_start")) {
+    return `${phaseCopy}\n対象: ${spotName}`;
+  }
+
+  if (event.spotIndex && event.spotCount && event.spotCount > 0) {
+    return `${phaseCopy}\n進行: ${event.spotIndex}/${event.spotCount}`;
+  }
+
+  return phaseCopy;
+};
+
+const resolveEpisodeWorkflowStageIndex = (phase: RuntimeEpisodeGenerationPhase) => {
+  for (let index = 0; index < EPISODE_WORKFLOW_STAGES.length; index += 1) {
+    if (EPISODE_WORKFLOW_STAGES[index].phases.includes(phase)) return index;
+  }
+  return 0;
+};
+
+const EpisodeForgeLoadingOverlay = ({
+  message,
+  stages,
+  progressMessages,
+  onCancel,
+}: {
+  message: string;
+  stages: Array<{
+    id: string;
+    label: string;
+    summary: string;
+    status: EpisodeWorkflowStageStatus;
+  }>;
+  progressMessages: string[];
+  onCancel?: () => void;
+}) => {
+  const pulse = useRef(new Animated.Value(0.4)).current;
+  const orbit = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 900,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: false,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0.4,
+          duration: 900,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: false,
+        }),
+      ])
+    );
+
+    loop.start();
+    return () => {
+      loop.stop();
+    };
+  }, [pulse]);
+
+  useEffect(() => {
+    const orbitLoop = Animated.loop(
+      Animated.timing(orbit, {
+        toValue: 1,
+        duration: 4200,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    );
+
+    orbitLoop.start();
+    return () => {
+      orbitLoop.stop();
+    };
+  }, [orbit]);
+
+  const orbitRotation = orbit.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"],
+  });
+
+  const reverseOrbitRotation = orbit.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["360deg", "0deg"],
+  });
+
+  const activeStage = stages.find((stage) => stage.status === "active");
+  const recentMessages = (progressMessages.length > 0 ? progressMessages : [message]).slice(-3);
+
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="auto">
+      <LinearGradient colors={["#06130D", "#0C2317", "#18412A"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+      <SafeAreaView edges={["top", "bottom"]} className="flex-1 items-center justify-center px-8">
+        <View className="items-center w-full max-w-[380px]">
+          <View className="w-[220px] h-[220px] items-center justify-center mb-4">
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                width: 170,
+                height: 170,
+                borderRadius: 170,
+                backgroundColor: "rgba(122, 221, 155, 0.2)",
+                opacity: pulse.interpolate({
+                  inputRange: [0.4, 1],
+                  outputRange: [0.4, 0.78],
+                }),
+                transform: [
+                  {
+                    scale: pulse.interpolate({
+                      inputRange: [0.4, 1],
+                      outputRange: [0.9, 1.12],
+                    }),
+                  },
+                ],
+              }}
+            />
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                width: 198,
+                height: 198,
+                borderRadius: 198,
+                borderWidth: 1.4,
+                borderColor: "rgba(176, 255, 204, 0.34)",
+                transform: [{ rotate: orbitRotation }],
+              }}
+            >
+              <View
+                style={{
+                  position: "absolute",
+                  top: -2,
+                  left: 96,
+                  width: 5,
+                  height: 5,
+                  borderRadius: 5,
+                  backgroundColor: "rgba(214, 255, 228, 0.95)",
+                }}
+              />
+              <View
+                style={{
+                  position: "absolute",
+                  bottom: -1,
+                  right: 42,
+                  width: 3,
+                  height: 3,
+                  borderRadius: 3,
+                  backgroundColor: "rgba(214, 255, 228, 0.85)",
+                }}
+              />
+            </Animated.View>
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                width: 156,
+                height: 156,
+                borderRadius: 156,
+                borderWidth: 1,
+                borderColor: "rgba(115, 216, 151, 0.34)",
+                transform: [{ rotate: reverseOrbitRotation }],
+              }}
+            >
+              <View
+                style={{
+                  position: "absolute",
+                  top: 21,
+                  right: 7,
+                  width: 4,
+                  height: 4,
+                  borderRadius: 4,
+                  backgroundColor: "rgba(200, 255, 220, 0.92)",
+                }}
+              />
+              <View
+                style={{
+                  position: "absolute",
+                  bottom: 11,
+                  left: 16,
+                  width: 3,
+                  height: 3,
+                  borderRadius: 3,
+                  backgroundColor: "rgba(200, 255, 220, 0.76)",
+                }}
+              />
+            </Animated.View>
+            <Animated.View
+              style={{
+                width: 108,
+                height: 108,
+                borderRadius: 108,
+                overflow: "hidden",
+                opacity: pulse.interpolate({
+                  inputRange: [0.4, 1],
+                  outputRange: [0.9, 1],
+                }),
+                transform: [
+                  {
+                    scale: pulse.interpolate({
+                      inputRange: [0.4, 1],
+                      outputRange: [0.95, 1.03],
+                    }),
+                  },
+                ],
+              }}
+            >
+              <LinearGradient
+                colors={["#D8FFE7", "#89E6AE", "#2EA769"]}
+                start={{ x: 0.15, y: 0.1 }}
+                end={{ x: 1, y: 1 }}
+                className="flex-1 items-center justify-center"
+              >
+                <Ionicons name="leaf" size={42} color="#0E2A1A" />
+              </LinearGradient>
+            </Animated.View>
+          </View>
+
+          <Text
+            className="text-[25px] text-[#DDFBE9]"
+            style={{ fontFamily: fonts.displayBold, letterSpacing: 1.2 }}
+          >
+            エピソードを生成しています
+          </Text>
+          <Text className="text-sm text-[#A9E5C1] mt-2" style={{ fontFamily: fonts.bodyMedium, letterSpacing: 0.4 }}>
+            {message}
+          </Text>
+
+          <View className="w-full mt-4 rounded-2xl border border-white/15 bg-white/8 px-4 py-3">
+            <Text className="text-[11px] text-[#C5F2D7]" style={{ fontFamily: fonts.bodyMedium, letterSpacing: 0.6 }}>
+              生成ログ
+            </Text>
+            {recentMessages.map((line, index) => {
+              const isLatest = index === recentMessages.length - 1;
+              return (
+                <View
+                  key={`episode-progress-message-${index}-${line}`}
+                  className={`mt-2 rounded-xl px-3 py-2 ${isLatest ? "bg-[#E8FFF2]/95" : "bg-white/10"}`}
+                >
+                  <Text
+                    className={`text-[12px] leading-5 ${isLatest ? "text-[#123623]" : "text-[#D5F4E2]"}`}
+                    style={{ fontFamily: fonts.bodyRegular }}
+                  >
+                    {line}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+
+          <View className="w-full mt-3 rounded-2xl border border-white/15 bg-white/8 px-4 py-3">
+            <Text className="text-[11px] text-[#C5F2D7]" style={{ fontFamily: fonts.bodyMedium, letterSpacing: 0.6 }}>
+              ワークフロー進行
+            </Text>
+            <View className="mt-2 gap-2">
+              {stages.map((stage) => {
+                const iconName =
+                  stage.status === "done"
+                    ? "checkmark-circle"
+                    : stage.status === "active"
+                      ? "sync-circle"
+                      : "ellipse-outline";
+                const iconColor =
+                  stage.status === "done"
+                    ? "#8FE7B4"
+                    : stage.status === "active"
+                      ? "#D7FFE8"
+                      : "rgba(201, 241, 219, 0.45)";
+                return (
+                  <View key={stage.id} className="flex-row items-center gap-2">
+                    <Ionicons name={iconName as any} size={15} color={iconColor} />
+                    <Text
+                      className={`text-[12px] ${stage.status === "pending" ? "text-[#8FC5A8]" : "text-[#DDFBEA]"}`}
+                      style={{ fontFamily: stage.status === "active" ? fonts.bodyBold : fonts.bodyMedium }}
+                    >
+                      {stage.label}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+            {activeStage ? (
+              <Text className="mt-2 text-[11px] text-[#BDEED2]" style={{ fontFamily: fonts.bodyRegular }}>
+                現在: {activeStage.summary}
+              </Text>
+            ) : null}
+          </View>
+
+          <View className="w-full mt-3 h-1.5 rounded-full bg-white/15 overflow-hidden">
+            <Animated.View
+              className="h-full bg-[#32B56F]"
+              style={{
+                width: "100%",
+                transform: [
+                  {
+                    scaleX: pulse.interpolate({
+                      inputRange: [0.4, 1],
+                      outputRange: [0.38, 0.85],
+                    }),
+                  },
+                ],
+              }}
+            />
+          </View>
+
+          {onCancel ? (
+            <Pressable onPress={onCancel} className="mt-5 rounded-full border border-white/35 px-4 py-2">
+              <Text className="text-[12px] text-[#D9F9E6]" style={{ fontFamily: fonts.bodyMedium, letterSpacing: 0.6 }}>
+                生成を中止
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </SafeAreaView>
+    </View>
+  );
 };
 
 
@@ -391,6 +835,14 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
   const [userWishes, setUserWishes] = useState("");
   const [isLocating, setIsLocating] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [latestEpisodeGenerationPhase, setLatestEpisodeGenerationPhase] =
+    useState<RuntimeEpisodeGenerationPhase>("request_received");
+  const [episodeGenerationMessage, setEpisodeGenerationMessage] = useState(
+    EPISODE_PHASE_USER_COPY.request_received
+  );
+  const [episodeGenerationProgressMessages, setEpisodeGenerationProgressMessages] = useState<
+    string[]
+  >([]);
 
   const isMountedRef = useRef(true);
   const generationAbortRef = useRef<AbortController | null>(null);
@@ -423,6 +875,22 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
         : DEFAULT_MAP_REGION,
     [mapCoords]
   );
+
+  const episodeWorkflowStageRows = useMemo(() => {
+    const currentIndex = resolveEpisodeWorkflowStageIndex(latestEpisodeGenerationPhase);
+    return EPISODE_WORKFLOW_STAGES.map((stage, index) => {
+      let status: EpisodeWorkflowStageStatus = "pending";
+      if (index < currentIndex) status = "done";
+      if (index === currentIndex) status = "active";
+      if (latestEpisodeGenerationPhase === "completed" && index <= currentIndex) status = "done";
+      return {
+        id: stage.id,
+        label: stage.label,
+        summary: stage.summary,
+        status,
+      };
+    });
+  }, [latestEpisodeGenerationPhase]);
 
   useEffect(() => {
     const trimmed = stageLocation.trim();
@@ -472,6 +940,18 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
       isMountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isGenerating) {
+      setLatestEpisodeGenerationPhase("request_received");
+      setEpisodeGenerationMessage(EPISODE_PHASE_USER_COPY.request_received);
+      setEpisodeGenerationProgressMessages([]);
+      return;
+    }
+    if (episodeGenerationProgressMessages.length === 0) {
+      setEpisodeGenerationProgressMessages([EPISODE_PHASE_USER_COPY.request_received]);
+    }
+  }, [episodeGenerationProgressMessages.length, isGenerating]);
 
   useEffect(() => {
     if (!seriesSelectorOpen) return;
@@ -571,9 +1051,10 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
       setSeriesMetaLoading(true);
       try {
         if (selected.id && userId) {
-          const [rows, runtimeCtx] = await Promise.all([
+          const [rows, runtimeCtx, seriesDetail] = await Promise.all([
             fetchSeriesEpisodes(selected.id),
             fetchSeriesEpisodeRuntimeContext(selected.id, userId).catch(() => null),
+            fetchSeriesDetail(selected.id).catch(() => null),
           ]);
 
           if (runtimeCtx) {
@@ -594,9 +1075,19 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
           } else {
             setSuggestedSpots([]);
           }
+
+          const runtimeCharacterNames = (runtimeCtx?.characters || [])
+            .map((row) => row.name.trim())
+            .filter(Boolean);
+          const detailCharacterNames = (seriesDetail?.characters || [])
+            .map((row) => row.name.trim())
+            .filter(Boolean);
+          const resolvedCharacterNames =
+            runtimeCharacterNames.length > 0 ? runtimeCharacterNames : detailCharacterNames;
+
           setSeriesMetaByKey((prev) => ({
             ...prev,
-            [selected.key]: buildMetaFromRuntime(rows, runtimeCtx),
+            [selected.key]: buildMetaFromEpisodesAndCharacterNames(rows, resolvedCharacterNames),
           }));
           return;
         }
@@ -626,7 +1117,7 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
     let cancelled = false;
     const targetRows = seriesOptions
       .filter((row) => row.id && !seriesMetaByKey[row.key])
-      .slice(0, 12);
+      .slice(0, 8);
 
     if (targetRows.length === 0) return;
 
@@ -635,11 +1126,14 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
         const entries = await Promise.all(
           targetRows.map(async (item) => {
             try {
-              const [episodes, runtimeCtx] = await Promise.all([
+              const [episodes, seriesDetail] = await Promise.all([
                 fetchSeriesEpisodes(item.id!),
-                fetchSeriesEpisodeRuntimeContext(item.id!, userId).catch(() => null),
+                fetchSeriesDetail(item.id!).catch(() => null),
               ]);
-              return [item.key, buildMetaFromRuntime(episodes, runtimeCtx)] as const;
+              const characterNames = (seriesDetail?.characters || [])
+                .map((row) => row.name.trim())
+                .filter(Boolean);
+              return [item.key, buildMetaFromEpisodesAndCharacterNames(episodes, characterNames)] as const;
             } catch {
               return [item.key, EMPTY_SERIES_META] as const;
             }
@@ -732,6 +1226,11 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
     setIsGenerating(true);
     const generationAbortController = new AbortController();
     generationAbortRef.current = generationAbortController;
+    const initialPhase: RuntimeEpisodeGenerationPhase = "request_received";
+    const initialMessage = EPISODE_PHASE_USER_COPY.request_received;
+    setLatestEpisodeGenerationPhase(initialPhase);
+    setEpisodeGenerationMessage(initialMessage);
+    setEpisodeGenerationProgressMessages([initialMessage]);
 
     try {
       let targetSeriesId = selectedSeries.id;
@@ -800,7 +1299,14 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
                 arcEnd: character.arcEnd || undefined,
               })),
               recentEpisodes: runtimeContext?.recentEpisodes || [],
+              seriesBlueprint: runtimeContext?.seriesBlueprint || null,
+              initialUserSeriesStateTemplate:
+                runtimeContext?.initialUserSeriesStateTemplate || null,
+              episodeRuntimeBootstrapPayload:
+                runtimeContext?.episodeRuntimeBootstrapPayload || null,
+              userSeriesState: runtimeContext?.userSeriesState || null,
             },
+            userId,
             stageLocation: stageLocation.trim(),
             purpose,
             userWishes: userWishes.trim() || undefined,
@@ -809,6 +1315,16 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
             language: "ja",
           }, {
             signal: generationAbortController.signal,
+            onProgress: (event: RuntimeEpisodeGenerationEvent) => {
+              if (!isMountedRef.current) return;
+              const nextMessage = toEpisodePhaseMessage(event);
+              setLatestEpisodeGenerationPhase(event.phase);
+              setEpisodeGenerationMessage(nextMessage);
+              setEpisodeGenerationProgressMessages((prev) => {
+                if (prev[prev.length - 1] === nextMessage) return prev;
+                return [...prev, nextMessage].slice(-8);
+              });
+            },
           });
 
           if (runtimeEpisode.title.trim()) episodeTitle = runtimeEpisode.title.trim();
@@ -917,6 +1433,14 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
       if (isMountedRef.current) {
         setIsGenerating(false);
       }
+    }
+  };
+
+  const handleCancelEpisodeGeneration = () => {
+    generationAbortRef.current?.abort();
+    generationAbortRef.current = null;
+    if (isMountedRef.current) {
+      setIsGenerating(false);
     }
   };
 
@@ -1399,6 +1923,15 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
           </Animated.View>
         </View>
       </Modal>
+
+      {isGenerating ? (
+        <EpisodeForgeLoadingOverlay
+          message={episodeGenerationMessage}
+          stages={episodeWorkflowStageRows}
+          progressMessages={episodeGenerationProgressMessages}
+          onCancel={handleCancelEpisodeGeneration}
+        />
+      ) : null}
     </View>
   );
 };
