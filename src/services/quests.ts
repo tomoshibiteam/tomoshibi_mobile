@@ -19,6 +19,7 @@ type CreateEpisodePayload = {
   seriesTitle: string;
   episodeTitle: string;
   episodeText: string;
+  coverImageUrl?: string | null;
 };
 
 type DeleteSeriesDraftPayload = {
@@ -77,6 +78,7 @@ export type SeriesEpisode = {
   source: "quest_episodes" | "quest_posts";
   userId: string;
   createdAt: string | null;
+  coverImageUrl?: string | null;
 };
 
 export type SeriesEpisodeRuntimeContext = {
@@ -103,8 +105,10 @@ export type SeriesEpisodeRuntimeContext = {
     carryOver: string | null;
   }>;
   characters: Array<{
+    id?: string;
     name: string;
     role: string;
+    avatarImageUrl?: string | null;
     tier?: "primary" | "secondary";
     mustAppear?: boolean;
     personality: string | null;
@@ -128,6 +132,75 @@ const shouldRetryWithoutMode = (error: unknown) => {
 
 const normalize = (value: string | null | undefined) => (value || "").trim().toLowerCase();
 const clean = (value?: string | null) => (value || "").replace(/\s+/g, " ").trim();
+const LOCALHOST_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
+const resolveMediaBaseUrl = () =>
+  clean(
+    process.env.EXPO_PUBLIC_MASTRA_BASE_URL ||
+      process.env.MASTRA_BASE_URL ||
+      process.env.EXPO_PUBLIC_API_BASE_URL ||
+      ""
+  ).replace(/\/+$/, "");
+const normalizeEpisodeCoverUrl = (value?: string | null) => {
+  const raw = clean(value);
+  if (!raw) return null;
+
+  const base = resolveMediaBaseUrl();
+  const tuneSeriesImageUrl = (url: URL) => {
+    if (!/\/api\/series\/image(?:\/|$)/.test(url.pathname)) return;
+    const purpose = clean(url.searchParams.get("purpose")).toLowerCase();
+    if (purpose === "character_portrait") {
+      // 一覧サムネイルでは透過cutout画像が見えづらいので通常画像を優先する。
+      url.searchParams.set("cutout", "0");
+    }
+  };
+
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      const parsed = new URL(raw);
+      tuneSeriesImageUrl(parsed);
+      if (base) {
+        const baseParsed = new URL(base);
+        const shouldRewriteHost =
+          LOCALHOST_HOSTS.has(clean(parsed.hostname).toLowerCase()) ||
+          /^\/api\/series\/image(?:\/|$)/.test(parsed.pathname);
+        if (shouldRewriteHost) {
+          parsed.protocol = baseParsed.protocol;
+          parsed.hostname = baseParsed.hostname;
+          parsed.port = baseParsed.port;
+          return parsed.toString();
+        }
+      }
+      return parsed.toString();
+    } catch {
+      return raw;
+    }
+  }
+
+  if (raw.startsWith("//")) return `https:${raw}`;
+  if (raw.startsWith("/")) {
+    if (base) {
+      try {
+        const parsed = new URL(`${base}${raw}`);
+        tuneSeriesImageUrl(parsed);
+        return parsed.toString();
+      } catch {
+        return `${base}${raw}`;
+      }
+    }
+  }
+  return raw;
+};
+const buildEpisodeSeedCoverUrl = (
+  seriesTitle: string,
+  episodeTitle: string,
+  userId?: string | null
+) => {
+  const seed = [seriesTitle, episodeTitle, userId || "guest"]
+    .map((item) => clean(item))
+    .filter(Boolean)
+    .join("-");
+  return `https://picsum.photos/seed/${encodeURIComponent(seed || "tomoshibi-episode-cover")}/1200/800`;
+};
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 const asStringArray = (value: unknown) =>
@@ -449,13 +522,13 @@ export const fetchSeriesDetail = async (questId: string) => {
       portrait_image_url: string | null;
       character_order?: number | null;
     }>)
-      .filter((character) => Boolean(character.name && character.role))
+      .filter((character) => Boolean(character.name))
       .map((character, index) => {
         return {
           id: character.id || `series-char-${index + 1}`,
           name: character.name || "登場人物",
           role: character.role || "役割未設定",
-          avatarImageUrl: clean(character.portrait_image_url || "") || null,
+          avatarImageUrl: normalizeEpisodeCoverUrl(character.portrait_image_url),
         };
       }),
     creatorId: row.creator_id,
@@ -545,8 +618,10 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
 
   let characterRows:
     | Array<{
+      id: string | null;
       name: string | null;
       role: string | null;
+      portrait_image_url: string | null;
       tier: string | null;
       must_appear: boolean | null;
       personality: string | null;
@@ -558,15 +633,17 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
   try {
     const queryWithTier = await supabase
       .from("series_characters")
-      .select("name, role, tier, must_appear, personality, arc_start, arc_end")
+      .select("id, name, role, portrait_image_url, tier, must_appear, personality, arc_start, arc_end")
       .eq("quest_id", questId)
       .eq("creator_id", userId)
       .order("character_order", { ascending: true })
       .limit(8);
 
     let dataForMapping: Array<{
+      id: string | null;
       name: string | null;
       role: string | null;
+      portrait_image_url?: string | null;
       tier?: string | null;
       must_appear?: boolean | null;
       personality: string | null;
@@ -574,16 +651,20 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
       arc_end: string | null;
     }> | null = null;
 
-    if (queryWithTier.error && isMissingAnyColumn(queryWithTier.error, ["tier", "must_appear"])) {
+    if (
+      queryWithTier.error &&
+      isMissingAnyColumn(queryWithTier.error, ["tier", "must_appear", "portrait_image_url"])
+    ) {
       const legacyQuery = await supabase
         .from("series_characters")
-        .select("name, role, personality, arc_start, arc_end")
+        .select("id, name, role, personality, arc_start, arc_end")
         .eq("quest_id", questId)
         .eq("creator_id", userId)
         .order("character_order", { ascending: true })
         .limit(8);
       if (legacyQuery.error) throw legacyQuery.error;
       dataForMapping = ((legacyQuery.data || null) as Array<{
+        id: string | null;
         name: string | null;
         role: string | null;
         personality: string | null;
@@ -591,14 +672,17 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
         arc_end: string | null;
       }> | null)?.map((row) => ({
         ...row,
+        portrait_image_url: null,
         tier: null,
         must_appear: null,
       })) || null;
     } else {
       if (queryWithTier.error) throw queryWithTier.error;
       dataForMapping = (queryWithTier.data || null) as Array<{
+        id: string | null;
         name: string | null;
         role: string | null;
+        portrait_image_url?: string | null;
         tier?: string | null;
         must_appear?: boolean | null;
         personality: string | null;
@@ -608,8 +692,10 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
     }
 
     characterRows = (dataForMapping || null) as Array<{
+      id: string | null;
       name: string | null;
       role: string | null;
+      portrait_image_url: string | null;
       tier: string | null;
       must_appear: boolean | null;
       personality: string | null;
@@ -663,8 +749,10 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
       carryOver: row.cliffhanger || null,
     })),
     characters: ((characterRows || []) as Array<{
+      id: string | null;
       name: string | null;
       role: string | null;
+      portrait_image_url: string | null;
       tier?: string | null;
       must_appear?: boolean | null;
       personality: string | null;
@@ -673,8 +761,10 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
     }>)
       .filter((row) => Boolean(row.name && row.role))
       .map((row) => ({
+        id: row.id || undefined,
         name: row.name || "登場人物",
         role: row.role || "役割未設定",
+        avatarImageUrl: normalizeEpisodeCoverUrl(row.portrait_image_url),
         tier: clean(row.tier || "").toLowerCase() === "primary" ? "primary" : "secondary",
         mustAppear: Boolean(row.must_appear),
         personality: row.personality,
@@ -1271,24 +1361,69 @@ export const fetchSeriesEpisodes = async (questId: string) => {
   const supabase = getSupabaseOrThrow();
 
   try {
-    const { data, error } = await supabase
+    const withCover = await supabase
       .from("quest_episodes")
-      .select("id, title, body, episode_no, status, created_at, user_id")
+      .select(
+        "id, title, body, episode_no, status, created_at, user_id, cover_image_url"
+      )
       .eq("quest_id", questId)
       .order("episode_no", { ascending: true })
       .order("created_at", { ascending: true });
 
-    if (error) throw error;
+    let data:
+      | Array<{
+          id: string;
+          title: string | null;
+          body: string | null;
+          episode_no: number | null;
+          status: string | null;
+          created_at: string | null;
+          user_id: string;
+          cover_image_url?: string | null;
+        }>
+      | null = null;
 
-    return ((data || []) as Array<{
-      id: string;
-      title: string | null;
-      body: string | null;
-      episode_no: number | null;
-      status: string | null;
-      created_at: string | null;
-      user_id: string;
-    }>).map((row, index) => ({
+    if (withCover.error) {
+      if (!isMissingAnyColumn(withCover.error, ["cover_image_url"])) {
+        throw withCover.error;
+      }
+      console.warn(
+        "fetchSeriesEpisodes: quest_episodes.cover_image_url column is missing. Episode covers will not be loaded until migration is applied."
+      );
+
+      const withoutCover = await supabase
+        .from("quest_episodes")
+        .select("id, title, body, episode_no, status, created_at, user_id")
+        .eq("quest_id", questId)
+        .order("episode_no", { ascending: true })
+        .order("created_at", { ascending: true });
+
+      if (withoutCover.error) throw withoutCover.error;
+      data =
+        (withoutCover.data as Array<{
+          id: string;
+          title: string | null;
+          body: string | null;
+          episode_no: number | null;
+          status: string | null;
+          created_at: string | null;
+          user_id: string;
+        }> | null) || [];
+    } else {
+      data =
+        (withCover.data as Array<{
+          id: string;
+          title: string | null;
+          body: string | null;
+          episode_no: number | null;
+          status: string | null;
+          created_at: string | null;
+          user_id: string;
+          cover_image_url?: string | null;
+        }> | null) || [];
+    }
+
+    return (data || []).map((row, index) => ({
       id: row.id,
       title: (row.title || "").trim() || `エピソード ${row.episode_no || index + 1}`,
       body: row.body || "",
@@ -1297,28 +1432,68 @@ export const fetchSeriesEpisodes = async (questId: string) => {
       source: "quest_episodes",
       userId: row.user_id,
       createdAt: row.created_at,
+      coverImageUrl: normalizeEpisodeCoverUrl(row.cover_image_url),
     })) satisfies SeriesEpisode[];
   } catch (error) {
     if (!isQuestEpisodesUnavailable(error)) throw error;
   }
 
-  const { data: posts, error: postError } = await supabase
+  let posts:
+    | Array<{
+        id: string;
+        message: string | null;
+        created_at: string | null;
+        user_id: string;
+        image_urls?: unknown;
+      }>
+    | null = null;
+
+  const withImages = await supabase
     .from("quest_posts")
-    .select("id, message, created_at, user_id")
+    .select("id, message, created_at, user_id, image_urls")
     .eq("quest_id", questId)
     .order("created_at", { ascending: true });
 
-  if (postError) throw postError;
+  if (withImages.error) {
+    if (!isMissingAnyColumn(withImages.error, ["image_urls"])) {
+      throw withImages.error;
+    }
+    console.warn(
+      "fetchSeriesEpisodes: quest_posts.image_urls column is missing. Episode covers will not be loaded until migration is applied."
+    );
+    const withoutImages = await supabase
+      .from("quest_posts")
+      .select("id, message, created_at, user_id")
+      .eq("quest_id", questId)
+      .order("created_at", { ascending: true });
+    if (withoutImages.error) throw withoutImages.error;
+    posts =
+      (withoutImages.data as Array<{
+        id: string;
+        message: string | null;
+        created_at: string | null;
+        user_id: string;
+      }> | null) || [];
+  } else {
+    posts =
+      (withImages.data as Array<{
+        id: string;
+        message: string | null;
+        created_at: string | null;
+        user_id: string;
+        image_urls?: unknown;
+      }> | null) || [];
+  }
 
-  return ((posts || []) as Array<{
-    id: string;
-    message: string | null;
-    created_at: string | null;
-    user_id: string;
-  }>).map((row, index) => {
+  return (posts || []).map((row, index) => {
     const lines = (row.message || "").split(/\r?\n/);
     const titleFromMessage = (lines[0] || "").trim();
     const bodyFromMessage = lines.slice(1).join("\n").trim();
+    const imageCandidates = Array.isArray(row.image_urls)
+      ? row.image_urls
+          .map((item) => normalizeEpisodeCoverUrl(typeof item === "string" ? item : String(item ?? "")))
+          .filter((item): item is string => Boolean(item))
+      : [];
 
     return {
       id: row.id,
@@ -1329,6 +1504,7 @@ export const fetchSeriesEpisodes = async (questId: string) => {
       source: "quest_posts",
       userId: row.user_id,
       createdAt: row.created_at,
+      coverImageUrl: imageCandidates[0] || null,
     } satisfies SeriesEpisode;
   });
 };
@@ -1337,6 +1513,7 @@ type EpisodeMutationPayload = {
   episodeId: string;
   source: "quest_episodes" | "quest_posts";
   userId: string;
+  questId?: string;
 };
 
 type UpdateEpisodePayload = EpisodeMutationPayload & {
@@ -1379,23 +1556,55 @@ export const deleteSeriesEpisode = async (payload: EpisodeMutationPayload) => {
   const supabase = getSupabaseOrThrow();
 
   if (payload.source === "quest_episodes") {
-    const { error } = await supabase
+    const ownedDelete = await supabase
       .from("quest_episodes")
       .delete()
       .eq("id", payload.episodeId)
-      .eq("user_id", payload.userId);
+      .eq("user_id", payload.userId)
+      .select("id");
 
-    if (error) throw error;
+    if (ownedDelete.error) throw ownedDelete.error;
+    if ((ownedDelete.data || []).length > 0) return;
+
+    if (payload.questId) {
+      const questOwnerDelete = await supabase
+        .from("quest_episodes")
+        .delete()
+        .eq("id", payload.episodeId)
+        .eq("quest_id", payload.questId)
+        .select("id");
+
+      if (questOwnerDelete.error) throw questOwnerDelete.error;
+      if ((questOwnerDelete.data || []).length > 0) return;
+    }
+
+    throw asCodedError("Episode delete was not permitted.", "EPISODE_DELETE_FORBIDDEN");
     return;
   }
 
-  const { error } = await supabase
+  const ownedDelete = await supabase
     .from("quest_posts")
     .delete()
     .eq("id", payload.episodeId)
-    .eq("user_id", payload.userId);
+    .eq("user_id", payload.userId)
+    .select("id");
 
-  if (error) throw error;
+  if (ownedDelete.error) throw ownedDelete.error;
+  if ((ownedDelete.data || []).length > 0) return;
+
+  if (payload.questId) {
+    const questOwnerDelete = await supabase
+      .from("quest_posts")
+      .delete()
+      .eq("id", payload.episodeId)
+      .eq("quest_id", payload.questId)
+      .select("id");
+
+    if (questOwnerDelete.error) throw questOwnerDelete.error;
+    if ((questOwnerDelete.data || []).length > 0) return;
+  }
+
+  throw asCodedError("Episode delete was not permitted.", "EPISODE_DELETE_FORBIDDEN");
 };
 
 export const createEpisodeForSeries = async (payload: CreateEpisodePayload) => {
@@ -1404,6 +1613,9 @@ export const createEpisodeForSeries = async (payload: CreateEpisodePayload) => {
   const trimmedSeriesTitle = payload.seriesTitle.trim();
   const trimmedEpisodeTitle = payload.episodeTitle.trim();
   const trimmedEpisodeText = payload.episodeText.trim();
+  const normalizedCoverImageUrl =
+    normalizeEpisodeCoverUrl(payload.coverImageUrl) ||
+    buildEpisodeSeedCoverUrl(trimmedSeriesTitle, trimmedEpisodeTitle, payload.userId);
 
   if (!trimmedSeriesTitle || !trimmedEpisodeTitle) {
     throw asCodedError("Series title and episode title are required.", "INVALID_INPUT");
@@ -1456,7 +1668,7 @@ export const createEpisodeForSeries = async (payload: CreateEpisodePayload) => {
 
     const nextEpisodeNo = (((lastRows || []) as Array<{ episode_no: number | null }>)[0]?.episode_no || 0) + 1;
 
-    const { error: insertError } = await supabase
+    const withCover = await supabase
       .from("quest_episodes")
       .insert({
         quest_id: targetQuest.id,
@@ -1465,9 +1677,30 @@ export const createEpisodeForSeries = async (payload: CreateEpisodePayload) => {
         body: trimmedEpisodeText || "",
         episode_no: nextEpisodeNo,
         status: "published",
+        ...(normalizedCoverImageUrl ? { cover_image_url: normalizedCoverImageUrl } : {}),
       });
 
-    if (insertError) throw insertError;
+    if (withCover.error) {
+      if (
+        normalizedCoverImageUrl &&
+        isMissingAnyColumn(withCover.error, ["cover_image_url"])
+      ) {
+        console.warn(
+          "createEpisodeForSeries: quest_episodes.cover_image_url column is missing. Episode cover cannot be persisted."
+        );
+        const withoutCover = await supabase.from("quest_episodes").insert({
+          quest_id: targetQuest.id,
+          user_id: payload.userId,
+          title: trimmedEpisodeTitle,
+          body: trimmedEpisodeText || "",
+          episode_no: nextEpisodeNo,
+          status: "published",
+        });
+        if (withoutCover.error) throw withoutCover.error;
+      } else {
+        throw withCover.error;
+      }
+    }
 
     return {
       questId: targetQuest.id,
@@ -1482,14 +1715,28 @@ export const createEpisodeForSeries = async (payload: CreateEpisodePayload) => {
       ? `${trimmedEpisodeTitle}\n\n${trimmedEpisodeText}`
       : trimmedEpisodeTitle;
 
-    const { error: insertError } = await supabase.from("quest_posts").insert({
+    const withImages = await supabase.from("quest_posts").insert({
       user_id: payload.userId,
       quest_id: targetQuest.id,
       message,
-      image_urls: [],
+      image_urls: normalizedCoverImageUrl ? [normalizedCoverImageUrl] : [],
     });
 
-    if (insertError) throw insertError;
+    if (withImages.error) {
+      if (isMissingAnyColumn(withImages.error, ["image_urls"])) {
+        console.warn(
+          "createEpisodeForSeries: quest_posts.image_urls column is missing. Episode cover cannot be persisted."
+        );
+        const withoutImages = await supabase.from("quest_posts").insert({
+          user_id: payload.userId,
+          quest_id: targetQuest.id,
+          message,
+        });
+        if (withoutImages.error) throw withoutImages.error;
+      } else {
+        throw withImages.error;
+      }
+    }
 
     return {
       questId: targetQuest.id,
@@ -1596,10 +1843,13 @@ export const saveRuntimeEpisodeSpots = async (
     console.warn("saveRuntimeEpisodeSpots: spot_details insert warning", detailsError);
   }
 
-  const characterNameById = new Map(
+  const characterMetaById = new Map(
     (payload.runtimeEpisode.characters || []).map((character) => [
       character.id,
-      clean(character.name) || character.id,
+      {
+        name: clean(character.name) || character.id,
+        avatarUrl: normalizeEpisodeCoverUrl(character.avatarImageUrl) || null,
+      },
     ])
   );
 
@@ -1614,7 +1864,7 @@ export const saveRuntimeEpisodeSpots = async (
       order_index: number;
       speaker_type: "narrator" | "character";
       speaker_name: string | null;
-      avatar_url: null;
+      avatar_url: string | null;
       text: string;
     }> = [];
 
@@ -1635,8 +1885,10 @@ export const saveRuntimeEpisodeSpots = async (
 
     (source.preMissionDialogue || [])
       .map((dialogue) => ({
+        characterMeta:
+          (dialogue.characterId && characterMetaById.get(dialogue.characterId)) || null,
         speakerName: clean(
-          (dialogue.characterId && characterNameById.get(dialogue.characterId)) ||
+          (dialogue.characterId && characterMetaById.get(dialogue.characterId)?.name) ||
             dialogue.characterId ||
             ""
         ),
@@ -1651,15 +1903,17 @@ export const saveRuntimeEpisodeSpots = async (
           order_index: preOrder + innerIndex,
           speaker_type: "character",
           speaker_name: dialogue.speakerName || null,
-          avatar_url: null,
+          avatar_url: dialogue.characterMeta?.avatarUrl || null,
           text: dialogue.text,
         });
       });
 
     (source.postMissionDialogue || [])
       .map((dialogue) => ({
+        characterMeta:
+          (dialogue.characterId && characterMetaById.get(dialogue.characterId)) || null,
         speakerName: clean(
-          (dialogue.characterId && characterNameById.get(dialogue.characterId)) ||
+          (dialogue.characterId && characterMetaById.get(dialogue.characterId)?.name) ||
             dialogue.characterId ||
             ""
         ),
@@ -1674,7 +1928,7 @@ export const saveRuntimeEpisodeSpots = async (
           order_index: innerIndex + 1,
           speaker_type: "character",
           speaker_name: dialogue.speakerName || null,
-          avatar_url: null,
+          avatar_url: dialogue.characterMeta?.avatarUrl || null,
           text: dialogue.text,
         });
       });

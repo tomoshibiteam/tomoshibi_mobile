@@ -1,5 +1,7 @@
 # 意思決定ログ（Decision Log）
 
+- 最終更新日: 2026-03-15
+
 ## 使い方
 - 重要な意思決定を時系列で追記する（上に新しいものを追加）
 - 各項目は「決定内容」「理由」「影響範囲」を最小セットで記載する
@@ -21,6 +23,139 @@
 ```
 
 ## ログ
+
+### [DEC-20260315-027] シリーズ生成を多候補探索＋text judge rerankの品質パイプラインへ更新
+- 日付: 2026-03-15
+- ステータス: 決定
+- 決定内容: `/api/series/generate` の内部で使う `generateSeriesWorkflowWithProgress` に quality pipeline を追加し、(1) sanitize昇格（SeriesPreferenceSheet / SeriesAntiBrief / UserSeriesRubric）、(2) concept seed多候補生成（6〜10案）と fingerprint＋意味重複dedupe、(3) 上位2〜3案の詳細展開（rich fixed characters / identity pack / checkpoints / first episode seed / seed評価）、(4) text judge＋pairwise rerank による採用、(5) finalize deterministic 統合を導入した。feature flag により quality/legacy 切替と strict fallback 制御を可能にした。
+- 理由: 既存の単発案生成ではユーザー意図の深い反映、独自性、固定キャラ固有性、checkpoint/endingのシリーズ化、本文の選抜品質が不足し、平均解へ寄る傾向があったため。
+- 影響範囲: `mastra/src/workflows/series-workflow.ts` の生成経路、シリーズ設計用agent群（preference/concept seed/rich character/checkpoint/first seed/text judge）、`series-runtime-vnext` の modelInfo 表示、生成ログ観測項目。
+- 関連仮説: LLM負荷が高い環境では候補展開数を絞る必要があり、`SERIES_WORKFLOW_QUALITY_MODE` / `SERIES_CONCEPT_EXPAND_TARGET` / text judge切替の運用で成功率と品質の最適点を継続調整する。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/business/COMMON_UNDERSTANDING_OPERATIONS.md
+  - docs/product/SERIES_EPISODE_GENERATION_FLOW_DETAIL.md
+
+### [DEC-20260314-026] GamePlayのバックエンド取得でエピソード背景とキャラクターアイコンを優先利用
+- 日付: 2026-03-14
+- ステータス: 決定
+- 決定内容: `fetchGameplayQuest` で、背景画像は `spots.image_url` が無い場合に `quest_episodes/quest_posts` 側のエピソードカバーを優先利用する。キャラクターは `quest_characters` に加え `series_characters` を補完利用し、`spot_story_messages` の発話者名に一致するアバターを自動補完する。`spots` 非存在時のフォールバック経路でもシリーズキャラクター付きメッセージを返す。
+- 理由: テキストのみ接続され、背景画像とキャラクターアイコンが画面に反映されないケースが発生していたため。
+- 影響範囲: `src/services/gameplay.ts` のクエスト組み立てロジック、GamePlay（native/web）での背景・会話アイコン表示。
+- 関連仮説: 既存データの列欠落環境でも表示欠落は減るが、元データ側の `speaker_name` とキャラ名が大きく不一致な場合は一部ナレーション表示が残る。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/product/SERIES_EPISODE_GENERATION_FLOW_DETAIL.md
+
+### [DEC-20260314-025] WebプレビューGamePlayも演出統一しパズル導線を停止
+- 日付: 2026-03-14
+- ステータス: 決定
+- 決定内容: `GamePlayScreen.web.tsx` にタイプライター会話表示、オープニング導入（`opening_prologue`）、シーン切替フェード、背景マスク調整を適用し、`story_pre` から `puzzle` へ遷移せず `story_post` へ進める。`puzzle` UIはWebプレビューでは非表示とする。
+- 理由: ユーザーがPC URLで確認している際に、実装済みnative演出との差分が大きく、反映されていないように見える問題があったため。
+- 影響範囲: `src/screens/GamePlayScreen.web.tsx` の進行制御、会話表示UI、遷移演出、パズル表示条件。
+- 関連仮説: Webとnativeの演出差分を縮小することでレビュー効率は向上するが、最終的な体感は実機で再確認が必要。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/product/SERIES_EPISODE_GENERATION_FLOW_DETAIL.md
+
+### [DEC-20260314-024] ネイティブGamePlayでパズル導線を一時停止し演出を優先
+- 日付: 2026-03-14
+- ステータス: 決定
+- 決定内容: 実機向け `GamePlayScreen.tsx` では `story_pre` 後に `puzzle` へ遷移せず `story_post` へ直接進める。あわせて、会話表示のタイプライター演出強化、シーン切替フェード、背景マスクの暗さ調整を行う。
+- 理由: 現時点の要件はパズル機能よりも物語体験のUI/UX再現を優先するため。
+- 影響範囲: `src/screens/GamePlayScreen.tsx` の進行制御（`handleDialogueComplete`、`handleArrive`）、会話表示UI、画面遷移演出。
+- 関連仮説: パズル導線を止めることで体験離脱は減るが、再導入時は達成感設計の再検証が必要。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/product/SERIES_EPISODE_GENERATION_FLOW_DETAIL.md
+
+### [DEC-20260314-023] ネイティブGamePlayのUI/UXをReplica準拠へ再調整
+- 日付: 2026-03-14
+- ステータス: 決定
+- 決定内容: 実機向け `GamePlayScreen.tsx` に、Replica準拠の上部HUD（戻る・進捗・GPS状態）、移動フェーズの補助CTA（現在地有効化・地図を開く）、会話UIの完了誘導テキストを追加し、文言/導線を再調整した。
+- 理由: フローは実装済みでも、ボタン配置・表示情報・演出の密度が不足しており、体験品質に差分があったため。
+- 影響範囲: `src/screens/GamePlayScreen.tsx` の表示層（HUD・travelカード・dialogueオーバーレイ）と操作導線。
+- 関連仮説: 視認性と進行理解が向上し、開始〜移動〜謎解きの離脱率が低下する。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/product/SERIES_EPISODE_GENERATION_FLOW_DETAIL.md
+
+### [DEC-20260314-022] Web版GamePlayもReplica準拠フローへ統一
+- 日付: 2026-03-14
+- ステータス: 決定
+- 決定内容: `GamePlayScreen.web.tsx` を全面更新し、`location_gate → travel → story_pre → puzzle → story_post → epilogue` のフェーズ進行、位置情報スキップ、選択式/入力式の謎解き、フロント単体デモフォールバックを実装した。
+- 理由: Webプラットフォームだけ旧簡易画面のままだと、Replica準拠UI/UXの確認結果が端末依存になり、実装完了判定が不整合になるため。
+- 影響範囲: `src/screens/GamePlayScreen.web.tsx` の状態遷移・表示ロジック、Webでのフロント先行検証導線。
+- 関連仮説: Webでも同一フローが再現できることでUI検証速度は向上するが、最終的な永続化/分析イベントはバックエンド接続後に再検証が必要。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/product/SERIES_EPISODE_GENERATION_FLOW_DETAIL.md
+
+### [DEC-20260314-021] GamePlayはReplica準拠のフロント単体モードを先行実装
+- 日付: 2026-03-14
+- ステータス: 決定
+- 決定内容: `GamePlay` ルートをプレースホルダーから本画面へ戻し、バックエンド未接続でも進行確認できるようにReplica準拠のフロント単体デモクエスト（2スポット、謎解き、会話進行）を導入した。位置情報は通常取得に加えて「スキップ開始」を許可する。
+- 理由: ゼロベース再実装フェーズでは、先に画面体験を固めてからバックエンド接続する方針のため。
+- 影響範囲: `src/navigation/RootNavigator.tsx` の `GamePlay` ルート、`src/screens/SeriesDetailScreen.tsx` の遷移復帰、`src/screens/GamePlayScreen.tsx` のデモデータ/位置情報スキップ/ロードフォールバック。
+- 関連仮説: デモモードでUI/導線検証速度は上がるが、最終的なデータ整合はバックエンド接続後に再検証が必要。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/product/SERIES_EPISODE_GENERATION_FLOW_DETAIL.md
+
+### [DEC-20260314-020] 既存GamePlay画面をフローから一時撤去しプレースホルダーへ差し替え
+- 日付: 2026-03-14
+- ステータス: 決定
+- 決定内容: 新規ゼロベース実装に向けて、既存 `GamePlayScreen` は遷移フローから外し、`GamePlay` ルートは一時プレースホルダー画面へ差し替える。シリーズ詳細の「ゲームプレイ/進む」操作は準備中案内を返す。
+- 理由: 現行実装を前提に改修を続けると再設計コストが増えるため、実行導線を止めたうえで新規実装に集中するため。
+- 影響範囲: `src/navigation/RootNavigator.tsx` の `GamePlay` ルート、`src/screens/SeriesDetailScreen.tsx` の遷移操作、`src/screens/GamePlayPlaceholderScreen.tsx` の追加。
+- 関連仮説: 旧画面を誤って利用する経路が減り、新規実装時の検証品質が上がる。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/product/SERIES_EPISODE_GENERATION_FLOW_DETAIL.md
+
+### [DEC-20260314-019] シリーズ作成者は配下エピソードを削除可能とする
+- 日付: 2026-03-14
+- ステータス: 決定
+- 決定内容: シリーズ詳細画面ではシリーズ作成者に各エピソードの削除操作を常時提供し、削除APIは「投稿者本人」削除に失敗した場合でも「シリーズ作成者」権限での削除を試行する。Supabaseでは `quest_episodes` / `quest_posts` にシリーズ作成者向けDELETEポリシーを追加する運用とした。
+- 理由: 過去データや保存経路差分で `episode.user_id` がシリーズ作成者と一致しない場合、削除ボタンが非表示または実行不能になっていたため。
+- 影響範囲: `src/screens/SeriesDetailScreen.tsx` の削除UI表示条件、`src/services/quests.ts` の削除実行ロジック、`supabase/sql/20260314_allow_series_creator_episode_delete.sql` の適用。
+- 関連仮説: 旧データ互換下でも削除失敗率は低下するが、RLS未適用環境では依然として権限エラーが残る。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/product/SERIES_EPISODE_GENERATION_FLOW_DETAIL.md
+
+### [DEC-20260314-018] エピソードカバー永続化のためquest_episodes/quest_posts列を必須化
+- 日付: 2026-03-14
+- ステータス: 決定
+- 決定内容: エピソード生成カバー画像を永続化するため、Supabaseに `quest_episodes.cover_image_url` と `quest_posts.image_urls` を追加する運用を必須化した。アプリ側は列欠落時に警告ログを出し、互換モード挿入は継続する。
+- 理由: 生成結果画面では画像が表示されても、DB列不足で保存時に画像URLが破棄され、シリーズ詳細でフォールバック表示になる問題が発生していたため。
+- 影響範囲: `supabase/sql/20260314_add_episode_cover_columns.sql` の適用、`src/services/quests.ts` の保存/読込時警告、エピソードカバー保存の運用手順。
+- 関連仮説: 列適用後はエピソードカバー欠落率が大幅に低下するが、生成失敗時のみフォールバックが残る。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/product/SERIES_EPISODE_GENERATION_FLOW_DETAIL.md
+
+### [DEC-20260314-017] エピソードカバーはシリーズカバーへフォールバックしない
+- 日付: 2026-03-14
+- ステータス: 決定
+- 決定内容: シリーズ詳細の各エピソードカードでは、`episode.cover_image_url` を最優先し、未設定時はエピソード単位のシード画像を生成して使用する。シリーズカバーへのフォールバックは行わない。また保存処理側（`createEpisodeForSeries`）でも、カバー未指定時はエピソード単位のシード画像URLを自動付与する。
+- 理由: 各エピソードの視覚的識別が失われ、シリーズ体験が「同じサムネイルの繰り返し」に見えることで、継続利用時の物語差分認知が弱くなっていたため。
+- 影響範囲: `src/screens/SeriesDetailScreen.tsx` のサムネイル解決、`src/screens/EpisodeGenerationResultScreen.tsx` の保存時カバー決定、`src/services/quests.ts` のエピソード保存デフォルト値。
+- 関連仮説: 画像生成URLが未返却でも各話サムネイルの識別性は維持できるが、将来的にはシード画像ではなく完全にAI生成カバーへ収束させる余地がある。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/product/SERIES_EPISODE_GENERATION_FLOW_DETAIL.md
+
+### [DEC-20260314-016] legacyエピソード生成でもカバー画像・キャラクター画像URLを返却する
+- 日付: 2026-03-14
+- ステータス: 決定
+- 決定内容: Mastra の legacy エピソード生成（`seriesRuntimeEpisodeAgent`）で、`cover_image_prompt / cover_image_url` と、シリーズ固定・エピソード固有キャラクターの画像URL（`avatar_image_url`, `portrait_image_url`）を出力する方針に変更した。画像URLはシリーズ生成と同じ `buildSeriesImageUrl` 系を利用する。
+- 理由: アプリ側が vNext 入力を作れないケースや旧データ経路で legacy にフォールバックした際、エピソード画面でカバー画像・キャラクター画像が欠落し、愛着形成の主要体験が毀損していたため。
+- 影響範囲: `mastra/src/lib/agents/seriesRuntimeEpisodeAgent.ts` の出力契約、`src/services/seriesAi.ts` の legacy リクエスト項目、エピソード生成結果画面の画像表示安定性。
+- 関連仮説: legacy経路でも画像欠落率は下がるが、画像生成URLのクエリ長・生成レイテンシ増加の監視が必要。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/product/SERIES_EPISODE_GENERATION_FLOW_DETAIL.md
 
 ### [DEC-20260312-015] seriesEpisodePlannerAgent全試行失敗時は生成中断せずfallback planで継続
 - 日付: 2026-03-12

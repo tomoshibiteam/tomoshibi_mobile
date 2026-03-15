@@ -26,6 +26,99 @@ export const seriesGenerationRequestSchema = z.object({
   identity_retcon: z.boolean().optional(),
 });
 
+export const seriesPreferenceSheetSchema = z.object({
+  emotional_rewards: z.array(z.string()).min(1).max(8),
+  desired_relationship_dynamics: z.array(z.string()).min(1).max(8),
+  atmosphere_keywords: z.array(z.string()).min(1).max(10),
+  novelty_level: z.enum(["safe", "balanced", "bold"]).default("balanced"),
+  pacing_preference: z.enum(["slow_burn", "balanced", "fast_hook"]).default("balanced"),
+  ending_preference: z.enum(["resolved", "bittersweet", "open"]).default("bittersweet"),
+  continuation_needs: z.array(z.string()).min(1).max(8),
+  anti_preferences: z.array(z.string()).max(12).default([]),
+  originality_targets: z.array(z.string()).min(1).max(8),
+  interpreted_intent_summary: z.string(),
+});
+
+export const seriesAntiBriefSchema = z.object({
+  banned_cliches: z.array(z.string()).max(16).default([]),
+  banned_world_shapes: z.array(z.string()).max(12).default([]),
+  banned_relationship_modes: z.array(z.string()).max(12).default([]),
+  banned_tone_drifts: z.array(z.string()).max(12).default([]),
+  banned_generic_patterns: z.array(z.string()).max(16).default([]),
+});
+
+export const userSeriesRubricSchema = z.object({
+  intent_fit_weights: z.object({
+    intent_fit: z.number().min(0).max(1),
+    emotional_reward_fit: z.number().min(0).max(1),
+    relationship_fit: z.number().min(0).max(1),
+    world_originality: z.number().min(0).max(1),
+    character_vividness: z.number().min(0).max(1),
+    return_desire: z.number().min(0).max(1),
+    clone_penalty: z.number().min(0).max(1),
+  }),
+  must_haves: z.array(z.string()).min(1).max(12),
+  nice_to_haves: z.array(z.string()).max(12).default([]),
+  must_avoid: z.array(z.string()).max(16).default([]),
+});
+
+export const seriesFingerprintSchema = z.object({
+  worldview_archetype: z.string(),
+  emotional_promise: z.string(),
+  fixed_character_dynamic: z.string(),
+  continuation_mode: z.string(),
+  motif_cluster: z.array(z.string()).max(6).default([]),
+  ending_type: z.string(),
+});
+
+export const seriesConceptSeedSchema = z.object({
+  seed_id: z.string(),
+  generation_angle: z.enum([
+    "emotion-first",
+    "relationship-first",
+    "world-first",
+    "originality-first",
+    "ending-first",
+    "continuation-trigger-first",
+    "place-portability-first",
+    "bittersweet-first",
+  ]),
+  title: z.string(),
+  one_line_hook: z.string(),
+  premise: z.string(),
+  worldview_core: z.string(),
+  emotional_core: z.string(),
+  central_relationship_dynamic: z.string(),
+  return_reason: z.string(),
+  ending_flavor: z.string(),
+  uniqueness_claims: z.array(z.string()).min(1).max(6),
+  fingerprint: seriesFingerprintSchema,
+});
+
+export const seriesConceptSeedBatchSchema = z.object({
+  seeds: z.array(seriesConceptSeedSchema).min(6).max(10),
+});
+
+export const seriesTextJudgeScoreSchema = z.object({
+  intent_fit: z.number().min(0).max(1),
+  emotional_reward_fit: z.number().min(0).max(1),
+  relationship_fit: z.number().min(0).max(1),
+  world_originality: z.number().min(0).max(1),
+  character_vividness: z.number().min(0).max(1),
+  return_desire: z.number().min(0).max(1),
+  clone_penalty: z.number().min(0).max(1),
+  rationale: z.string(),
+});
+
+export const seriesFirstEpisodeSeedEvalSchema = z.object({
+  intent_fit: z.number().min(0).max(1),
+  walkability_fit: z.number().min(0).max(1),
+  continuation_hook_fit: z.number().min(0).max(1),
+  uniqueness_fit: z.number().min(0).max(1),
+  pass: z.boolean(),
+  reasons: z.array(z.string()).max(8).default([]),
+});
+
 export const seriesWorldSchema = z.object({
   era: z.string(),
   setting: z.string(),
@@ -318,6 +411,13 @@ export const seriesWorkflowOutputSchema = z.object({
 });
 
 export type SeriesGenerationRequest = z.infer<typeof seriesGenerationRequestSchema>;
+export type SeriesPreferenceSheet = z.infer<typeof seriesPreferenceSheetSchema>;
+export type SeriesAntiBrief = z.infer<typeof seriesAntiBriefSchema>;
+export type UserSeriesRubric = z.infer<typeof userSeriesRubricSchema>;
+export type SeriesFingerprint = z.infer<typeof seriesFingerprintSchema>;
+export type SeriesConceptSeed = z.infer<typeof seriesConceptSeedSchema>;
+export type SeriesTextJudgeScore = z.infer<typeof seriesTextJudgeScoreSchema>;
+export type SeriesFirstEpisodeSeedEval = z.infer<typeof seriesFirstEpisodeSeedEvalSchema>;
 export type SeriesOutput = z.infer<typeof seriesOutputSchema>;
 export type SeriesCharacter = z.infer<typeof seriesCharacterSchema>;
 export type SeriesEpisodeBlueprint = z.infer<typeof seriesEpisodeBlueprintSchema>;

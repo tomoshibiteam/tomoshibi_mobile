@@ -38,14 +38,6 @@ type Character = {
 const FALLBACK_COVER =
   "https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=1200&q=80";
 
-const FALLBACK_EPISODE_COVER_URLS = [
-  "https://images.unsplash.com/photo-1528459801416-a9e53bbf4e17?auto=format&fit=crop&w=900&q=80",
-  "https://images.unsplash.com/photo-1470770903676-69b98201ea1c?auto=format&fit=crop&w=900&q=80",
-  "https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&w=900&q=80",
-  "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=900&q=80",
-  "https://images.unsplash.com/photo-1433838552652-f9a46b332c40?auto=format&fit=crop&w=900&q=80",
-] as const;
-
 const pickCharacterIcon = (role: string): keyof typeof Ionicons.glyphMap => {
   const normalized = role.toLowerCase();
   if (/(猫|cat|動物|pet)/i.test(normalized)) return "paw-outline";
@@ -76,6 +68,12 @@ const summarizeEpisodeBody = (body: string, maxLength = 80) => {
   if (!cleaned) return "本文はまだありません。";
   return cleaned.length > maxLength ? `${cleaned.slice(0, maxLength)}...` : cleaned;
 };
+
+const normalizeCoverValue = (value?: string | null) => (value || "").replace(/\s+/g, " ").trim();
+const buildEpisodeFallbackCover = (seriesTitle: string, episode: SeriesEpisode) =>
+  `https://picsum.photos/seed/${encodeURIComponent(
+    `${seriesTitle}-${String(episode.episodeNo || 1)}-${episode.id}-${episode.title}`
+  )}/900/600`;
 
 export const SeriesDetailScreen = ({ navigation, route }: Props) => {
   const { questId } = route.params;
@@ -120,6 +118,15 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
   const clearedCount = 0;
   const nextEpisode = episodes[clearedCount] || null;
   const progressLabel = statusToLabel(series?.status || null);
+  const resolveEpisodeCover = useCallback(
+    (episode: SeriesEpisode) => {
+      const episodeCover = normalizeCoverValue(episode.coverImageUrl);
+      const seriesCover = normalizeCoverValue(coverImageUrl);
+      if (episodeCover && episodeCover !== seriesCover) return episodeCover;
+      return buildEpisodeFallbackCover(title, episode);
+    },
+    [coverImageUrl, title]
+  );
 
   const characters = useMemo<Character[]>(
     () =>
@@ -204,6 +211,7 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
               episodeId: episode.id,
               source: episode.source,
               userId: viewerUserId,
+              questId,
             });
             setEpisodes((prev) => prev.filter((item) => item.id !== episode.id));
             if (editingEpisodeId === episode.id) {
@@ -211,7 +219,12 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
             }
           } catch (error) {
             console.error("SeriesDetailScreen: failed to delete episode", error);
-            Alert.alert("削除に失敗しました", "時間をおいて再度お試しください。");
+            const maybeError = error as { code?: string };
+            if (maybeError.code === "EPISODE_DELETE_FORBIDDEN") {
+              Alert.alert("削除できません", "このエピソードを削除する権限がありません。");
+            } else {
+              Alert.alert("削除に失敗しました", "時間をおいて再度お試しください。");
+            }
           } finally {
             setActionEpisodeId(null);
           }
@@ -361,7 +374,12 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
                   <View key={character.id} className="w-24 items-center">
                     <View className="w-16 h-16 rounded-full border border-[#E3DDD6] bg-[#F4F1ED] items-center justify-center overflow-hidden">
                       {character.avatarImageUrl ? (
-                        <Image source={{ uri: character.avatarImageUrl }} className="w-full h-full" resizeMode="cover" />
+                        <Image
+                          source={{ uri: character.avatarImageUrl }}
+                          className="w-full h-full"
+                          resizeMode="cover"
+                          style={{ transform: [{ scale: 1.12 }] }}
+                        />
                       ) : (
                         <Ionicons name={character.icon} size={23} color="#9A9287" />
                       )}
@@ -411,7 +429,7 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
                   <View className="h-32 relative">
                     <Image
                       source={{
-                        uri: FALLBACK_EPISODE_COVER_URLS[(Math.max(nextEpisode.episodeNo, 1) - 1) % FALLBACK_EPISODE_COVER_URLS.length],
+                        uri: resolveEpisodeCover(nextEpisode),
                       }}
                       className="w-full h-full"
                       resizeMode="cover"
@@ -502,6 +520,7 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
                 {timelineEpisodes.map((episode) => {
                   const isCurrentEditing = editingEpisodeId === episode.id;
                   const canEdit = canManageSeries && viewerUserId === episode.userId;
+                  const canDelete = canManageSeries;
 
                   return (
                     <View key={episode.id} className="relative mb-5">
@@ -512,7 +531,7 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
                           <View className="w-28 h-32 bg-[#E6DED5] relative">
                             <Image
                               source={{
-                                uri: FALLBACK_EPISODE_COVER_URLS[(Math.max(episode.episodeNo, 1) - 1) % FALLBACK_EPISODE_COVER_URLS.length],
+                                uri: resolveEpisodeCover(episode),
                               }}
                               className="w-full h-full"
                               resizeMode="cover"
@@ -595,31 +614,35 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
                               </>
                             )}
 
-                            {canEdit && !isCurrentEditing ? (
+                            {(canEdit || canDelete) && !isCurrentEditing ? (
                               <View className="flex-row items-center justify-end gap-2 mt-3">
-                                <Pressable
-                                  className="px-3 py-1.5 rounded-lg bg-[#F1ECE6]"
-                                  onPress={() => startEdit(episode)}
-                                  disabled={actionEpisodeId === episode.id}
-                                >
-                                  <Text className="text-xs text-[#6C5647]" style={{ fontFamily: fonts.displayBold }}>
-                                    編集
-                                  </Text>
-                                </Pressable>
-
-                                <Pressable
-                                  className="px-3 py-1.5 rounded-lg bg-[#FBE2DC]"
-                                  onPress={() => removeEpisode(episode)}
-                                  disabled={actionEpisodeId === episode.id}
-                                >
-                                  {actionEpisodeId === episode.id ? (
-                                    <ActivityIndicator size="small" color="#D64E3B" />
-                                  ) : (
-                                    <Text className="text-xs text-[#D64E3B]" style={{ fontFamily: fonts.displayBold }}>
-                                      削除
+                                {canEdit ? (
+                                  <Pressable
+                                    className="px-3 py-1.5 rounded-lg bg-[#F1ECE6]"
+                                    onPress={() => startEdit(episode)}
+                                    disabled={actionEpisodeId === episode.id}
+                                  >
+                                    <Text className="text-xs text-[#6C5647]" style={{ fontFamily: fonts.displayBold }}>
+                                      編集
                                     </Text>
-                                  )}
-                                </Pressable>
+                                  </Pressable>
+                                ) : null}
+
+                                {canDelete ? (
+                                  <Pressable
+                                    className="px-3 py-1.5 rounded-lg bg-[#FBE2DC]"
+                                    onPress={() => removeEpisode(episode)}
+                                    disabled={actionEpisodeId === episode.id}
+                                  >
+                                    {actionEpisodeId === episode.id ? (
+                                      <ActivityIndicator size="small" color="#D64E3B" />
+                                    ) : (
+                                      <Text className="text-xs text-[#D64E3B]" style={{ fontFamily: fonts.displayBold }}>
+                                        削除
+                                      </Text>
+                                    )}
+                                  </Pressable>
+                                ) : null}
                               </View>
                             ) : null}
                           </View>

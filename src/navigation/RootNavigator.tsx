@@ -13,7 +13,7 @@ import { SettingsScreen } from "@/screens/SettingsScreen";
 import { UserProfileScreen } from "@/screens/UserProfileScreen";
 import { UserConnectionsScreen } from "@/screens/UserConnectionsScreen";
 import { SeriesDetailScreen } from "@/screens/SeriesDetailScreen";
-import { GamePlayScreen } from "@/screens/GamePlayScreen";
+import { GamePlayScreen } from "@/screens/GamePlayEntry";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 

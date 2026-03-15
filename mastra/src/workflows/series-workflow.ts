@@ -2,14 +2,20 @@ import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { createHash } from "crypto";
 import { z } from "zod";
 import {
+  seriesAntiBriefSchema,
   seriesCheckpointSchema,
   seriesCharacterIdentityAnchorTokensSchema,
   seriesCharacterSchema,
+  seriesConceptSeedSchema,
   seriesCoverConsistencyReportSchema,
   seriesEpisodeSeedSchema,
+  seriesFirstEpisodeSeedEvalSchema,
   seriesGenerationRequestSchema,
   seriesIdentityPackSchema,
   seriesInterviewSchema,
+  seriesPreferenceSheetSchema,
+  seriesTextJudgeScoreSchema,
+  userSeriesRubricSchema,
   seriesWorkflowOutputSchema,
 } from "../schemas/series";
 import {
@@ -20,6 +26,22 @@ import { generateSeriesCharacters } from "../lib/agents/seriesCharacterAgent";
 import { generateSeriesEpisodePlan } from "../lib/agents/seriesEpisodePlannerAgent";
 import { generateSeriesConsistency } from "../lib/agents/seriesConsistencyAgent";
 import { dryRunFirstEpisodeSeedRoute } from "../lib/agents/seriesRuntimeEpisodeAgent";
+import { generateSeriesPreferenceBundle } from "../lib/agents/seriesPreferenceAgent";
+import {
+  generateSeriesConceptSeeds,
+  judgeSeriesSeedSemanticSimilarity,
+} from "../lib/agents/seriesConceptSeedAgent";
+import { generateSeriesRichCharacters, richCharacterSheetSchema } from "../lib/agents/seriesRichCharacterAgent";
+import { generateSeriesCheckpoints } from "../lib/agents/seriesCheckpointAgent";
+import {
+  evaluateFirstEpisodeSeed,
+  generateFirstEpisodeSeed,
+} from "../lib/agents/seriesFirstEpisodeSeedAgent";
+import {
+  compareSeriesTextCandidatesPairwise,
+  evaluateSeriesTextCandidate,
+  seriesTextJudgeCandidateSchema,
+} from "../lib/agents/seriesTextJudgeAgent";
 import {
   buildCharacterPortraitPrompt,
   buildCoverImagePrompt,
@@ -69,6 +91,13 @@ type WorkflowCharacter = z.infer<typeof seriesCharacterSchema>;
 type WorkflowIdentityAnchorTokens = z.infer<typeof seriesCharacterIdentityAnchorTokensSchema>;
 type WorkflowIdentityPack = z.infer<typeof seriesIdentityPackSchema>;
 type WorkflowCoverConsistencyReport = z.infer<typeof seriesCoverConsistencyReportSchema>;
+type WorkflowPreferenceSheet = z.infer<typeof seriesPreferenceSheetSchema>;
+type WorkflowAntiBrief = z.infer<typeof seriesAntiBriefSchema>;
+type WorkflowUserRubric = z.infer<typeof userSeriesRubricSchema>;
+type WorkflowConceptSeed = z.infer<typeof seriesConceptSeedSchema>;
+type WorkflowFirstEpisodeSeedEval = z.infer<typeof seriesFirstEpisodeSeedEvalSchema>;
+type WorkflowTextJudgeScore = z.infer<typeof seriesTextJudgeScoreSchema>;
+type WorkflowRichCharacterSheet = z.infer<typeof richCharacterSheetSchema>;
 
 type CoverFocusCharacter = {
   character_id: string;
@@ -1259,7 +1288,23 @@ const evaluateCoverCandidate = async (input: {
     }
   }
   if (!evaluation) {
-    throw lastEvalError instanceof Error ? lastEvalError : new Error("cover_identity_eval_failed");
+    const reason = clean(
+      lastEvalError instanceof Error ? lastEvalError.message : String(lastEvalError ?? "cover_identity_eval_failed")
+    );
+    return {
+      candidate_index: input.candidateIndex,
+      round_index: input.roundIndex,
+      image_url: input.imageUrl,
+      provider: "eval-unavailable",
+      prompt: input.prompt,
+      arcface_avg: 0,
+      clip_avg: 0.25,
+      vision_anchor_avg: 0.25,
+      style_similarity: 0.25,
+      pass_rate: 0,
+      passed: false,
+      character_scores: [],
+    };
   }
 
   const noPeopleScore = clamp01(1 - evaluation.peopleScore);
@@ -1896,6 +1941,7 @@ const assembleSeriesBlueprint = async (input: {
   checkpoints: z.infer<typeof seriesCheckpointSchema>[];
   firstEpisodeSeed: z.infer<typeof seriesEpisodeSeedSchema>;
   seedRouteDryRun: z.infer<typeof seedRouteDryRunSchema>;
+  additionalWarnings?: string[];
   onProgress?: SeriesGenerationProgressReporter;
 }) => {
   const consistency = await generateSeriesConsistency({
@@ -1911,6 +1957,9 @@ const assembleSeriesBlueprint = async (input: {
 
   const aiRulePoints = consistency.ai_rule_points.slice(0, 12);
   const warnings: string[] = [];
+  if (Array.isArray(input.additionalWarnings) && input.additionalWarnings.length > 0) {
+    warnings.push(...input.additionalWarnings.map((item) => clean(item)).filter(Boolean));
+  }
   if (consistency.warnings && consistency.warnings.length > 0) {
     warnings.push(...consistency.warnings);
   }
@@ -2139,7 +2188,7 @@ const assembleSeriesBlueprint = async (input: {
       meta: {
         desired_episode_count: input.request.desired_episode_count,
         generated_checkpoint_count: input.checkpoints.length,
-        workflow_version: "series-workflow-v7-role-planner",
+        workflow_version: "series-workflow-v8-quality-pipeline",
         warnings,
         first_episode_seed_dry_run: input.seedRouteDryRun,
       },
@@ -2190,6 +2239,20 @@ export const seriesWorkflow = createWorkflow({
 export type SeriesGenerationProgressPhase =
   | "sanitize_series_request_start"
   | "sanitize_series_request_done"
+  | "build_series_intent_bundle_start"
+  | "build_series_intent_bundle_done"
+  | "generate_series_concept_seeds_start"
+  | "generate_series_concept_seeds_done"
+  | "dedupe_series_concept_seeds_start"
+  | "dedupe_series_concept_seeds_done"
+  | "expand_series_candidates_start"
+  | "expand_series_candidates_done"
+  | "generate_first_episode_seed_start"
+  | "generate_first_episode_seed_done"
+  | "evaluate_first_episode_seed_start"
+  | "evaluate_first_episode_seed_done"
+  | "judge_series_candidates_start"
+  | "judge_series_candidates_done"
   | "generate_series_concept_start"
   | "generate_series_concept_done"
   | "generate_series_characters_start"
@@ -2228,6 +2291,758 @@ const emitSeriesGenerationProgress = async (
   });
 };
 
+const QUALITY_MODE = clean(process.env.SERIES_WORKFLOW_QUALITY_MODE).toLowerCase();
+const QUALITY_STRICT_MODE = clean(process.env.SERIES_WORKFLOW_QUALITY_STRICT).toLowerCase() === "on";
+const QUALITY_TEXT_JUDGE_ENABLED = clean(process.env.SERIES_WORKFLOW_TEXT_JUDGE_MODE).toLowerCase() !== "off";
+const QUALITY_DEBUG_TRACE = clean(process.env.SERIES_WORKFLOW_DEBUG_TRACE).toLowerCase() === "on";
+const QUALITY_SEED_TARGET = Math.max(
+  6,
+  Math.min(10, Number.parseInt(clean(process.env.SERIES_CONCEPT_SEED_TARGET) || "8", 10) || 8)
+);
+const QUALITY_EXPAND_TARGET = Math.max(
+  2,
+  Math.min(3, Number.parseInt(clean(process.env.SERIES_CONCEPT_EXPAND_TARGET) || "3", 10) || 3)
+);
+
+const isQualityWorkflowEnabled = () => {
+  if (QUALITY_MODE === "off" || QUALITY_MODE === "legacy") return false;
+  return true;
+};
+
+const buildSeedFingerprintKey = (seed: WorkflowConceptSeed) =>
+  dedupeStrings([
+    seed.fingerprint.worldview_archetype,
+    seed.fingerprint.emotional_promise,
+    seed.fingerprint.fixed_character_dynamic,
+    seed.fingerprint.continuation_mode,
+    seed.fingerprint.ending_type,
+    ...seed.fingerprint.motif_cluster,
+  ])
+    .join("|")
+    .toLowerCase();
+
+const defaultSeedRouteDryRun = (reason: string): z.infer<typeof seedRouteDryRunSchema> => ({
+  feasible: false,
+  selected_spots: [],
+  failure_reasons: [clean(reason) || "seed_route_dry_run_failed"],
+  route_metrics: {
+    optimizer: "seed_dry_run_unavailable",
+    total_estimated_walk_minutes: 0,
+    transfer_minutes: 0,
+    max_leg_minutes: 0,
+    max_total_walk_minutes: 0,
+    feasible: false,
+    failure_reasons: [clean(reason) || "seed_route_dry_run_failed"],
+    optimized_order_indices: [],
+    optimized_order_spot_names: [],
+  },
+  route_score: 0,
+  continuity_score: 0,
+});
+
+const runSeedRouteDryRunForSeed = async (params: {
+  concept: z.infer<typeof seriesConceptAgentOutputSchema>;
+  request: z.infer<typeof resolvedSeriesRequestSchema>;
+  firstEpisodeSeed: z.infer<typeof seriesEpisodeSeedSchema>;
+}): Promise<z.infer<typeof seedRouteDryRunSchema>> => {
+  try {
+    const dryRun = await dryRunFirstEpisodeSeedRoute({
+      stage_location: clean(params.concept.world.setting) || clean(params.request.interview.genre_world) || "街",
+      world_setting: clean(params.concept.world.setting),
+      purpose: "シリーズ第1話導線の成立性検証",
+      expected_duration_minutes: params.firstEpisodeSeed.expected_duration_minutes,
+      suggested_spots: params.firstEpisodeSeed.suggested_spots || [],
+      spot_requirements: params.firstEpisodeSeed.spot_requirements.map((requirement) => ({
+        requirement_id: requirement.requirement_id,
+        scene_role: requirement.scene_role,
+        spot_role: requirement.spot_role,
+        required_attributes: requirement.required_attributes,
+        visit_constraints: requirement.visit_constraints,
+        tourism_value_type: requirement.tourism_value_type,
+      })),
+    });
+    return {
+      feasible: dryRun.feasible,
+      selected_spots: dryRun.selected_spots.slice(0, 4),
+      failure_reasons: dryRun.failure_reasons.slice(0, 20),
+      route_metrics: {
+        ...dryRun.route_metrics,
+        failure_reasons: dryRun.route_metrics.failure_reasons.slice(0, 20),
+        optimized_order_indices: dryRun.route_metrics.optimized_order_indices.slice(0, 6),
+        optimized_order_spot_names: dryRun.route_metrics.optimized_order_spot_names.slice(0, 6),
+      },
+      route_score: dryRun.route_score,
+      continuity_score: dryRun.continuity_score,
+    };
+  } catch (error: any) {
+    return defaultSeedRouteDryRun(clean(error?.message || String(error || "seed_route_dry_run_failed")));
+  }
+};
+
+const buildFallbackConceptFromSeed = (params: {
+  seed: WorkflowConceptSeed;
+  request: z.infer<typeof resolvedSeriesRequestSchema>;
+}): z.infer<typeof seriesConceptAgentOutputSchema> => ({
+  title: clean(params.seed.title) || "新しいシリーズ",
+  genre: clean(params.request.interview.genre_world) || "現代都市街歩き連続劇",
+  tone: clean(params.seed.emotional_core) || clean(params.request.interview.desired_emotion) || "余韻と高揚",
+  premise:
+    clean(params.seed.premise) ||
+    `地上の街区を歩きながら、${clean(params.seed.return_reason) || "次話へのフック"}を追う。`,
+  overview: clean(params.seed.one_line_hook) || clean(params.seed.premise),
+  season_goal: clean(params.seed.return_reason) || clean(params.request.interview.continuation_trigger) || "主要対立を収束させる",
+  cover_image_prompt: "",
+  world: {
+    era: "現代",
+    setting: clean(params.seed.worldview_core) || "現代日本の徒歩街区",
+    social_structure: "表の秩序と裏の情報網が併存する",
+    core_conflict: "継続する問いに対して異なる解を持つ人々が衝突する",
+    taboo_rules: ["証拠なしで断定しない", "同意なく他者の秘密を公開しない"],
+    recurring_motifs: dedupeStrings(params.seed.fingerprint.motif_cluster).slice(0, 4),
+    visual_assets: [],
+  },
+  ai_rule_points: dedupeStrings([
+    "各話で前話のcarry_overを1つ以上参照する。",
+    "固定キャラクターの話し方と価値観の急変を禁止する。",
+    "徒歩で2〜4スポットを巡る導線を維持する。",
+    "伏線は3話以内に中間回収し、最終話で主回収する。",
+  ]).slice(0, 8),
+});
+
+const buildDetailedConceptFromSeed = async (params: {
+  seed: WorkflowConceptSeed;
+  request: z.infer<typeof resolvedSeriesRequestSchema>;
+  preferenceSheet: WorkflowPreferenceSheet;
+  antiBrief: WorkflowAntiBrief;
+}): Promise<z.infer<typeof seriesConceptAgentOutputSchema>> => {
+  const interview = {
+    ...params.request.interview,
+    genre_world:
+      clean(params.seed.worldview_core) ||
+      clean(params.request.interview.genre_world) ||
+      "現代日本の徒歩街区",
+    desired_emotion:
+      dedupeStrings([
+        params.seed.emotional_core,
+        ...params.preferenceSheet.emotional_rewards,
+        params.request.interview.desired_emotion,
+      ]).join(" / ") || "余韻と高揚",
+    companion_preference:
+      dedupeStrings([
+        params.seed.central_relationship_dynamic,
+        ...params.preferenceSheet.desired_relationship_dynamics,
+        params.request.interview.companion_preference,
+      ]).join(" / ") || "信頼できる相棒",
+    continuation_trigger:
+      clean(params.request.interview.continuation_trigger) ||
+      params.preferenceSheet.continuation_needs[0] ||
+      clean(params.seed.return_reason),
+    avoidance_preferences: dedupeStrings([
+      params.request.interview.avoidance_preferences,
+      ...params.antiBrief.banned_cliches,
+      ...params.antiBrief.banned_generic_patterns,
+    ]).join(" / "),
+    additional_notes: dedupeStrings([
+      clean(params.request.interview.additional_notes),
+      `seed_title:${params.seed.title}`,
+      `generation_angle:${params.seed.generation_angle}`,
+      `ending_flavor:${params.seed.ending_flavor}`,
+      `uniqueness:${params.seed.uniqueness_claims.join(" / ")}`,
+    ]).join(" / "),
+  };
+
+  const prompt = dedupeStrings([
+    params.request.prompt,
+    `seed_id=${params.seed.seed_id}`,
+    `seed_hook=${params.seed.one_line_hook}`,
+    `seed_premise=${params.seed.premise}`,
+    `seed_return_reason=${params.seed.return_reason}`,
+    `seed_fingerprint=${buildSeedFingerprintKey(params.seed)}`,
+    `avoid=${params.antiBrief.banned_generic_patterns.join(" / ")}`,
+  ]).join("\n");
+
+  try {
+    const generated = await generateSeriesConcept({
+      interview,
+      prompt,
+      desiredEpisodeCount: params.request.desired_episode_count,
+      language: params.request.language,
+    });
+    return {
+      ...generated,
+      title: clean(generated.title) || clean(params.seed.title) || generated.title,
+      premise: clean(generated.premise) || clean(params.seed.premise) || generated.premise,
+      overview: clean(generated.overview) || clean(params.seed.one_line_hook) || generated.overview,
+      season_goal: clean(generated.season_goal) || clean(params.seed.return_reason) || generated.season_goal,
+      ai_rule_points: dedupeStrings([
+        ...generated.ai_rule_points,
+        "固定キャラのmust-never-breakを最優先する。",
+      ]).slice(0, 12),
+    };
+  } catch {
+    return buildFallbackConceptFromSeed({
+      seed: params.seed,
+      request: params.request,
+    });
+  }
+};
+
+type QualityCandidateMaterial = {
+  candidateId: string;
+  seed: WorkflowConceptSeed;
+  concept: z.infer<typeof seriesConceptAgentOutputSchema>;
+  richCharacters: WorkflowRichCharacterSheet[];
+  characters: WorkflowCharacter[];
+  identityPack: WorkflowIdentityPack;
+  checkpoints: z.infer<typeof seriesCheckpointSchema>[];
+  firstEpisodeSeed: z.infer<typeof seriesEpisodeSeedSchema>;
+  firstEpisodeSeedEval: WorkflowFirstEpisodeSeedEval;
+  seedRouteDryRun: z.infer<typeof seedRouteDryRunSchema>;
+  textJudge: {
+    score: WorkflowTextJudgeScore;
+    reject: boolean;
+    rejectReasons: string[];
+  };
+};
+
+const evaluateSeedNovelty = (seed: WorkflowConceptSeed, preferenceSheet: WorkflowPreferenceSheet) => {
+  const uniqueness = Math.min(1, (seed.uniqueness_claims.length || 0) / 4);
+  const relationFit = preferenceSheet.desired_relationship_dynamics.some((dynamic) =>
+    clean(seed.central_relationship_dynamic).includes(clean(dynamic))
+  )
+    ? 0.85
+    : 0.55;
+  const continuationFit = preferenceSheet.continuation_needs.some((need) =>
+    clean(seed.return_reason + " " + seed.premise).includes(clean(need))
+  )
+    ? 0.85
+    : 0.55;
+  return uniqueness * 0.45 + relationFit * 0.25 + continuationFit * 0.3;
+};
+
+const weightedScore = (score: WorkflowTextJudgeScore, rubric: WorkflowUserRubric) =>
+  score.intent_fit * rubric.intent_fit_weights.intent_fit +
+  score.emotional_reward_fit * rubric.intent_fit_weights.emotional_reward_fit +
+  score.relationship_fit * rubric.intent_fit_weights.relationship_fit +
+  score.world_originality * rubric.intent_fit_weights.world_originality +
+  score.character_vividness * rubric.intent_fit_weights.character_vividness +
+  score.return_desire * rubric.intent_fit_weights.return_desire -
+  score.clone_penalty * rubric.intent_fit_weights.clone_penalty;
+
+const buildExpandedSeedVariant = (
+  seed: WorkflowConceptSeed,
+  variantIndex: number
+): WorkflowConceptSeed => ({
+  ...seed,
+  seed_id: `${seed.seed_id}_v${variantIndex}`,
+  title: `${seed.title}・変奏${variantIndex}`,
+  one_line_hook: `${seed.one_line_hook}（変奏${variantIndex}）`,
+  uniqueness_claims: dedupeStrings([...seed.uniqueness_claims, `variant-${variantIndex}の差分導線`]).slice(0, 6),
+});
+
+const dedupeConceptSeedsByFingerprint = async (seeds: WorkflowConceptSeed[]) => {
+  const fingerprintSeen = new Set<string>();
+  const deduped: WorkflowConceptSeed[] = [];
+  const removed: Array<{ seedId: string; reason: string }> = [];
+
+  for (const seed of seeds) {
+    const fingerprintKey = buildSeedFingerprintKey(seed);
+    if (fingerprintSeen.has(fingerprintKey)) {
+      removed.push({ seedId: seed.seed_id, reason: "fingerprint_exact_duplicate" });
+      continue;
+    }
+    let semanticallyDuplicate = false;
+    for (const kept of deduped) {
+      const judged = await judgeSeriesSeedSemanticSimilarity({
+        left: kept,
+        right: seed,
+      });
+      if (judged.similar && judged.confidence >= 0.72) {
+        semanticallyDuplicate = true;
+        removed.push({
+          seedId: seed.seed_id,
+          reason: `semantic_duplicate:${kept.seed_id}:${judged.confidence.toFixed(2)}`,
+        });
+        break;
+      }
+    }
+    if (semanticallyDuplicate) continue;
+    fingerprintSeen.add(fingerprintKey);
+    deduped.push(seed);
+  }
+
+  return {
+    deduped,
+    removed,
+  };
+};
+
+const runQualityWorkflowWithProgress = async (
+  rawInput: z.infer<typeof seriesGenerationRequestSchema>,
+  options: {
+    onProgress?: SeriesGenerationProgressReporter;
+  } = {}
+): Promise<z.infer<typeof seriesWorkflowOutputSchema>> => {
+  const onProgress = options.onProgress;
+
+  await emitSeriesGenerationProgress(onProgress, {
+    phase: "sanitize_series_request_start",
+    detail: "入力情報を正規化しています",
+  });
+  const parsedIdentityPack = rawInput.existing_identity_pack
+    ? seriesIdentityPackSchema.safeParse(rawInput.existing_identity_pack)
+    : null;
+  const request: z.infer<typeof resolvedSeriesRequestSchema> = {
+    desired_episode_count: rawInput.desired_episode_count ?? 8,
+    prompt: clean(rawInput.prompt),
+    language: clean(rawInput.language) || "ja",
+    generation_mode: rawInput.generation_mode === "proposal" ? "proposal" : "full",
+    creator_id: rawInput.creator_id,
+    existing_identity_pack: parsedIdentityPack?.success ? parsedIdentityPack.data : undefined,
+    identity_retcon: Boolean(rawInput.identity_retcon),
+    interview: {
+      genre_world: clean(rawInput.interview.genre_world),
+      desired_emotion: clean(rawInput.interview.desired_emotion),
+      companion_preference: clean(rawInput.interview.companion_preference),
+      continuation_trigger: clean(rawInput.interview.continuation_trigger),
+      avoidance_preferences: clean(rawInput.interview.avoidance_preferences),
+      additional_notes: clean(rawInput.interview.additional_notes),
+      visual_style_preset: clean(rawInput.interview.visual_style_preset),
+      visual_style_notes: clean(rawInput.interview.visual_style_notes),
+      main_objective: clean(rawInput.interview.main_objective),
+      protagonist_position: clean(rawInput.interview.protagonist_position),
+      partner_description: clean(rawInput.interview.partner_description),
+    },
+  };
+  await emitSeriesGenerationProgress(onProgress, {
+    phase: "sanitize_series_request_done",
+    detail: "入力情報の正規化が完了しました",
+  });
+
+  await emitSeriesGenerationProgress(onProgress, {
+    phase: "build_series_intent_bundle_start",
+    detail: "ユーザー意図を構造化しています",
+  });
+  const intentBundle = await generateSeriesPreferenceBundle({
+    interview: request.interview,
+    prompt: request.prompt,
+    desired_episode_count: request.desired_episode_count,
+    language: request.language,
+  });
+  await emitSeriesGenerationProgress(onProgress, {
+    phase: "build_series_intent_bundle_done",
+    detail: "意図解釈（preference / anti brief / rubric）が完了しました",
+  });
+
+  await emitSeriesGenerationProgress(onProgress, {
+    phase: "generate_series_concept_seeds_start",
+    detail: "シリーズ候補seedを多角的に生成しています",
+  });
+  const conceptSeeds = await generateSeriesConceptSeeds({
+    prompt: request.prompt,
+    desired_episode_count: request.desired_episode_count,
+    preference_sheet: intentBundle.preference_sheet,
+    anti_brief: intentBundle.anti_brief,
+    user_rubric: intentBundle.user_rubric,
+    desired_seed_count: QUALITY_SEED_TARGET,
+    language: request.language,
+  });
+  await emitSeriesGenerationProgress(onProgress, {
+    phase: "generate_series_concept_seeds_done",
+    detail: `seed生成が完了しました（${conceptSeeds.length}案）`,
+  });
+
+  await emitSeriesGenerationProgress(onProgress, {
+    phase: "dedupe_series_concept_seeds_start",
+    detail: "seedの意味重複を除去しています",
+  });
+  const dedupeResult = await dedupeConceptSeedsByFingerprint(conceptSeeds);
+  let dedupedSeeds = dedupeResult.deduped.slice();
+  let variantIndex = 1;
+  while (dedupedSeeds.length < QUALITY_EXPAND_TARGET) {
+    const source = conceptSeeds[dedupedSeeds.length % conceptSeeds.length];
+    if (!source) break;
+    dedupedSeeds.push(buildExpandedSeedVariant(source, variantIndex));
+    variantIndex += 1;
+  }
+  await emitSeriesGenerationProgress(onProgress, {
+    phase: "dedupe_series_concept_seeds_done",
+    detail: `重複排除後 ${dedupedSeeds.length}案（除外 ${dedupeResult.removed.length}案）`,
+  });
+
+  const expansionSeeds = dedupedSeeds
+    .slice()
+    .sort(
+      (a, b) =>
+        evaluateSeedNovelty(b, intentBundle.preference_sheet) -
+        evaluateSeedNovelty(a, intentBundle.preference_sheet)
+    )
+    .slice(0, QUALITY_EXPAND_TARGET);
+
+  await emitSeriesGenerationProgress(onProgress, {
+    phase: "expand_series_candidates_start",
+    detail: `上位${expansionSeeds.length}案を詳細化しています`,
+  });
+
+  const expandedCandidates: QualityCandidateMaterial[] = [];
+  for (let index = 0; index < expansionSeeds.length; index += 1) {
+    const seed = expansionSeeds[index];
+    await emitSeriesGenerationProgress(onProgress, {
+      phase: "generate_series_concept_start",
+      detail: `候補${index + 1}/${expansionSeeds.length} コンセプト詳細化`,
+    });
+    const concept = await buildDetailedConceptFromSeed({
+      seed,
+      request,
+      preferenceSheet: intentBundle.preference_sheet,
+      antiBrief: intentBundle.anti_brief,
+    });
+    await emitSeriesGenerationProgress(onProgress, {
+      phase: "generate_series_concept_done",
+      detail: `${concept.title} の詳細化が完了`,
+    });
+
+    const targetCount = Math.max(3, Math.min(5, Math.ceil(request.desired_episode_count / 2)));
+    const styleGuide = buildSeriesVisualStyleGuide({
+      seriesTitle: concept.title,
+      genre: concept.genre,
+      tone: concept.tone,
+      setting: concept.world.setting,
+      recurringMotifs: concept.world.recurring_motifs,
+      stylePreset: request.interview.visual_style_preset,
+      styleDirection: request.interview.visual_style_notes,
+    });
+
+    await emitSeriesGenerationProgress(onProgress, {
+      phase: "generate_series_characters_start",
+      detail: `${concept.title} の固定キャラクターを設計しています`,
+    });
+    const richCharacterResult = await generateSeriesRichCharacters({
+      title: concept.title,
+      genre: concept.genre,
+      tone: concept.tone,
+      premise: concept.premise,
+      season_goal: concept.season_goal,
+      protagonist_position: "シリーズ内で独立して行動する主人公（ユーザー本人ではない）",
+      partner_description:
+        clean(request.interview.companion_preference) ||
+        clean(request.interview.partner_description) ||
+        "信頼できる相棒",
+      style_guide: styleGuide,
+      target_count: targetCount,
+      concept_seed: seed,
+      preference_sheet: intentBundle.preference_sheet,
+    });
+    await emitSeriesGenerationProgress(onProgress, {
+      phase: "generate_series_characters_done",
+      detail: `${concept.title} のキャラクター詳細化が完了（${richCharacterResult.characters.length}人）`,
+    });
+
+    await emitSeriesGenerationProgress(onProgress, {
+      phase: "build_series_identity_pack_start",
+      detail: `${concept.title} のidentity packを固定しています`,
+    });
+    const identity = buildSeriesIdentityPack({
+      characters: richCharacterResult.characters,
+      styleGuide: clean(request.existing_identity_pack?.style_bible) || styleGuide,
+      existingIdentityPack: request.existing_identity_pack,
+      identityRetcon: request.identity_retcon,
+    });
+    await emitSeriesGenerationProgress(onProgress, {
+      phase: "build_series_identity_pack_done",
+      detail: `identity pack固定完了（key=${identity.identityPack.key_person_character_ids.join(",")})`,
+    });
+
+    await emitSeriesGenerationProgress(onProgress, {
+      phase: "generate_series_checkpoints_start",
+      detail: `${concept.title} のcheckpointを生成しています`,
+    });
+    const checkpointResult = await generateSeriesCheckpoints({
+      title: concept.title,
+      premise: concept.premise,
+      season_goal: concept.season_goal,
+      genre: concept.genre,
+      tone: concept.tone,
+      world: concept.world,
+      characters: identity.characters,
+      desired_episode_count: request.desired_episode_count,
+      preference_sheet: intentBundle.preference_sheet,
+      continuation_trigger: request.interview.continuation_trigger,
+    });
+    await emitSeriesGenerationProgress(onProgress, {
+      phase: "generate_series_checkpoints_done",
+      detail: `${concept.title} のcheckpoint生成完了（${checkpointResult.checkpoints.length}件）`,
+    });
+
+    await emitSeriesGenerationProgress(onProgress, {
+      phase: "generate_first_episode_seed_start",
+      detail: `${concept.title} の第1話seedを生成しています`,
+    });
+    const firstSeedResult = await generateFirstEpisodeSeed({
+      title: concept.title,
+      genre: concept.genre,
+      tone: concept.tone,
+      premise: concept.premise,
+      season_goal: concept.season_goal,
+      world: concept.world,
+      characters: identity.characters,
+      checkpoints: checkpointResult.checkpoints,
+      preference_sheet: intentBundle.preference_sheet,
+      continuation_trigger: request.interview.continuation_trigger,
+    });
+    await emitSeriesGenerationProgress(onProgress, {
+      phase: "generate_first_episode_seed_done",
+      detail: `${concept.title} の第1話seed生成完了`,
+    });
+
+    await emitSeriesGenerationProgress(onProgress, {
+      phase: "evaluate_first_episode_seed_start",
+      detail: `${concept.title} の第1話seedを評価しています`,
+    });
+    const firstSeedEvalResult = await evaluateFirstEpisodeSeed({
+      first_episode_seed: firstSeedResult.first_episode_seed,
+      preference_sheet: intentBundle.preference_sheet,
+      user_rubric: intentBundle.user_rubric,
+      continuation_trigger: request.interview.continuation_trigger,
+    });
+    await emitSeriesGenerationProgress(onProgress, {
+      phase: "evaluate_first_episode_seed_done",
+      detail: `${concept.title} の第1話seed評価完了(pass=${firstSeedEvalResult.evaluation.pass})`,
+    });
+
+    await emitSeriesGenerationProgress(onProgress, {
+      phase: "seed_route_dry_run_start",
+      detail: `${concept.title} のseed導線ドライランを実施しています`,
+    });
+    const seedDryRun = await runSeedRouteDryRunForSeed({
+      concept,
+      request,
+      firstEpisodeSeed: firstSeedResult.first_episode_seed,
+    });
+    await emitSeriesGenerationProgress(onProgress, {
+      phase: "seed_route_dry_run_done",
+      detail: seedDryRun.feasible
+        ? `${concept.title} seed導線成立`
+        : `${concept.title} seed導線は要改善`,
+    });
+
+    const candidateId = `candidate_${index + 1}_${seed.seed_id}`;
+    const textCandidate = seriesTextJudgeCandidateSchema.parse({
+      candidate_id: candidateId,
+      seed,
+      title: concept.title,
+      overview: concept.overview,
+      premise: concept.premise,
+      season_goal: concept.season_goal,
+      characters: identity.characters,
+      checkpoints: checkpointResult.checkpoints,
+      first_episode_seed: firstSeedResult.first_episode_seed,
+    });
+
+    const textJudgeResult = QUALITY_TEXT_JUDGE_ENABLED
+      ? await evaluateSeriesTextCandidate({
+        preference_sheet: intentBundle.preference_sheet,
+        anti_brief: intentBundle.anti_brief,
+        user_rubric: intentBundle.user_rubric,
+        candidate: textCandidate,
+      })
+      : {
+        candidate_id: candidateId,
+        score: {
+          intent_fit: 0.7,
+          emotional_reward_fit: 0.7,
+          relationship_fit: 0.7,
+          world_originality: 0.7,
+          character_vividness: 0.7,
+          return_desire: 0.7,
+          clone_penalty: 0.3,
+          rationale: "text judge disabled",
+        } satisfies WorkflowTextJudgeScore,
+        reject: false,
+        reject_reasons: [],
+      };
+
+    expandedCandidates.push({
+      candidateId,
+      seed,
+      concept,
+      richCharacters: richCharacterResult.rich_characters,
+      characters: identity.characters,
+      identityPack: identity.identityPack,
+      checkpoints: checkpointResult.checkpoints,
+      firstEpisodeSeed: firstSeedResult.first_episode_seed,
+      firstEpisodeSeedEval: firstSeedEvalResult.evaluation,
+      seedRouteDryRun: seedDryRun,
+      textJudge: {
+        score: textJudgeResult.score,
+        reject: textJudgeResult.reject,
+        rejectReasons: textJudgeResult.reject_reasons,
+      },
+    });
+  }
+
+  await emitSeriesGenerationProgress(onProgress, {
+    phase: "expand_series_candidates_done",
+    detail: `候補詳細化が完了（${expandedCandidates.length}案）`,
+  });
+
+  await emitSeriesGenerationProgress(onProgress, {
+    phase: "judge_series_candidates_start",
+    detail: "候補の本文評価とrerankを実行しています",
+  });
+
+  const pairwiseWins = new Map<string, number>();
+  for (const candidate of expandedCandidates) {
+    pairwiseWins.set(candidate.candidateId, 0);
+  }
+  if (QUALITY_TEXT_JUDGE_ENABLED && expandedCandidates.length >= 2) {
+    for (let i = 0; i < expandedCandidates.length; i += 1) {
+      for (let j = i + 1; j < expandedCandidates.length; j += 1) {
+        const left = expandedCandidates[i];
+        const right = expandedCandidates[j];
+        const outcome = await compareSeriesTextCandidatesPairwise(
+          {
+            preference_sheet: intentBundle.preference_sheet,
+            anti_brief: intentBundle.anti_brief,
+            user_rubric: intentBundle.user_rubric,
+            left: seriesTextJudgeCandidateSchema.parse({
+              candidate_id: left.candidateId,
+              seed: left.seed,
+              title: left.concept.title,
+              overview: left.concept.overview,
+              premise: left.concept.premise,
+              season_goal: left.concept.season_goal,
+              characters: left.characters,
+              checkpoints: left.checkpoints,
+              first_episode_seed: left.firstEpisodeSeed,
+            }),
+            right: seriesTextJudgeCandidateSchema.parse({
+              candidate_id: right.candidateId,
+              seed: right.seed,
+              title: right.concept.title,
+              overview: right.concept.overview,
+              premise: right.concept.premise,
+              season_goal: right.concept.season_goal,
+              characters: right.characters,
+              checkpoints: right.checkpoints,
+              first_episode_seed: right.firstEpisodeSeed,
+            }),
+          },
+          left.textJudge.score,
+          right.textJudge.score
+        );
+        pairwiseWins.set(
+          outcome.winner_candidate_id,
+          (pairwiseWins.get(outcome.winner_candidate_id) || 0) + 1
+        );
+      }
+    }
+  }
+
+  const ranked = expandedCandidates
+    .map((candidate) => {
+      const base = weightedScore(candidate.textJudge.score, intentBundle.user_rubric);
+      const pairwiseBonus =
+        expandedCandidates.length > 1
+          ? (pairwiseWins.get(candidate.candidateId) || 0) /
+          Math.max(1, expandedCandidates.length - 1) *
+          0.12
+          : 0;
+      const seedEvalBonus =
+        candidate.firstEpisodeSeedEval.pass
+          ? 0.08
+          : -0.08 + (candidate.firstEpisodeSeedEval.walkability_fit - 0.5) * 0.04;
+      const rejectPenalty = candidate.textJudge.reject ? 0.22 : 0;
+      const finalScore = base + pairwiseBonus + seedEvalBonus - rejectPenalty;
+      const reject =
+        candidate.textJudge.reject ||
+        !candidate.firstEpisodeSeedEval.pass ||
+        candidate.textJudge.score.clone_penalty >= 0.82;
+      const rejectReasons = dedupeStrings([
+        ...candidate.textJudge.rejectReasons,
+        !candidate.firstEpisodeSeedEval.pass ? "first_episode_seed_eval_failed" : "",
+        candidate.textJudge.score.clone_penalty >= 0.82 ? "clone_penalty_high" : "",
+      ]);
+      return {
+        candidate,
+        finalScore,
+        reject,
+        rejectReasons,
+      };
+    })
+    .sort((a, b) => b.finalScore - a.finalScore);
+
+  const selectedRanked = ranked.find((row) => !row.reject) || ranked[0];
+  if (!selectedRanked) {
+    throw new Error("quality_pipeline_no_candidate");
+  }
+
+  await emitSeriesGenerationProgress(onProgress, {
+    phase: "judge_series_candidates_done",
+    detail: `候補評価完了。採用候補=${selectedRanked.candidate.concept.title}`,
+  });
+
+  const additionalWarnings = dedupeStrings([
+    "quality_pipeline_enabled",
+    `quality_seed_generated:${conceptSeeds.length}`,
+    `quality_seed_after_dedupe:${dedupedSeeds.length}`,
+    `quality_candidate_expanded:${expandedCandidates.length}`,
+    `quality_candidate_selected:${selectedRanked.candidate.candidateId}`,
+    ...ranked
+      .filter((row) => row.reject)
+      .map((row) => `quality_candidate_rejected:${row.candidate.candidateId}:${row.rejectReasons.join("|")}`),
+  ]);
+
+  if (QUALITY_DEBUG_TRACE) {
+    console.log(
+      `${LOG_PREFIX} quality_trace ${JSON.stringify({
+        preference_sheet: intentBundle.preference_sheet,
+        anti_brief: intentBundle.anti_brief,
+        user_rubric: intentBundle.user_rubric,
+        generated_seed_ids: conceptSeeds.map((row) => row.seed_id),
+        deduped_seed_ids: dedupedSeeds.map((row) => row.seed_id),
+        removed_seed_entries: dedupeResult.removed,
+        ranked_candidates: ranked.map((row) => ({
+          candidate_id: row.candidate.candidateId,
+          title: row.candidate.concept.title,
+          final_score: Number(row.finalScore.toFixed(4)),
+          reject: row.reject,
+          reject_reasons: row.rejectReasons,
+        })),
+        selected_candidate: {
+          candidate_id: selectedRanked.candidate.candidateId,
+          title: selectedRanked.candidate.concept.title,
+          final_score: Number(selectedRanked.finalScore.toFixed(4)),
+        },
+      })}`
+    );
+  }
+
+  await emitSeriesGenerationProgress(onProgress, {
+    phase: "finalize_series_blueprint_start",
+    detail: "採用候補を最終統合しています",
+  });
+
+  const result = await assembleSeriesBlueprint({
+    request,
+    concept: selectedRanked.candidate.concept,
+    characters: selectedRanked.candidate.characters,
+    identityPack: selectedRanked.candidate.identityPack,
+    checkpoints: selectedRanked.candidate.checkpoints,
+    firstEpisodeSeed: selectedRanked.candidate.firstEpisodeSeed,
+    seedRouteDryRun: selectedRanked.candidate.seedRouteDryRun,
+    additionalWarnings,
+    onProgress,
+  });
+
+  await emitSeriesGenerationProgress(onProgress, {
+    phase: "finalize_series_blueprint_done",
+    detail: "シリーズ設計の最終統合が完了しました",
+  });
+
+  return result.output;
+};
+
 export const generateSeriesWorkflowWithProgress = async (
   rawInput: z.infer<typeof seriesGenerationRequestSchema>,
   options: {
@@ -2235,6 +3050,19 @@ export const generateSeriesWorkflowWithProgress = async (
   } = {}
 ): Promise<z.infer<typeof seriesWorkflowOutputSchema>> => {
   const onProgress = options.onProgress;
+
+  if (isQualityWorkflowEnabled()) {
+    try {
+      return await runQualityWorkflowWithProgress(rawInput, options);
+    } catch (error: any) {
+      const message = clean(error?.message || String(error || "quality_pipeline_failed"));
+      console.error(`${LOG_PREFIX} quality pipeline失敗:`, message);
+      if (QUALITY_STRICT_MODE) {
+        throw error;
+      }
+      console.warn(`${LOG_PREFIX} quality pipelineからlegacy pipelineへ段階フォールバック`);
+    }
+  }
 
   await emitSeriesGenerationProgress(onProgress, {
     phase: "sanitize_series_request_start",

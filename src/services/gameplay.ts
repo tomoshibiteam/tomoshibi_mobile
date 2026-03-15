@@ -1,5 +1,7 @@
 import { getSupabaseOrThrow } from "@/lib/supabase";
 import { fetchSeriesDetail, fetchSeriesEpisodes } from "@/services/quests";
+import Constants from "expo-constants";
+import { NativeModules, Platform } from "react-native";
 
 export type GameplayMessage = {
   id: string;
@@ -109,6 +111,129 @@ const BACKGROUND_IMAGES = [
 
 const normalizeText = (value?: string | null) =>
   (value || "").replace(/\s+/g, " ").trim();
+const normalizeSpeakerKey = (value?: string | null) =>
+  normalizeText(value).toLowerCase();
+const LOCALHOST_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
+const extractHostFromEndpoint = (value?: string | null) => {
+  const normalized = normalizeText(value);
+  if (!normalized) return "";
+  const withoutScheme = normalized.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+  const hostPort = withoutScheme.split("/")[0] || "";
+  const hostOnly = hostPort.split(":")[0] || "";
+  return normalizeText(hostOnly);
+};
+const resolveScriptHostFromNative = () => {
+  const nativeModules = (NativeModules as unknown as Record<string, unknown>) || {};
+  const sourceCode = (nativeModules.SourceCode as Record<string, unknown> | undefined) || undefined;
+  const scriptUrl = normalizeText(typeof sourceCode?.scriptURL === "string" ? sourceCode.scriptURL : "");
+  if (!scriptUrl) return "";
+  return extractHostFromEndpoint(scriptUrl);
+};
+const resolveExpoDevHost = () => {
+  const c = Constants as unknown as Record<string, unknown>;
+  const expoConfig = (c.expoConfig as Record<string, unknown> | undefined) || undefined;
+  const manifest = (c.manifest as Record<string, unknown> | undefined) || undefined;
+  const manifest2 = (c.manifest2 as Record<string, unknown> | undefined) || undefined;
+  const expoGoConfig = (c.expoGoConfig as Record<string, unknown> | undefined) || undefined;
+  const expoClient =
+    ((manifest2?.extra as Record<string, unknown> | undefined)?.expoClient as
+      | Record<string, unknown>
+      | undefined) || undefined;
+
+  const candidates = [
+    normalizeText(typeof expoConfig?.hostUri === "string" ? expoConfig.hostUri : ""),
+    normalizeText(typeof manifest?.debuggerHost === "string" ? manifest.debuggerHost : ""),
+    normalizeText(typeof expoGoConfig?.debuggerHost === "string" ? expoGoConfig.debuggerHost : ""),
+    normalizeText(typeof c.linkingUri === "string" ? c.linkingUri : ""),
+    normalizeText(typeof c.experienceUrl === "string" ? c.experienceUrl : ""),
+    normalizeText(typeof expoClient?.hostUri === "string" ? expoClient.hostUri : ""),
+    normalizeText(resolveScriptHostFromNative()),
+    normalizeText(
+      typeof ((manifest2?.extra as Record<string, unknown> | undefined)?.expoGo as
+        | Record<string, unknown>
+        | undefined)?.debuggerHost === "string"
+        ? (((manifest2?.extra as Record<string, unknown> | undefined)?.expoGo as Record<
+            string,
+            unknown
+          >).debuggerHost as string)
+        : ""
+    ),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const host = extractHostFromEndpoint(candidate);
+    if (host && !LOCALHOST_HOSTS.has(host.toLowerCase())) {
+      return host;
+    }
+  }
+  return "";
+};
+const resolveGameplayMediaBaseUrl = () =>
+  normalizeText(
+    process.env.EXPO_PUBLIC_MASTRA_BASE_URL || process.env.EXPO_PUBLIC_API_BASE_URL || ""
+  ).replace(/\/+$/, "");
+const tuneGameplayAvatarUrl = (url: URL) => {
+  const pathname = normalizeText(url.pathname);
+  if (!pathname.endsWith("/api/series/image")) return;
+  const purpose = normalizeText(url.searchParams.get("purpose")).toLowerCase();
+  if (purpose !== "character_portrait") return;
+  // Gameplay側はカード表示に寄せたので、重いcutout処理は無効化して表示を優先する。
+  url.searchParams.set("cutout", "0");
+};
+const toGameplayAvatarUrl = (value?: string | null) => {
+  const normalized = normalizeText(value);
+  if (!normalized) return null;
+  if (/^https?:\/\//i.test(normalized)) {
+    try {
+      const parsed = new URL(normalized);
+      tuneGameplayAvatarUrl(parsed);
+      const host = normalizeText(parsed.hostname).toLowerCase();
+      if (LOCALHOST_HOSTS.has(host)) {
+        const base = resolveGameplayMediaBaseUrl();
+        if (base) {
+          try {
+            const baseParsed = new URL(base);
+            const baseHost = normalizeText(baseParsed.hostname).toLowerCase();
+            if (!LOCALHOST_HOSTS.has(baseHost)) {
+              parsed.protocol = baseParsed.protocol;
+              parsed.hostname = baseParsed.hostname;
+              parsed.port = baseParsed.port;
+              return parsed.toString();
+            }
+          } catch {
+            // Ignore and try Expo host fallback.
+          }
+        }
+
+        const expoHost = resolveExpoDevHost();
+        if (expoHost) {
+          parsed.hostname = expoHost;
+          return parsed.toString();
+        }
+
+        if (Platform.OS === "android") {
+          parsed.hostname = "10.0.2.2";
+          return parsed.toString();
+        }
+      }
+      return parsed.toString();
+    } catch {
+      return normalized;
+    }
+  }
+  if (normalized.startsWith("/")) {
+    const base = resolveGameplayMediaBaseUrl();
+    if (!base) return normalized;
+    try {
+      const parsed = new URL(`${base}${normalized}`);
+      tuneGameplayAvatarUrl(parsed);
+      return parsed.toString();
+    } catch {
+      return `${base}${normalized}`;
+    }
+  }
+  return normalized;
+};
 
 const parseHints = (hintText?: string | null) =>
   (hintText || "")
@@ -143,6 +268,18 @@ const makeNarration = (id: string, text: string): GameplayMessage => ({
   text,
 });
 
+const makeCharacterMessage = (
+  id: string,
+  text: string,
+  character: GameplayCharacter
+): GameplayMessage => ({
+  id,
+  speakerType: "character",
+  name: character.name,
+  avatarUrl: character.avatarUrl,
+  text,
+});
+
 const isMissingRelationError = (error: unknown) => {
   if (!error || typeof error !== "object") return false;
   const maybe = error as { code?: string; message?: string; details?: string };
@@ -172,20 +309,33 @@ const toMessage = (row: {
   speaker_name: string | null;
   avatar_url: string | null;
   text: string | null;
+}, options?: {
+  avatarBySpeakerName?: Map<string, string>;
+  knownCharacterNames?: Set<string>;
 }): GameplayMessage | null => {
   const text = normalizeText(row.text);
   if (!text) return null;
+
+  const speakerName = normalizeText(row.speaker_name) || null;
+  const speakerKey = normalizeSpeakerKey(speakerName);
+  const avatarFromName = speakerKey
+    ? options?.avatarBySpeakerName?.get(speakerKey) || null
+    : null;
   const type = (row.speaker_type || "").toLowerCase();
+  const isCharacterSpeaker =
+    type === "character" ||
+    (speakerKey ? options?.knownCharacterNames?.has(speakerKey) : false);
+
   return {
     id: row.id,
     speakerType:
-      type === "character"
+      isCharacterSpeaker
         ? "character"
         : type === "system"
           ? "system"
           : "narrator",
-    name: normalizeText(row.speaker_name) || null,
-    avatarUrl: row.avatar_url || null,
+    name: speakerName,
+    avatarUrl: toGameplayAvatarUrl(normalizeText(row.avatar_url) || avatarFromName || null),
     text,
   };
 };
@@ -228,6 +378,17 @@ const buildFallbackQuestFromEpisodes = async (
 
   if (!series) return null;
 
+  const characters: GameplayCharacter[] = (series.characters || []).map(
+    (character, index) => ({
+      id: character.id || `series-char-${index + 1}`,
+      name: normalizeText(character.name) || `キャラクター${index + 1}`,
+      role: normalizeText(character.role) || "旅の同行者",
+      avatarUrl: toGameplayAvatarUrl(character.avatarImageUrl),
+    })
+  );
+  const leadCharacter = characters[0] || null;
+  const supportCharacter = characters[1] || leadCharacter;
+
   const spots: GameplaySpot[] = episodes.map((episode, index) => {
     const body = normalizeText(episode.body);
     const parsedCoords = parseBodyCoords(episode.body);
@@ -245,24 +406,41 @@ const buildFallbackQuestFromEpisodes = async (
       lat: parsedCoords?.lat ?? null,
       lng: parsedCoords?.lng ?? null,
       backgroundImage:
+        normalizeText(episode.coverImageUrl) ||
         normalizeText(series.coverImageUrl) ||
         BACKGROUND_IMAGES[index % BACKGROUND_IMAGES.length],
       puzzleQuestion: null,
       puzzleAnswer: null,
       puzzleHints: [],
       puzzleSuccessMessage: null,
-      preMessages: [
-        makeNarration(
-          `ep-pre-${episode.id}`,
-          lineChunks[0] || `${normalizeText(episode.title) || "エピソード"}を開始します。`
-        ),
-      ],
-      postMessages: [
-        makeNarration(
-          `ep-post-${episode.id}`,
-          lineChunks[1] || "このエピソードは完了です。次の目的地へ進みましょう。"
-        ),
-      ],
+      preMessages: leadCharacter
+        ? [
+            makeCharacterMessage(
+              `ep-pre-${episode.id}`,
+              lineChunks[0] || `${normalizeText(episode.title) || "エピソード"}を開始します。`,
+              leadCharacter
+            ),
+          ]
+        : [
+            makeNarration(
+              `ep-pre-${episode.id}`,
+              lineChunks[0] || `${normalizeText(episode.title) || "エピソード"}を開始します。`
+            ),
+          ],
+      postMessages: supportCharacter
+        ? [
+            makeCharacterMessage(
+              `ep-post-${episode.id}`,
+              lineChunks[1] || "このエピソードは完了です。次の目的地へ進みましょう。",
+              supportCharacter
+            ),
+          ]
+        : [
+            makeNarration(
+              `ep-post-${episode.id}`,
+              lineChunks[1] || "このエピソードは完了です。次の目的地へ進みましょう。"
+            ),
+          ],
     } satisfies GameplaySpot;
   });
 
@@ -273,7 +451,7 @@ const buildFallbackQuestFromEpisodes = async (
     coverImageUrl: series.coverImageUrl,
     prologue: timeline.prologue,
     epilogue: timeline.epilogue,
-    characters: [],
+    characters,
     spots,
   } satisfies GameplayQuest;
 };
@@ -334,6 +512,17 @@ export const fetchGameplayQuest = async (
       return buildFallbackQuestFromEpisodes(questId, timeline);
     }
 
+    const [seriesDetail, episodes] = await Promise.all([
+      fetchSeriesDetail(questId).catch((error) => {
+        console.warn("fetchGameplayQuest: series detail read warning", error);
+        return null;
+      }),
+      fetchSeriesEpisodes(questId).catch((error) => {
+        console.warn("fetchGameplayQuest: episode covers read warning", error);
+        return [];
+      }),
+    ]);
+
     const spotIds = rawSpots.map((spot) => spot.id);
 
     const [
@@ -374,16 +563,74 @@ export const fetchGameplayQuest = async (
     }
 
     const rawCharacters = (charactersData || []) as QuestCharacterRow[];
-    const characters: GameplayCharacter[] = rawCharacters.map((row, index) => ({
+    const normalizedCharacters: GameplayCharacter[] = rawCharacters.map((row, index) => ({
       id: String(row.id || `quest-char-${index + 1}`),
       name: normalizeText(row.name) || `キャラクター${index + 1}`,
       role: normalizeText(row.role) || "旅の同行者",
-      avatarUrl: normalizeText(row.image_url) || null,
+      avatarUrl: toGameplayAvatarUrl(row.image_url),
     }));
+    const seriesCharacters: GameplayCharacter[] = (seriesDetail?.characters || []).map(
+      (row, index) => ({
+        id: row.id || `series-char-${index + 1}`,
+        name: normalizeText(row.name) || `キャラクター${index + 1}`,
+        role: normalizeText(row.role) || "旅の同行者",
+        avatarUrl: toGameplayAvatarUrl(row.avatarImageUrl),
+      })
+    );
+
+    const mergedCharactersByKey = new Map<string, GameplayCharacter>();
+    [...seriesCharacters, ...normalizedCharacters].forEach((character) => {
+      const key = normalizeSpeakerKey(character.name) || character.id;
+      if (!key) return;
+
+      const existing = mergedCharactersByKey.get(key);
+      if (!existing) {
+        mergedCharactersByKey.set(key, character);
+        return;
+      }
+
+      const existingRole = normalizeText(existing.role);
+      const incomingRole = normalizeText(character.role);
+      const shouldPromoteRole = !existingRole || existingRole === "旅の同行者";
+
+      mergedCharactersByKey.set(key, {
+        ...existing,
+        id: existing.id || character.id,
+        name: existing.name || character.name,
+        role:
+          shouldPromoteRole && incomingRole
+            ? incomingRole
+            : existing.role || incomingRole || "旅の同行者",
+        avatarUrl: existing.avatarUrl || character.avatarUrl || null,
+      });
+    });
+    const characters = Array.from(mergedCharactersByKey.values());
 
     const characterById = new Map<string, GameplayCharacter>();
     characters.forEach((character) => {
       characterById.set(character.id, character);
+    });
+    const avatarBySpeakerName = new Map<string, string>();
+    const knownCharacterNames = new Set<string>();
+    characters.forEach((character) => {
+      const nameKey = normalizeSpeakerKey(character.name);
+      const idKey = normalizeSpeakerKey(character.id);
+
+      if (nameKey) {
+        knownCharacterNames.add(nameKey);
+      }
+      if (idKey) {
+        knownCharacterNames.add(idKey);
+      }
+
+      if (character.avatarUrl) {
+        if (nameKey) {
+          avatarBySpeakerName.set(nameKey, character.avatarUrl);
+        }
+        if (idKey) {
+          avatarBySpeakerName.set(idKey, character.avatarUrl);
+        }
+      }
     });
 
     const detailsBySpotId = new Map<string, SpotDetailRow>();
@@ -405,6 +652,9 @@ export const fetchGameplayQuest = async (
         speaker_name: row.speaker_name,
         avatar_url: row.avatar_url,
         text: row.text,
+      }, {
+        avatarBySpeakerName,
+        knownCharacterNames,
       });
       if (!mapped) return;
 
@@ -447,10 +697,22 @@ export const fetchGameplayQuest = async (
       questDialoguesBySpot.set(row.spot_id, existing);
     });
 
+    const episodeCoverByOrder = new Map<number, string>();
+    episodes.forEach((episode, index) => {
+      const cover = normalizeText(episode.coverImageUrl);
+      if (!cover) return;
+      if (Number.isFinite(episode.episodeNo)) {
+        episodeCoverByOrder.set(episode.episodeNo, cover);
+      }
+      episodeCoverByOrder.set(index + 1, cover);
+    });
+
     const spots: GameplaySpot[] = rawSpots.map((spot, index) => {
       const detail = detailsBySpotId.get(spot.id);
       const storyBundle = storyMessagesBySpot.get(spot.id) || { pre: [], post: [] };
       const questBundle = questDialoguesBySpot.get(spot.id) || { pre: [], post: [] };
+      const spotOrder = spot.order_index ?? index + 1;
+      const episodeCover = episodeCoverByOrder.get(spotOrder) || null;
 
       const mergedPre =
         storyBundle.pre.length > 0
@@ -488,6 +750,7 @@ export const fetchGameplayQuest = async (
         lng: typeof spot.lng === "number" ? spot.lng : null,
         backgroundImage:
           normalizeText(spot.image_url) ||
+          episodeCover ||
           normalizeText(questRow.cover_image_url) ||
           BACKGROUND_IMAGES[index % BACKGROUND_IMAGES.length],
         puzzleQuestion: normalizeText(detail?.question_text) || null,

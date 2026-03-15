@@ -3,6 +3,12 @@ import type { SeriesRuntimeEpisodeProgressEvent } from "../agents/seriesRuntimeE
 import { generateSeriesRuntimeEpisode } from "../agents/seriesRuntimeEpisodeAgent";
 import { generateSeriesWorkflowWithProgress, type SeriesGenerationProgressEvent } from "../../workflows/series-workflow";
 import {
+  buildCharacterPortraitPrompt,
+  buildCoverImagePrompt,
+  buildSeriesImageUrl,
+  buildSeriesVisualStyleGuide,
+} from "../seriesVisuals";
+import {
   episodeContinuityContextSchema,
   generateEpisodeRuntimeInputSchema,
   generateEpisodeRuntimeResultSchema,
@@ -265,7 +271,7 @@ const buildSeriesBlueprint = (params: {
       generatedAt,
       modelInfo: {
         provider: "mastra",
-        model: "series-workflow-v7-role-planner",
+        model: clean(meta?.workflow_version) || "series-workflow-v8-quality-pipeline",
         promptVersion: "vnext-adapter-1",
       },
     },
@@ -819,6 +825,207 @@ const sceneRoleMap = (legacyRole: string, index: number, total: number) => {
   return index === 0 ? ("opening" as const) : index === total - 1 ? ("ending" as const) : ("reveal" as const);
 };
 
+const resolveEpisodeVisualGenre = (blueprint: SeriesBlueprint) =>
+  clean(blueprint.concept.genreAxes[0]) || clean(blueprint.concept.oneLineHook) || "serial travel mystery";
+
+const resolveEpisodeVisualTone = (blueprint: SeriesBlueprint) =>
+  clean(blueprint.concept.toneKeywords[0]) || clean(blueprint.concept.emotionalPromise[0]) || "cinematic emotional";
+
+const buildEpisodeVisualStyleGuide = (params: {
+  input: GenerateEpisodeRuntimeInput;
+  legacyEpisode: any;
+}) => {
+  const { input, legacyEpisode } = params;
+  return buildSeriesVisualStyleGuide({
+    seriesTitle: `${input.seriesBlueprint.concept.title} ${clean(legacyEpisode?.title)}`.trim(),
+    genre: resolveEpisodeVisualGenre(input.seriesBlueprint),
+    tone: resolveEpisodeVisualTone(input.seriesBlueprint),
+    setting:
+      clean(input.request.episodeRequest.locationContext.cityOrArea) ||
+      clean(input.seriesBlueprint.concept.worldviewCore) ||
+      "city district",
+    dominantColors: input.seriesBlueprint.concept.aestheticKeywords.slice(0, 3),
+    recurringMotifs: input.seriesBlueprint.identityPack.continuityAnchors.callbackPatterns.slice(0, 2),
+  });
+};
+
+const ensureEpisodeLocalCharacterPortraits = (params: {
+  input: GenerateEpisodeRuntimeInput;
+  legacyEpisode: any;
+  localCharacters: EpisodeOutput["localCharactersIntroduced"];
+  styleGuide: string;
+}): EpisodeOutput["localCharactersIntroduced"] => {
+  const { input, legacyEpisode, localCharacters, styleGuide } = params;
+  const genre = resolveEpisodeVisualGenre(input.seriesBlueprint);
+  const tone = resolveEpisodeVisualTone(input.seriesBlueprint);
+  const setting =
+    clean(input.request.episodeRequest.locationContext.cityOrArea) ||
+    clean(input.seriesBlueprint.concept.worldviewCore) ||
+    "city district";
+  const episodeIndex = input.userSeriesState.currentProgress.episodeCountCompleted + 1;
+
+  return localCharacters.map((character, index) => {
+    const seedKeyBase = [
+      input.seriesBlueprint.id,
+      "episode",
+      episodeIndex,
+      clean(legacyEpisode?.title) || `episode_${episodeIndex}`,
+      "local",
+      character.localCharacterId || `char_${index + 1}`,
+    ]
+      .map((item) => clean(String(item)))
+      .filter(Boolean)
+      .join(":");
+
+    const portraitPrompt =
+      clean(character.portraitPrompt) ||
+      buildCharacterPortraitPrompt({
+        seriesTitle: input.seriesBlueprint.concept.title,
+        genre,
+        tone,
+        name: character.displayName,
+        role: character.roleInEpisode,
+        personality: character.personalityTraits.join(" / "),
+        appearance: dedupe([character.archetype, character.relationToSpot]).join(" / "),
+        setting,
+        distinguishingFeature: character.relationToSeriesTheme,
+        styleGuide,
+      });
+
+    const portraitImageUrl =
+      clean(character.portraitImageUrl) ||
+      buildSeriesImageUrl({
+        prompt: portraitPrompt,
+        seedKey: `${seedKeyBase}:portrait`,
+        width: 768,
+        height: 1024,
+        purpose: "character_portrait",
+        styleReference: styleGuide,
+      });
+
+    return {
+      ...character,
+      portraitPrompt: portraitPrompt || undefined,
+      portraitImageUrl: portraitImageUrl || undefined,
+    };
+  });
+};
+
+const buildEpisodeCoverVisual = (params: {
+  input: GenerateEpisodeRuntimeInput;
+  legacyEpisode: any;
+  localCharacters: EpisodeOutput["localCharactersIntroduced"];
+  fixedCharactersAppeared: string[];
+  selectedSpots: EpisodeOutput["selectedSpots"];
+  styleGuide: string;
+}) => {
+  const {
+    input,
+    legacyEpisode,
+    localCharacters,
+    fixedCharactersAppeared,
+    selectedSpots,
+    styleGuide,
+  } = params;
+  const episodeIndex = input.userSeriesState.currentProgress.episodeCountCompleted + 1;
+  const episodeTitle = clean(legacyEpisode?.title) || `第${episodeIndex}話`;
+  const stageLocation =
+    clean(input.request.episodeRequest.locationContext.cityOrArea) ||
+    clean(input.seriesBlueprint.concept.worldviewCore) ||
+    "city district";
+  const genre = resolveEpisodeVisualGenre(input.seriesBlueprint);
+  const tone = resolveEpisodeVisualTone(input.seriesBlueprint);
+
+  const seriesCharacterById = new Map(
+    input.seriesBlueprint.characters.map((character) => [character.id, character])
+  );
+
+  const focusFixed = fixedCharactersAppeared.slice(0, 2).map((characterId) => {
+    const character = seriesCharacterById.get(characterId);
+    return {
+      name: character?.displayName || characterId,
+      role: character?.coreFunctionInSeries || "series companion",
+      focusReason: "series continuity anchor",
+      visualAnchor: dedupe([
+        ...(character?.identity.immutableTraits || []),
+        ...(character?.recurringHooks.motifs || []),
+      ])
+        .slice(0, 2)
+        .join(" / "),
+    };
+  });
+
+  const focusLocal = localCharacters.slice(0, 2).map((character) => ({
+    name: character.displayName,
+    role: character.roleInEpisode,
+    focusReason: "episode-local freshness anchor",
+    visualAnchor: dedupe([character.archetype, ...character.personalityTraits]).slice(0, 2).join(" / "),
+  }));
+
+  const focusCharacters = dedupe([
+    ...focusFixed.map((row) => `${row.name}::${row.role}::${row.focusReason}::${row.visualAnchor}`),
+    ...focusLocal.map((row) => `${row.name}::${row.role}::${row.focusReason}::${row.visualAnchor}`),
+  ])
+    .slice(0, 3)
+    .map((packed) => {
+      const [name, role, focusReason, visualAnchor] = packed.split("::");
+      return {
+        name: clean(name),
+        role: clean(role),
+        focusReason: clean(focusReason),
+        visualAnchor: clean(visualAnchor),
+      };
+    });
+
+  const coverImagePrompt =
+    clean(legacyEpisode?.cover_image_prompt || legacyEpisode?.coverImagePrompt) ||
+    buildCoverImagePrompt({
+      title: `${input.seriesBlueprint.concept.title} ${episodeTitle}`,
+      genre,
+      tone,
+      premise:
+        clean(legacyEpisode?.one_liner) ||
+        clean(legacyEpisode?.summary) ||
+        clean(input.request.episodeRequest.tourismGoal) ||
+        "episode journey",
+      setting: stageLocation,
+      styleGuide,
+      dominantColors: input.seriesBlueprint.concept.aestheticKeywords.slice(0, 3),
+      recurringMotifs: input.seriesBlueprint.identityPack.continuityAnchors.callbackPatterns.slice(0, 2),
+      focusCharacters,
+      additionalDirection: dedupe([
+        clean(input.request.episodeRequest.tourismGoal),
+        ...selectedSpots.slice(0, 3).map((spot) => spot.spotName),
+        clean(legacyEpisode?.carry_over_hook),
+      ]).join(" / "),
+    });
+
+  const coverImageUrl =
+    clean(legacyEpisode?.cover_image_url || legacyEpisode?.coverImageUrl) ||
+    buildSeriesImageUrl({
+      prompt: coverImagePrompt,
+      seedKey: [
+        input.seriesBlueprint.id,
+        "episode",
+        episodeIndex,
+        episodeTitle,
+        stageLocation,
+      ]
+        .map((item) => clean(String(item)))
+        .filter(Boolean)
+        .join(":"),
+      width: 1280,
+      height: 720,
+      purpose: "cover",
+      styleReference: styleGuide,
+    });
+
+  return {
+    coverImagePrompt: coverImagePrompt || undefined,
+    coverImageUrl: coverImageUrl || undefined,
+  };
+};
+
 const computeCheckpointIndexAfterEpisode = (input: GenerateEpisodeRuntimeInput) => {
   const { userSeriesState, seriesBlueprint } = input;
   if (seriesBlueprint.checkpoints.length === 0) return 0;
@@ -1329,6 +1536,10 @@ const mapLegacyEpisodeToVNext = (params: {
     relationToSpot: clean(character?.introduction_scene) || "中盤スポットで登場",
     relationToSeriesTheme: clean(character?.relation_to_series) || "シリーズの継続要素へ接続",
     speechStyle: dedupe([clean(character?.personality)]),
+    portraitPrompt:
+      clean(character?.portrait_prompt || character?.portraitPrompt) || undefined,
+    portraitImageUrl:
+      clean(character?.portrait_image_url || character?.portraitImageUrl) || undefined,
     callbackEligible: true,
   }));
 
@@ -1344,6 +1555,25 @@ const mapLegacyEpisodeToVNext = (params: {
         return match?.id || "";
       })
   );
+
+  const styleGuide = buildEpisodeVisualStyleGuide({
+    input,
+    legacyEpisode,
+  });
+  const localCharactersWithPortraits = ensureEpisodeLocalCharacterPortraits({
+    input,
+    legacyEpisode,
+    localCharacters,
+    styleGuide,
+  });
+  const coverVisual = buildEpisodeCoverVisual({
+    input,
+    legacyEpisode,
+    localCharacters: localCharactersWithPortraits,
+    fixedCharactersAppeared,
+    selectedSpots,
+    styleGuide,
+  });
 
   const speakerNameById = new Map<string, string>();
   (Array.isArray(legacyEpisode?.characters) ? legacyEpisode.characters : []).forEach((character: any) => {
@@ -1407,7 +1637,10 @@ const mapLegacyEpisodeToVNext = (params: {
             linesStyleGuard: character?.identity.speechStyle || [],
           };
         }),
-      localCharacters: localCharacters.slice(index % Math.max(1, localCharacters.length), index % Math.max(1, localCharacters.length) + 1),
+      localCharacters: localCharactersWithPortraits.slice(
+        index % Math.max(1, localCharactersWithPortraits.length),
+        index % Math.max(1, localCharactersWithPortraits.length) + 1
+      ),
       dialogue: {
         opening: pre
           .map((row: any) => toDialogueTurn(row, "dialogue"))
@@ -1463,7 +1696,7 @@ const mapLegacyEpisodeToVNext = (params: {
     input,
     continuityContext,
     legacyEpisode,
-    localCharacters,
+    localCharacters: localCharactersWithPortraits,
     selectedSpots,
   });
 
@@ -1472,6 +1705,8 @@ const mapLegacyEpisodeToVNext = (params: {
     episodeId,
     seriesBlueprintId: input.seriesBlueprint.id,
     userSeriesStateId: input.userSeriesState.id,
+    coverImagePrompt: coverVisual.coverImagePrompt,
+    coverImageUrl: coverVisual.coverImageUrl,
     episodeMeta: {
       episodeIndex: continuityContext.episodeIndex,
       title: clean(legacyEpisode?.title) || `第${continuityContext.episodeIndex}話`,
@@ -1483,7 +1718,7 @@ const mapLegacyEpisodeToVNext = (params: {
     },
     selectedSpots,
     fixedCharactersAppeared,
-    localCharactersIntroduced: localCharacters,
+    localCharactersIntroduced: localCharactersWithPortraits,
     scenes,
     ending: {
       closingNarration: clean(legacyEpisode?.summary) || "今回の旅路は次話へ静かに接続した。",
@@ -1509,6 +1744,10 @@ const mergePhase = (legacyPhase: SeriesRuntimeEpisodeProgressEvent["phase"]) => 
   if (legacyPhase === "spot_resolution_done") return "spot_resolution_done";
   if (legacyPhase === "spot_chapter_start") return "scene_generation_start";
   if (legacyPhase === "spot_puzzle_done") return "scene_generation_done";
+  if (legacyPhase === "episode_character_images_start") return "episode_character_images_start";
+  if (legacyPhase === "episode_character_images_done") return "episode_character_images_done";
+  if (legacyPhase === "episode_cover_image_start") return "episode_cover_image_start";
+  if (legacyPhase === "episode_cover_image_done") return "episode_cover_image_done";
   if (legacyPhase === "episode_assemble_start") return "episode_assemble_start";
   if (legacyPhase === "episode_assemble_done") return "episode_assemble_done";
   return undefined;

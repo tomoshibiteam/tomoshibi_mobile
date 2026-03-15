@@ -7,7 +7,6 @@ import {
   Alert,
   Easing,
   Image,
-  InteractionManager,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -31,6 +30,7 @@ import {
   createEpisodeForSeries,
   createQuestDraft,
   fetchSeriesDetail,
+  type SeriesDetail,
   type SeriesEpisode,
   fetchSeriesEpisodeRuntimeContext,
   fetchMySeriesOptions,
@@ -340,6 +340,183 @@ const parseLocationCoords = (value: string): { lat: number; lng: number } | null
   return { lat, lng };
 };
 
+const normalizeImageUri = (value?: string | null) => {
+  const raw = (value || "").trim();
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw) || raw.startsWith("data:image/")) return raw;
+  if (raw.startsWith("//")) return `https:${raw}`;
+  if (raw.startsWith("/")) {
+    const base = (
+      process.env.EXPO_PUBLIC_MASTRA_BASE_URL ||
+      process.env.MASTRA_BASE_URL ||
+      process.env.EXPO_PUBLIC_API_BASE_URL ||
+      ""
+    )
+      .replace(/\/+$/, "")
+      .trim();
+    if (base) return `${base}${raw}`;
+  }
+  return raw;
+};
+
+const createEpisodeVisualAbortError = () => {
+  const error = new Error("画像反映待機を中止しました。");
+  (error as Error & { name: string }).name = "AbortError";
+  return error;
+};
+
+const ensureVisualPrefetchNotAborted = (signal?: AbortSignal) => {
+  if (signal?.aborted) throw createEpisodeVisualAbortError();
+};
+
+const waitForAbortableDelay = async (ms: number, signal?: AbortSignal) => {
+  if (ms <= 0) return;
+  ensureVisualPrefetchNotAborted(signal);
+
+  await new Promise<void>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onAbort = () => {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(createEpisodeVisualAbortError());
+    };
+
+    timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+};
+
+type EpisodeVisualPrefetchResult = "loaded" | "timeout" | "failed";
+
+const prefetchImageWithTimeout = async (
+  uri: string,
+  options: {
+    timeoutMs?: number;
+    signal?: AbortSignal;
+  } = {}
+): Promise<EpisodeVisualPrefetchResult> => {
+  const { timeoutMs = 12_000, signal } = options;
+  ensureVisualPrefetchNotAborted(signal);
+
+  return await new Promise<EpisodeVisualPrefetchResult>((resolve, reject) => {
+    const boundedTimeoutMs = Math.max(2_000, timeoutMs);
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+
+    const finish = (result: EpisodeVisualPrefetchResult) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(createEpisodeVisualAbortError());
+    };
+
+    timer = setTimeout(() => finish("timeout"), boundedTimeoutMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    Image.prefetch(uri)
+      .then(() => finish("loaded"))
+      .catch(() => finish("failed"));
+  });
+};
+
+const collectEpisodeVisualImageUris = (
+  episode: GeneratedRuntimeEpisode,
+  options: {
+    selectedSeriesCoverImageUrl?: string | null;
+    seriesDetail?: SeriesDetail | null;
+  } = {}
+) => {
+  const rawUris = [
+    episode.coverImageUrl,
+    options.selectedSeriesCoverImageUrl,
+    options.seriesDetail?.coverImageUrl,
+    ...(episode.characters || []).map((character) => character.avatarImageUrl),
+    ...(episode.episodeUniqueCharacters || []).map((character) => character.portraitImageUrl),
+    ...((options.seriesDetail?.characters || []).map((character) => character.avatarImageUrl)),
+  ];
+
+  return Array.from(
+    new Set(rawUris.map((uri) => normalizeImageUri(uri)).filter((uri): uri is string => Boolean(uri)))
+  );
+};
+
+const waitForEpisodeVisualsReady = async (options: {
+  uris: string[];
+  signal?: AbortSignal;
+  perImageTimeoutMs?: number;
+  retryDelayMs?: number;
+  maxWaitMs?: number;
+  onProgress?: (progress: {
+    readyCount: number;
+    totalCount: number;
+    pendingCount: number;
+    lastUri?: string;
+    lastStatus?: EpisodeVisualPrefetchResult;
+  }) => void;
+}) => {
+  const {
+    uris,
+    signal,
+    perImageTimeoutMs = 12_000,
+    retryDelayMs = 1_200,
+    maxWaitMs = 90_000,
+    onProgress,
+  } = options;
+
+  const targetUris = Array.from(
+    new Set(uris.map((uri) => normalizeImageUri(uri)).filter((uri): uri is string => Boolean(uri)))
+  );
+  if (targetUris.length === 0) {
+    onProgress?.({ readyCount: 0, totalCount: 0, pendingCount: 0 });
+    return;
+  }
+
+  const readyUris = new Set<string>();
+  const startedAt = Date.now();
+
+  while (readyUris.size < targetUris.length) {
+    ensureVisualPrefetchNotAborted(signal);
+
+    for (const uri of targetUris) {
+      if (readyUris.has(uri)) continue;
+      const status = await prefetchImageWithTimeout(uri, {
+        timeoutMs: perImageTimeoutMs,
+        signal,
+      });
+      if (status === "loaded") readyUris.add(uri);
+      onProgress?.({
+        readyCount: readyUris.size,
+        totalCount: targetUris.length,
+        pendingCount: targetUris.length - readyUris.size,
+        lastUri: uri,
+        lastStatus: status,
+      });
+    }
+
+    if (readyUris.size >= targetUris.length) return;
+    if (Date.now() - startedAt >= Math.max(15_000, maxWaitMs)) {
+      throw new Error("画像の生成完了を確認できませんでした。時間をおいて再度お試しください。");
+    }
+    await waitForAbortableDelay(retryDelayMs, signal);
+  }
+};
+
 const buildMetaFromEpisodeLogs = (logs: Array<{ text: string }>): SeriesSummaryMeta => {
   const episodes = logs
     .map((row) => {
@@ -394,12 +571,18 @@ const EPISODE_PHASE_USER_COPY: Record<RuntimeEpisodeGenerationPhase, string> = {
   spot_chapter_done: "章立ての整形が完了しました。",
   spot_puzzle_start: "シーン詳細を整えています。",
   spot_puzzle_done: "シーン詳細の整形が完了しました。",
+  episode_character_images_start: "登場人物の画像を生成しています。",
+  episode_character_images_done: "登場人物の画像生成が完了しました。",
+  episode_cover_image_start: "エピソードのカバー画像を生成しています。",
+  episode_cover_image_done: "カバー画像の生成が完了しました。",
   episode_assemble_start: "エピソード全体を統合しています。",
   episode_assemble_done: "エピソード統合が完了しました。",
   continuity_patch_build_start: "次話へ引き継ぐ継続差分を構築しています。",
   continuity_patch_build_done: "継続差分の構築が完了しました。",
   response_preparing: "仕上げ中です。結果を整えて返却準備をしています。",
   completed: "エピソード生成が完了しました。",
+  episode_visual_finalize_start: "画像の生成完了と反映を確認しています。",
+  episode_visual_finalize_done: "画像の生成と反映が完了しました。",
 };
 
 type EpisodeWorkflowStageStatus = "pending" | "active" | "done";
@@ -459,6 +642,17 @@ const EPISODE_WORKFLOW_STAGES: readonly EpisodeWorkflowStage[] = [
     ],
   },
   {
+    id: "visuals",
+    label: "ビジュアル生成",
+    summary: "登場人物画像とカバー画像を生成します。",
+    phases: [
+      "episode_character_images_start",
+      "episode_character_images_done",
+      "episode_cover_image_start",
+      "episode_cover_image_done",
+    ],
+  },
+  {
     id: "assemble",
     label: "統合と継続差分",
     summary: "エピソード統合と継続パッチ構築を行います。",
@@ -471,10 +665,16 @@ const EPISODE_WORKFLOW_STAGES: readonly EpisodeWorkflowStage[] = [
     ],
   },
   {
+    id: "visual_finalize",
+    label: "画像反映待ち",
+    summary: "カバー画像とキャラクター画像の反映完了を確認します。",
+    phases: ["completed", "episode_visual_finalize_start"],
+  },
+  {
     id: "done",
     label: "完了",
-    summary: "エピソードを返却します。",
-    phases: ["completed"],
+    summary: "画像反映まで完了したエピソードを返却します。",
+    phases: ["episode_visual_finalize_done"],
   },
 ] as const;
 
@@ -882,7 +1082,9 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
       let status: EpisodeWorkflowStageStatus = "pending";
       if (index < currentIndex) status = "done";
       if (index === currentIndex) status = "active";
-      if (latestEpisodeGenerationPhase === "completed" && index <= currentIndex) status = "done";
+      if (latestEpisodeGenerationPhase === "episode_visual_finalize_done" && index <= currentIndex) {
+        status = "done";
+      }
       return {
         id: stage.id,
         label: stage.label,
@@ -1231,6 +1433,26 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
     setLatestEpisodeGenerationPhase(initialPhase);
     setEpisodeGenerationMessage(initialMessage);
     setEpisodeGenerationProgressMessages([initialMessage]);
+    let didNavigateToResult = false;
+
+    const pushEpisodeGenerationMessage = (message: string) => {
+      if (!isMountedRef.current) return;
+      setEpisodeGenerationMessage(message);
+      setEpisodeGenerationProgressMessages((prev) => {
+        if (prev[prev.length - 1] === message) return prev;
+        return [...prev, message].slice(-8);
+      });
+    };
+
+    const applyEpisodeGenerationPhase = (
+      phase: RuntimeEpisodeGenerationPhase,
+      overrideMessage?: string
+    ) => {
+      if (!isMountedRef.current) return;
+      const message = overrideMessage || EPISODE_PHASE_USER_COPY[phase];
+      setLatestEpisodeGenerationPhase(phase);
+      pushEpisodeGenerationMessage(message);
+    };
 
     try {
       let targetSeriesId = selectedSeries.id;
@@ -1289,12 +1511,13 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
                 carryOver: checkpoint.carryOver || "",
               })),
               characters: (runtimeContext?.characters || []).map((character, index) => ({
-                id: `char_${index + 1}`,
+                id: character.id || `char_${index + 1}`,
                 name: character.name,
                 role: character.role,
                 tier: character.tier || "secondary",
                 mustAppear: Boolean(character.mustAppear),
                 personality: character.personality || undefined,
+                portraitImageUrl: character.avatarImageUrl || undefined,
                 arcStart: character.arcStart || undefined,
                 arcEnd: character.arcEnd || undefined,
               })),
@@ -1316,14 +1539,8 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
           }, {
             signal: generationAbortController.signal,
             onProgress: (event: RuntimeEpisodeGenerationEvent) => {
-              if (!isMountedRef.current) return;
               const nextMessage = toEpisodePhaseMessage(event);
-              setLatestEpisodeGenerationPhase(event.phase);
-              setEpisodeGenerationMessage(nextMessage);
-              setEpisodeGenerationProgressMessages((prev) => {
-                if (prev[prev.length - 1] === nextMessage) return prev;
-                return [...prev, nextMessage].slice(-8);
-              });
+              applyEpisodeGenerationPhase(event.phase, nextMessage);
             },
           });
 
@@ -1347,10 +1564,7 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
                     return b.text;
                   })
                   .join("\n");
-                const puzzle = spot.questionText
-                  ? `\n❓ ${spot.questionText}\n💡 ヒント: ${spot.hintText}\n✅ 答え: ${spot.answerText}\n📖 ${spot.explanationText}`
-                  : "";
-                return `${header}\n\n${narration ? `${narration}\n\n` : ""}${blocks}${puzzle}`;
+                return `${header}\n\n${narration ? `${narration}\n\n` : ""}${blocks}`;
               })
               .join("\n\n---\n\n");
           }
@@ -1362,25 +1576,52 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
               : 0;
           const nextEpisodeNo = lastEpNo + 1;
 
-          if (__DEV__) {
-            console.log("[AddEpisodeScreen] Mastra success, scheduling navigation to EpisodeGenerationResult");
-          }
-          InteractionManager.runAfterInteractions(() => {
-            if (!isMountedRef.current) return;
+          let seriesDetailForVisualWait: SeriesDetail | null = null;
+          if (targetSeriesId) {
             try {
-              navigation.replace("EpisodeGenerationResult", {
-                runtimeEpisode: runtimeEpisode!,
-                seriesId: targetSeriesId,
-                seriesTitle: targetSeriesTitle,
-                coverImageUrl: selectedSeries?.coverImageUrl,
-                episodeNo: nextEpisodeNo,
-                stageLocation: stageLocation.trim(),
-                stageCoords: mapCoords,
-              });
-            } catch (navErr) {
-              console.error("AddEpisodeScreen: navigation to EpisodeGenerationResult failed", navErr);
+              seriesDetailForVisualWait = await fetchSeriesDetail(targetSeriesId);
+            } catch (error) {
+              console.warn(
+                "AddEpisodeScreen: failed to fetch series detail before visual finalize",
+                error
+              );
             }
+          }
+
+          const visualUris = collectEpisodeVisualImageUris(runtimeEpisode, {
+            selectedSeriesCoverImageUrl: selectedSeries?.coverImageUrl,
+            seriesDetail: seriesDetailForVisualWait,
           });
+
+          applyEpisodeGenerationPhase("episode_visual_finalize_start");
+          await waitForEpisodeVisualsReady({
+            uris: visualUris,
+            signal: generationAbortController.signal,
+            onProgress: ({ readyCount, totalCount, pendingCount }) => {
+              if (totalCount <= 0) return;
+              const resolvedCount = pendingCount > 0 ? readyCount : totalCount;
+              pushEpisodeGenerationMessage(
+                `${EPISODE_PHASE_USER_COPY.episode_visual_finalize_start}\n進行: ${resolvedCount}/${totalCount}`
+              );
+            },
+          });
+          applyEpisodeGenerationPhase("episode_visual_finalize_done");
+
+          if (__DEV__) {
+            console.log(
+              "[AddEpisodeScreen] Mastra success, navigating to EpisodeGenerationResult after visual finalize"
+            );
+          }
+          navigation.replace("EpisodeGenerationResult", {
+            runtimeEpisode: runtimeEpisode!,
+            seriesId: targetSeriesId,
+            seriesTitle: targetSeriesTitle,
+            coverImageUrl: selectedSeries?.coverImageUrl,
+            episodeNo: nextEpisodeNo,
+            stageLocation: stageLocation.trim(),
+            stageCoords: mapCoords,
+          });
+          didNavigateToResult = true;
           return;
         } catch (error) {
           if (error instanceof Error && error.name === "AbortError") {
@@ -1430,7 +1671,7 @@ export const AddEpisodeScreen = ({ navigation, route }: Props) => {
       }
     } finally {
       generationAbortRef.current = null;
-      if (isMountedRef.current) {
+      if (isMountedRef.current && !didNavigateToResult) {
         setIsGenerating(false);
       }
     }

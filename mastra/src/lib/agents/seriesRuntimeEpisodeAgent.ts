@@ -10,6 +10,12 @@ import {
   buildDefaultObjectiveMissionLink,
   normalizeObjectiveMissionLink,
 } from "../objectiveMissionLink";
+import {
+  buildCharacterPortraitPrompt,
+  buildCoverImagePrompt,
+  buildSeriesImageUrl,
+  buildSeriesVisualStyleGuide,
+} from "../seriesVisuals";
 
 const clean = (value?: string | null) => (value || "").replace(/\s+/g, " ").trim();
 
@@ -104,11 +110,15 @@ const runtimeSeriesContextSchema = z.object({
   characters: z
     .array(
       z.object({
+        id: z.string().optional(),
         name: z.string(),
         role: z.string(),
         tier: z.enum(["primary", "secondary"]).optional(),
         must_appear: z.boolean().optional(),
         personality: z.string().optional(),
+        appearance: z.string().optional(),
+        portrait_prompt: z.string().optional(),
+        portrait_image_url: z.string().optional(),
         arc_start: z.string().optional(),
         arc_end: z.string().optional(),
       })
@@ -321,6 +331,10 @@ export const seriesRuntimeEpisodeOutputSchema = z.object({
   title: z.string(),
   summary: z.string(),
   one_liner: z.string(),
+  cover_image_prompt: z.string().optional(),
+  cover_image_url: z.string().optional(),
+  episode_cover_image_prompt: z.string().optional(),
+  episode_cover_image_url: z.string().optional(),
   main_plot: z.object({
     premise: z.string(),
     goal: z.string(),
@@ -332,6 +346,8 @@ export const seriesRuntimeEpisodeOutputSchema = z.object({
       role: z.string(),
       personality: z.string(),
       origin: z.enum(["series", "episode"]).optional(),
+      avatar_prompt: z.string().optional(),
+      avatar_image_url: z.string().optional(),
     })
   ),
   episode_world: episodeWorldSchema,
@@ -344,6 +360,8 @@ export const seriesRuntimeEpisodeOutputSchema = z.object({
       motivation: z.string(),
       relation_to_series: z.string(),
       introduction_scene: z.string(),
+      portrait_prompt: z.string().optional(),
+      portrait_image_url: z.string().optional(),
     })
   ),
   spots: z.array(episodeSpotSchema),
@@ -366,6 +384,8 @@ export const seriesRuntimeEpisodeOutputSchema = z.object({
 
 export type SeriesRuntimeEpisodeOutput = z.infer<typeof seriesRuntimeEpisodeOutputSchema>;
 export type EpisodeGenerationTrace = z.infer<typeof episodeGenerationTraceSchema>;
+type EpisodeOutputCharacter = SeriesRuntimeEpisodeOutput["characters"][number];
+type EpisodeOutputUniqueCharacter = SeriesRuntimeEpisodeOutput["episode_unique_characters"][number];
 
 export type SeriesRuntimeEpisodeProgressPhase =
   | "pipeline_start"
@@ -379,6 +399,10 @@ export type SeriesRuntimeEpisodeProgressPhase =
   | "spot_chapter_done"
   | "spot_puzzle_start"
   | "spot_puzzle_done"
+  | "episode_character_images_start"
+  | "episode_character_images_done"
+  | "episode_cover_image_start"
+  | "episode_cover_image_done"
   | "episode_assemble_start"
   | "episode_assemble_done";
 
@@ -1942,12 +1966,242 @@ const generateSpotsContent = async (
 // Step 4: Assemble final output
 // ---------------------------------------------------------------------------
 
-const assembleEpisode = (
+const toNameKey = (value?: string | null) => clean(value).toLowerCase();
+
+const buildSeriesCharacterSourceMap = (input: SeriesRuntimeEpisodeRequest) => {
+  const byName = new Map<string, RuntimeSeriesCharacter>();
+  (input.series.characters || []).forEach((character) => {
+    const key = toNameKey(character.name);
+    if (!key || byName.has(key)) return;
+    byName.set(key, character);
+  });
+  return byName;
+};
+
+const buildLegacyEpisodeVisualStyleGuide = (input: SeriesRuntimeEpisodeRequest, plan: EpisodePlan) => {
+  const seriesTitle = clean(input.series.title) || "TOMOSHIBI";
+  const stageLocation =
+    clean(input.episode_request.stage_location) || clean(input.series.world_setting) || "city district";
+  const genre =
+    clean(input.series.overview) || clean(input.series.premise) || "story-driven city exploration";
+  const tone =
+    clean(plan.episode_world?.mood) || clean(input.series.season_goal) || "emotional mystery journey";
+  const recurringMotifs = dedupeStrings([
+    clean(input.series.continuity?.global_mystery),
+    clean(input.series.continuity?.mid_season_twist),
+    clean(input.series.progress_state?.next_hook),
+  ]).slice(0, 2);
+  return buildSeriesVisualStyleGuide({
+    seriesTitle,
+    genre,
+    tone,
+    setting: stageLocation,
+    recurringMotifs,
+  });
+};
+
+const buildEpisodeVisualPackage = async (params: {
+  plan: EpisodePlan;
+  input: SeriesRuntimeEpisodeRequest;
+  episodeUniqueCharacters: EpisodeOutputUniqueCharacter[];
+  onProgress?: SeriesRuntimeEpisodeProgressReporter;
+}): Promise<{
+  coverImagePrompt: string;
+  coverImageUrl: string;
+  characters: EpisodeOutputCharacter[];
+  episodeUniqueCharacters: EpisodeOutputUniqueCharacter[];
+}> => {
+  const { plan, input, onProgress } = params;
+  const episodeNo = (input.series.progress_state?.last_completed_episode_no || 0) + 1;
+  const seriesTitle = clean(input.series.title) || "TOMOSHIBI";
+  const stageLocation =
+    clean(input.episode_request.stage_location) || clean(input.series.world_setting) || "city district";
+  const genre =
+    clean(input.series.overview) || clean(input.series.premise) || "story-driven city exploration";
+  const tone =
+    clean(plan.episode_world?.mood) || clean(input.series.season_goal) || "emotional mystery journey";
+  const styleGuide = buildLegacyEpisodeVisualStyleGuide(input, plan);
+  const seriesSourceByName = buildSeriesCharacterSourceMap(input);
+  const uniqueByName = new Map<string, EpisodeOutputUniqueCharacter>();
+
+  await emitSeriesRuntimeEpisodeProgress(onProgress, {
+    phase: "episode_character_images_start",
+    detail: "登場人物画像を生成しています",
+  });
+
+  const uniqueCharactersWithPortraits = params.episodeUniqueCharacters.map((character, index) => {
+    const portraitPrompt =
+      clean(character.portrait_prompt) ||
+      buildCharacterPortraitPrompt({
+        seriesTitle,
+        genre,
+        tone,
+        name: character.name,
+        role: character.role,
+        personality: character.personality,
+        appearance: `${clean(character.role)} / ${clean(character.relation_to_series)}`,
+        setting: stageLocation,
+        distinguishingFeature: clean(character.relation_to_series),
+        styleGuide,
+      });
+    const portraitImageUrl =
+      clean(character.portrait_image_url) ||
+      buildSeriesImageUrl({
+        prompt: portraitPrompt,
+        seedKey: `${seriesTitle}:ep:${episodeNo}:local:${index + 1}:${character.id}:${character.name}`,
+        width: 768,
+        height: 1024,
+        purpose: "character_portrait",
+        styleReference: styleGuide,
+      });
+    const next: EpisodeOutputUniqueCharacter = {
+      ...character,
+      portrait_prompt: portraitPrompt || undefined,
+      portrait_image_url: portraitImageUrl || undefined,
+    };
+    uniqueByName.set(toNameKey(next.name), next);
+    return next;
+  });
+
+  const characters: EpisodeOutputCharacter[] = plan.characters.map((character, index) => {
+    const key = toNameKey(character.name);
+    const local = uniqueByName.get(key);
+    if (local) {
+      return {
+        id: character.id,
+        name: character.name,
+        role: character.role,
+        personality: character.personality,
+        origin: "episode",
+        avatar_prompt: local.portrait_prompt,
+        avatar_image_url: local.portrait_image_url,
+      };
+    }
+    const source = seriesSourceByName.get(key);
+    const avatarPrompt =
+      clean(source?.portrait_prompt) ||
+      buildCharacterPortraitPrompt({
+        seriesTitle,
+        genre,
+        tone,
+        name: character.name,
+        role: character.role,
+        personality: character.personality,
+        appearance: clean(source?.appearance) || `${clean(character.role)} / ${clean(character.personality)}`,
+        setting: stageLocation,
+        styleGuide,
+      });
+    const avatarImageUrl =
+      clean(source?.portrait_image_url) ||
+      buildSeriesImageUrl({
+        prompt: avatarPrompt,
+        seedKey: `${seriesTitle}:series:${clean(source?.id) || character.id}:${character.name}:${character.role}`,
+        width: 768,
+        height: 1024,
+        purpose: "character_portrait",
+        styleReference: styleGuide,
+      });
+    return {
+      id: character.id,
+      name: character.name,
+      role: character.role,
+      personality: character.personality,
+      origin: "series",
+      avatar_prompt: avatarPrompt || undefined,
+      avatar_image_url: avatarImageUrl || undefined,
+    };
+  });
+
+  await emitSeriesRuntimeEpisodeProgress(onProgress, {
+    phase: "episode_character_images_done",
+    detail: `登場人物画像の準備が完了（${characters.length}人）`,
+  });
+
+  const planById = new Map(plan.characters.map((character) => [character.id, character]));
+  const focusCharacters = characters
+    .slice()
+    .sort((left, right) => {
+      if (left.origin !== right.origin) return left.origin === "series" ? -1 : 1;
+      const leftRequired = Boolean(planById.get(left.id)?.must_appear);
+      const rightRequired = Boolean(planById.get(right.id)?.must_appear);
+      if (leftRequired !== rightRequired) return leftRequired ? -1 : 1;
+      return 0;
+    })
+    .slice(0, 3)
+    .map((character) => {
+      const local = uniqueByName.get(toNameKey(character.name));
+      return {
+        name: clean(character.name),
+        role: clean(character.role),
+        focusReason:
+          character.origin === "series" ? "series continuity anchor" : "episode-local freshness anchor",
+        visualAnchor: dedupeStrings([
+          clean(character.personality),
+          clean(local?.relation_to_series),
+        ])
+          .slice(0, 2)
+          .join(" / "),
+      };
+    });
+
+  await emitSeriesRuntimeEpisodeProgress(onProgress, {
+    phase: "episode_cover_image_start",
+    detail: "エピソードカバー画像を生成しています",
+  });
+
+  const coverImagePrompt = buildCoverImagePrompt({
+    title: `${seriesTitle} ${clean(plan.title)}`.trim(),
+    genre,
+    tone,
+    premise:
+      clean(plan.one_liner) ||
+      clean(plan.premise) ||
+      clean(input.episode_request.purpose) ||
+      "episode journey",
+    setting: stageLocation,
+    styleGuide,
+    recurringMotifs: dedupeStrings([
+      clean(input.series.continuity?.global_mystery),
+      clean(input.series.progress_state?.next_hook),
+      clean(plan.carry_over_hook),
+    ]).slice(0, 2),
+    focusCharacters,
+    additionalDirection: dedupeStrings([
+      clean(input.episode_request.purpose),
+      clean(input.episode_request.user_wishes),
+      ...plan.spot_requirements.slice(0, 3).map((requirement) => clean(requirement.spot_role)),
+    ]).join(" / "),
+  });
+
+  const coverImageUrl = buildSeriesImageUrl({
+    prompt: coverImagePrompt,
+    seedKey: `${seriesTitle}:episode:${episodeNo}:cover:${clean(plan.title)}:${stageLocation}`,
+    width: 1280,
+    height: 720,
+    purpose: "cover",
+    styleReference: styleGuide,
+  });
+
+  await emitSeriesRuntimeEpisodeProgress(onProgress, {
+    phase: "episode_cover_image_done",
+    detail: "エピソードカバー画像の準備が完了",
+  });
+
+  return {
+    coverImagePrompt,
+    coverImageUrl,
+    characters,
+    episodeUniqueCharacters: uniqueCharactersWithPortraits,
+  };
+};
+
+const assembleEpisode = async (
   plan: EpisodePlan,
   spots: SpotResult[],
   input: SeriesRuntimeEpisodeRequest,
-  generationTrace?: EpisodeGenerationTrace
-): SeriesRuntimeEpisodeOutput => {
+  generationTrace?: EpisodeGenerationTrace,
+  onProgress?: SeriesRuntimeEpisodeProgressReporter
+): Promise<SeriesRuntimeEpisodeOutput> => {
   const unresolved = input.series.progress_state?.unresolved_threads || [];
   const previousFlags = input.series.progress_state?.relationship_flags || [];
   const relationSummaryBefore = clean(input.series.progress_state?.relationship_state_summary || "");
@@ -1971,11 +2225,6 @@ const assembleEpisode = (
       .map((character) => character.name)
       .join("・")}との相互理解が進んだ。`
   );
-  const uniqueNameSet = new Set(
-    (plan.episode_unique_characters || []).map((character) =>
-      clean(character.name).toLowerCase()
-    )
-  );
   const episodeUniqueCharacters = (plan.episode_unique_characters || []).map(
     (character, index) => ({
       id: `ep_char_${index + 1}`,
@@ -1988,6 +2237,12 @@ const assembleEpisode = (
       introduction_scene: clean(character.introduction_scene) || "中盤で登場",
     })
   );
+  const visualPackage = await buildEpisodeVisualPackage({
+    plan,
+    input,
+    episodeUniqueCharacters,
+    onProgress,
+  });
 
   return {
     title: plan.title,
@@ -1995,19 +2250,17 @@ const assembleEpisode = (
       spots.map((s) => s.scene_narration.slice(0, 60)).join("→") ||
       `${input.episode_request.stage_location}での街歩きエピソード`,
     one_liner: plan.one_liner,
+    cover_image_prompt: visualPackage.coverImagePrompt,
+    cover_image_url: visualPackage.coverImageUrl,
+    episode_cover_image_prompt: visualPackage.coverImagePrompt,
+    episode_cover_image_url: visualPackage.coverImageUrl,
     main_plot: {
       premise: plan.premise,
       goal: plan.goal,
     },
-    characters: plan.characters.map((c) => ({
-      id: c.id,
-      name: c.name,
-      role: c.role,
-      personality: c.personality,
-      origin: uniqueNameSet.has(clean(c.name).toLowerCase()) ? "episode" : "series",
-    })),
+    characters: visualPackage.characters,
     episode_world: plan.episode_world,
-    episode_unique_characters: episodeUniqueCharacters,
+    episode_unique_characters: visualPackage.episodeUniqueCharacters,
     spots,
     completion_condition: plan.completion_condition,
     carry_over_hook: plan.carry_over_hook,
@@ -2121,11 +2374,12 @@ export const generateSeriesRuntimeEpisode = async (
       phase: "episode_assemble_start",
       detail: "フォールバック出力を組み立て",
     });
-    const fallbackEpisode = assembleEpisode(
+    const fallbackEpisode = await assembleEpisode(
       fallbackPlan,
       fallbackSpots,
       input,
-      fallbackResolution.trace
+      fallbackResolution.trace,
+      onProgress
     );
     await emitSeriesRuntimeEpisodeProgress(onProgress, {
       phase: "episode_assemble_done",
@@ -2182,7 +2436,7 @@ export const generateSeriesRuntimeEpisode = async (
     phase: "episode_assemble_start",
     detail: "最終エピソードを組み立て",
   });
-  const episode = assembleEpisode(plan, spots, input, resolution.trace);
+  const episode = await assembleEpisode(plan, spots, input, resolution.trace, onProgress);
   await emitSeriesRuntimeEpisodeProgress(onProgress, {
     phase: "episode_assemble_done",
     detail: "最終エピソードの組み立てが完了",

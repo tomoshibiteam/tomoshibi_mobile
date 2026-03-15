@@ -437,6 +437,8 @@ export type EpisodeCharacter = {
   role: string;
   personality: string;
   origin?: "series" | "episode";
+  avatarPrompt?: string;
+  avatarImageUrl?: string;
 };
 
 export type EpisodeWorld = {
@@ -457,6 +459,8 @@ export type EpisodeUniqueCharacter = {
   motivation: string;
   relationToSeries: string;
   introductionScene: string;
+  portraitPrompt?: string;
+  portraitImageUrl?: string;
 };
 
 export type RuntimeEpisodeGenerationTraceCandidate = {
@@ -515,6 +519,8 @@ export type GeneratedRuntimeEpisode = {
   title: string;
   summary: string;
   oneLiner: string;
+  coverImagePrompt?: string;
+  coverImageUrl?: string;
   mainPlot: {
     premise: string;
     goal: string;
@@ -587,12 +593,18 @@ const RUNTIME_EPISODE_GENERATION_PHASES = [
   "spot_chapter_done",
   "spot_puzzle_start",
   "spot_puzzle_done",
+  "episode_character_images_start",
+  "episode_character_images_done",
+  "episode_cover_image_start",
+  "episode_cover_image_done",
   "episode_assemble_start",
   "episode_assemble_done",
   "continuity_patch_build_start",
   "continuity_patch_build_done",
   "response_preparing",
   "completed",
+  "episode_visual_finalize_start",
+  "episode_visual_finalize_done",
 ] as const;
 
 export type RuntimeEpisodeGenerationPhase = (typeof RUNTIME_EPISODE_GENERATION_PHASES)[number];
@@ -2219,6 +2231,12 @@ const normalizeEpisodeCharacters = (raw: unknown): EpisodeCharacter[] => {
       role: clean(c.role) || "",
       personality: clean(c.personality) || "",
       ...(c.origin === "series" || c.origin === "episode" ? { origin: c.origin } : {}),
+      ...(clean(c.avatar_prompt || c.avatarPrompt)
+        ? { avatarPrompt: clean(c.avatar_prompt || c.avatarPrompt) }
+        : {}),
+      ...(normalizeMediaUrlForClient(c.avatar_image_url || c.avatarImageUrl)
+        ? { avatarImageUrl: normalizeMediaUrlForClient(c.avatar_image_url || c.avatarImageUrl) }
+        : {}),
     }));
 };
 
@@ -2246,12 +2264,12 @@ const normalizeEpisodeWorld = (raw: unknown): EpisodeWorld => {
 const normalizeEpisodeUniqueCharacters = (raw: unknown): EpisodeUniqueCharacter[] => {
   if (!Array.isArray(raw)) return [];
   return raw
-    .map((item, index) => {
+    .map((item, index): EpisodeUniqueCharacter | null => {
       const row = asObject(item);
       const name = clean(typeof row.name === "string" ? row.name : "");
       const role = clean(typeof row.role === "string" ? row.role : "");
       if (!name || !role) return null;
-      return {
+      const normalized: EpisodeUniqueCharacter = {
         id: clean(typeof row.id === "string" ? row.id : "") || `ep_char_${index + 1}`,
         name,
         role,
@@ -2266,7 +2284,30 @@ const normalizeEpisodeUniqueCharacters = (raw: unknown): EpisodeUniqueCharacter[
         introductionScene:
           clean(typeof row.introduction_scene === "string" ? row.introduction_scene : "") ||
           "導入で出会う",
-      } satisfies EpisodeUniqueCharacter;
+      };
+      const portraitPrompt =
+        clean(
+          typeof row.portrait_prompt === "string"
+            ? row.portrait_prompt
+            : typeof row.portraitPrompt === "string"
+              ? row.portraitPrompt
+              : ""
+        ) || "";
+      if (portraitPrompt) {
+        normalized.portraitPrompt = portraitPrompt;
+      }
+      const portraitImageUrl =
+        normalizeMediaUrlForClient(
+          typeof row.portrait_image_url === "string"
+            ? row.portrait_image_url
+            : typeof row.portraitImageUrl === "string"
+              ? row.portraitImageUrl
+              : ""
+        ) || "";
+      if (portraitImageUrl) {
+        normalized.portraitImageUrl = portraitImageUrl;
+      }
+      return normalized;
     })
     .filter((character): character is EpisodeUniqueCharacter => Boolean(character));
 };
@@ -2431,6 +2472,26 @@ const normalizeRuntimeEpisode = (raw: unknown): GeneratedRuntimeEpisode | null =
   const generationTrace = normalizeRuntimeEpisodeGenerationTrace(row.generation_trace);
   const episodeWorld = normalizeEpisodeWorld(row.episode_world);
   const episodeUniqueCharacters = normalizeEpisodeUniqueCharacters(row.episode_unique_characters);
+  const coverImagePrompt =
+    clean(
+      typeof row.cover_image_prompt === "string"
+        ? row.cover_image_prompt
+        : typeof row.coverImagePrompt === "string"
+          ? row.coverImagePrompt
+          : ""
+    ) || undefined;
+  const coverImageUrl =
+    normalizeMediaUrlForClient(
+      typeof row.cover_image_url === "string"
+        ? row.cover_image_url
+        : typeof row.coverImageUrl === "string"
+          ? row.coverImageUrl
+          : typeof row.episode_cover_image_url === "string"
+            ? row.episode_cover_image_url
+            : typeof row.episodeCoverImageUrl === "string"
+              ? row.episodeCoverImageUrl
+              : ""
+    ) || undefined;
 
   const trustDelta = Number.parseInt(String(patchRaw.companion_trust_delta ?? 0), 10);
 
@@ -2438,6 +2499,8 @@ const normalizeRuntimeEpisode = (raw: unknown): GeneratedRuntimeEpisode | null =
     title,
     summary: clean(typeof row.summary === "string" ? row.summary : "") || `${title}の概要`,
     oneLiner: clean(typeof row.one_liner === "string" ? row.one_liner : "") || "",
+    coverImagePrompt,
+    coverImageUrl,
     mainPlot: {
       premise: clean(typeof mainPlotRaw.premise === "string" ? mainPlotRaw.premise : "") || "",
       goal: clean(typeof mainPlotRaw.goal === "string" ? mainPlotRaw.goal : "") || "",
@@ -2495,6 +2558,30 @@ const normalizeRuntimeEpisodeFromVNext = (envelope: unknown): GeneratedRuntimeEp
 
   const title = clean(typeof episodeMeta.title === "string" ? episodeMeta.title : "");
   if (!title) return null;
+  const coverImagePrompt =
+    clean(
+      typeof episodeOutput.coverImagePrompt === "string"
+        ? episodeOutput.coverImagePrompt
+        : typeof episodeOutput.cover_image_prompt === "string"
+          ? episodeOutput.cover_image_prompt
+          : typeof episodeOutput.episodeCoverImagePrompt === "string"
+            ? episodeOutput.episodeCoverImagePrompt
+            : typeof episodeOutput.episode_cover_image_prompt === "string"
+              ? episodeOutput.episode_cover_image_prompt
+              : ""
+    ) || undefined;
+  const coverImageUrl =
+    normalizeMediaUrlForClient(
+      typeof episodeOutput.coverImageUrl === "string"
+        ? episodeOutput.coverImageUrl
+        : typeof episodeOutput.cover_image_url === "string"
+          ? episodeOutput.cover_image_url
+          : typeof episodeOutput.episodeCoverImageUrl === "string"
+            ? episodeOutput.episodeCoverImageUrl
+            : typeof episodeOutput.episode_cover_image_url === "string"
+              ? episodeOutput.episode_cover_image_url
+              : ""
+    ) || undefined;
 
   const scenesRaw = Array.isArray(episodeOutput.scenes) ? episodeOutput.scenes : [];
   const spots: EpisodeSpot[] = scenesRaw.map((item, index) => {
@@ -2570,6 +2657,37 @@ const normalizeRuntimeEpisodeFromVNext = (envelope: unknown): GeneratedRuntimeEp
   const localCharactersIntroduced = Array.isArray(episodeOutput.localCharactersIntroduced)
     ? episodeOutput.localCharactersIntroduced
     : [];
+  const localCharacterVisualById = new Map<
+    string,
+    { displayName?: string; portraitPrompt?: string; portraitImageUrl?: string }
+  >();
+  localCharactersIntroduced.forEach((item, index) => {
+    const row = asObject(item);
+    const localCharacterId =
+      clean(typeof row.localCharacterId === "string" ? row.localCharacterId : "") ||
+      `ep_char_${index + 1}`;
+    if (!localCharacterId) return;
+    localCharacterVisualById.set(localCharacterId, {
+      displayName:
+        clean(typeof row.displayName === "string" ? row.displayName : "") || undefined,
+      portraitPrompt:
+        clean(
+          typeof row.portraitPrompt === "string"
+            ? row.portraitPrompt
+            : typeof row.portrait_prompt === "string"
+              ? row.portrait_prompt
+              : ""
+        ) || undefined,
+      portraitImageUrl:
+        normalizeMediaUrlForClient(
+          typeof row.portraitImageUrl === "string"
+            ? row.portraitImageUrl
+            : typeof row.portrait_image_url === "string"
+              ? row.portrait_image_url
+              : ""
+        ) || undefined,
+    });
+  });
 
   const characters: EpisodeCharacter[] = [
     ...fixedCharactersAppeared.map((id) => ({
@@ -2581,12 +2699,33 @@ const normalizeRuntimeEpisodeFromVNext = (envelope: unknown): GeneratedRuntimeEp
     })),
     ...localCharactersIntroduced.map((item, index) => {
       const row = asObject(item);
+      const localCharacterId =
+        clean(typeof row.localCharacterId === "string" ? row.localCharacterId : "") ||
+        `ep_char_${index + 1}`;
+      const portraitPrompt =
+        clean(
+          typeof row.portraitPrompt === "string"
+            ? row.portraitPrompt
+            : typeof row.portrait_prompt === "string"
+              ? row.portrait_prompt
+              : ""
+        ) || undefined;
+      const portraitImageUrl =
+        normalizeMediaUrlForClient(
+          typeof row.portraitImageUrl === "string"
+            ? row.portraitImageUrl
+            : typeof row.portrait_image_url === "string"
+              ? row.portrait_image_url
+              : ""
+        ) || undefined;
       return {
-        id: clean(typeof row.localCharacterId === "string" ? row.localCharacterId : "") || `ep_char_${index + 1}`,
+        id: localCharacterId,
         name: clean(typeof row.displayName === "string" ? row.displayName : "") || `ローカル人物${index + 1}`,
         role: clean(typeof row.roleInEpisode === "string" ? row.roleInEpisode : "") || "local_character",
         personality: normalizeStringArray(row.personalityTraits).join(" / "),
         origin: "episode" as const,
+        avatarPrompt: portraitPrompt,
+        avatarImageUrl: portraitImageUrl,
       } satisfies EpisodeCharacter;
     }),
   ];
@@ -2610,6 +2749,8 @@ const normalizeRuntimeEpisodeFromVNext = (envelope: unknown): GeneratedRuntimeEp
     oneLiner:
       clean(typeof episodeMeta.summaryHook === "string" ? episodeMeta.summaryHook : "") ||
       clean(typeof episodeMeta.episodePurpose === "string" ? episodeMeta.episodePurpose : ""),
+    coverImagePrompt,
+    coverImageUrl,
     mainPlot: {
       premise: clean(typeof episodeMeta.episodePurpose === "string" ? episodeMeta.episodePurpose : ""),
       goal: clean(typeof episodeMeta.episodePurpose === "string" ? episodeMeta.episodePurpose : ""),
@@ -2626,9 +2767,16 @@ const normalizeRuntimeEpisodeFromVNext = (envelope: unknown): GeneratedRuntimeEp
     },
     episodeUniqueCharacters: localCharactersIntroduced.map((item, index) => {
       const row = asObject(item);
+      const localCharacterId =
+        clean(typeof row.localCharacterId === "string" ? row.localCharacterId : "") ||
+        `ep_char_${index + 1}`;
+      const visual = localCharacterVisualById.get(localCharacterId);
       return {
-        id: clean(typeof row.localCharacterId === "string" ? row.localCharacterId : "") || `ep_char_${index + 1}`,
-        name: clean(typeof row.displayName === "string" ? row.displayName : "") || `ローカル人物${index + 1}`,
+        id: localCharacterId,
+        name:
+          clean(typeof row.displayName === "string" ? row.displayName : "") ||
+          visual?.displayName ||
+          `ローカル人物${index + 1}`,
         role: clean(typeof row.roleInEpisode === "string" ? row.roleInEpisode : "") || "地域人物",
         personality: normalizeStringArray(row.personalityTraits).join(" / ") || "観察力が高い",
         motivation: clean(typeof row.motivation === "string" ? row.motivation : "") || "地域情報を伝える",
@@ -2638,6 +2786,8 @@ const normalizeRuntimeEpisodeFromVNext = (envelope: unknown): GeneratedRuntimeEp
         introductionScene:
           clean(typeof row.relationToSpot === "string" ? row.relationToSpot : "") ||
           "中盤で登場",
+        portraitPrompt: visual?.portraitPrompt,
+        portraitImageUrl: visual?.portraitImageUrl,
       } satisfies EpisodeUniqueCharacter;
     }),
     spots,
@@ -2802,6 +2952,86 @@ const normalizeRuntimeEpisodeGenerationEvent = (raw: unknown): RuntimeEpisodeGen
   };
 };
 
+const normalizeCharacterLookupKey = (value?: string | null) => clean(value).toLowerCase();
+
+const enrichRuntimeEpisodeCharacters = (
+  episode: GeneratedRuntimeEpisode,
+  sourceCharacters?: RuntimeEpisodeContext["characters"]
+): GeneratedRuntimeEpisode => {
+  const sources = (sourceCharacters || [])
+    .map((character, index) => {
+      const id = clean(character.id) || `char_${index + 1}`;
+      const name = clean(character.name);
+      const role = clean(character.role);
+      const personality = clean(character.personality || "");
+      const avatarImageUrl = normalizeMediaUrlForClient(character.portraitImageUrl || "") || "";
+      if (!id && !name) return null;
+      return { id, name, role, personality, avatarImageUrl };
+    })
+    .filter((item): item is { id: string; name: string; role: string; personality: string; avatarImageUrl: string } => Boolean(item));
+
+  if (sources.length === 0 || !Array.isArray(episode.characters) || episode.characters.length === 0) {
+    return episode;
+  }
+
+  const byId = new Map<string, (typeof sources)[number]>();
+  const byName = new Map<string, (typeof sources)[number]>();
+  sources.forEach((character) => {
+    const idKey = normalizeCharacterLookupKey(character.id);
+    if (idKey) byId.set(idKey, character);
+    const nameKey = normalizeCharacterLookupKey(character.name);
+    if (nameKey && !byName.has(nameKey)) byName.set(nameKey, character);
+  });
+
+  const sourceIdPattern = /^char[_-]?(\d+)$/i;
+
+  const enrichedCharacters = episode.characters.map((character, index) => {
+    const characterId = clean(character.id);
+    const characterName = clean(character.name);
+    const characterRole = clean(character.role);
+    const directById = byId.get(normalizeCharacterLookupKey(characterId));
+    const directByName = byName.get(normalizeCharacterLookupKey(characterName));
+    let matched = directById || directByName || null;
+
+    if (!matched) {
+      const sourceKey = characterId || characterName;
+      const match = sourceKey.match(sourceIdPattern);
+      if (match) {
+        const sourceIndex = Number.parseInt(match[1], 10) - 1;
+        if (Number.isFinite(sourceIndex) && sourceIndex >= 0 && sourceIndex < sources.length) {
+          matched = sources[sourceIndex];
+        }
+      }
+    }
+
+    if (!matched) return character;
+
+    const shouldReplaceName =
+      !characterName || sourceIdPattern.test(characterName) || characterName === characterId;
+    const resolvedName = shouldReplaceName ? matched.name || characterName : characterName;
+    const resolvedRole =
+      !characterRole || characterRole === "series_character" ? matched.role || characterRole : characterRole;
+    const resolvedPersonality = clean(character.personality) || matched.personality;
+    const resolvedAvatar =
+      normalizeMediaUrlForClient(character.avatarImageUrl || "") || matched.avatarImageUrl || undefined;
+
+    return {
+      ...character,
+      id: characterId || matched.id || `char_${index + 1}`,
+      name: resolvedName || character.name,
+      role: resolvedRole || character.role,
+      personality: resolvedPersonality,
+      origin: character.origin || "series",
+      ...(resolvedAvatar ? { avatarImageUrl: resolvedAvatar } : {}),
+    } satisfies EpisodeCharacter;
+  });
+
+  return {
+    ...episode,
+    characters: enrichedCharacters,
+  };
+};
+
 export const generateSeriesEpisodeViaMastra = async (
   payload: GenerateSeriesEpisodeByMastraPayload,
   options: GenerateSeriesEpisodeByMastraOptions = {}
@@ -2883,11 +3113,15 @@ export const generateSeriesEpisodeViaMastra = async (
         carry_over: clean(checkpoint.carryOver),
       })),
       characters: characters.map((character) => ({
+        id: clean(character.id) || undefined,
         name: character.name,
         role: character.role,
         tier: character.tier || "secondary",
         must_appear: Boolean(character.mustAppear),
         personality: clean(character.personality),
+        appearance: clean(character.appearance) || undefined,
+        portrait_prompt: clean(character.portraitPrompt) || undefined,
+        portrait_image_url: clean(character.portraitImageUrl) || undefined,
         arc_start: clean(character.arcStart),
         arc_end: clean(character.arcEnd),
       })),
@@ -3078,8 +3312,11 @@ export const generateSeriesEpisodeViaMastra = async (
   };
 
   const normalizeEpisodeFromResponse = (envelope: unknown) => {
+    const enrich = (runtime: GeneratedRuntimeEpisode) =>
+      enrichRuntimeEpisodeCharacters(runtime, payload.series.characters);
+
     const vNext = normalizeRuntimeEpisodeFromVNext(envelope);
-    if (vNext) return vNext;
+    if (vNext) return enrich(vNext);
     const payloadObject = asObject(envelope);
     const nestedEpisode = payloadObject.episode;
     const episodeRaw =
@@ -3100,7 +3337,7 @@ export const generateSeriesEpisodeViaMastra = async (
       );
       throw new Error("Mastra episode response does not include valid title/body.");
     }
-    return normalized;
+    return enrich(normalized);
   };
 
   const runLegacyEndpoint = async () => {

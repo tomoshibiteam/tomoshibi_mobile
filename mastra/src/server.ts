@@ -1,10 +1,15 @@
 import dotenv from "dotenv";
 dotenv.config({ override: true });
 import { createHash, randomUUID } from "node:crypto";
+import { mkdir, rename, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
 import { MastraServer, HonoBindings, HonoVariables } from "@mastra/hono";
+import { Rembg } from "rembg-node";
+import sharp from "sharp";
 import { mastra } from "./index";
 import { seriesGenerationRequestSchema } from "./schemas/series";
 import { questWorkflow } from "./workflows/quest-workflow";
@@ -50,6 +55,7 @@ const GEMINI_IMAGE_MODEL = clean(process.env.SERIES_IMAGE_GEMINI_MODEL) || "gemi
 const GEMINI_API_KEY =
   clean(process.env.GOOGLE_GENERATIVE_AI_API_KEY) || clean(process.env.GEMINI_API_KEY);
 const GEMINI_POLLINATIONS_FALLBACK = clean(process.env.SERIES_IMAGE_GEMINI_FALLBACK).toLowerCase() !== "off";
+const SERIES_IMAGE_CUTOUT_ENABLED = clean(process.env.SERIES_IMAGE_CUTOUT_ENABLED).toLowerCase() !== "off";
 const SERIES_IMAGE_VERTEX_ENDPOINT = clean(process.env.SERIES_IMAGE_VERTEX_ENDPOINT);
 const SERIES_IMAGE_DIFFUSERS_ENDPOINT = clean(process.env.SERIES_IMAGE_DIFFUSERS_ENDPOINT);
 const SERIES_IMAGE_VERTEX_TOKEN = clean(process.env.SERIES_IMAGE_VERTEX_TOKEN);
@@ -75,6 +81,13 @@ const GEMINI_IMAGE_TIMEOUT_MS = Math.max(
   8_000,
   Number.parseInt(clean(process.env.SERIES_IMAGE_GEMINI_TIMEOUT_MS) || "90000", 10) || 90_000
 );
+const SERIES_IMAGE_CUTOUT_MODEL_TIMEOUT_MS = Math.max(
+  10_000,
+  Number.parseInt(clean(process.env.SERIES_IMAGE_CUTOUT_MODEL_TIMEOUT_MS) || "240000", 10) || 240_000
+);
+const DEFAULT_SERIES_IMAGE_CUTOUT_MODEL_URLS = [
+  "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx",
+];
 const isAbortLikeError = (error: unknown) => {
   const message = clean(error instanceof Error ? error.message : String(error ?? "")).toLowerCase();
   if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) return true;
@@ -88,12 +101,109 @@ type CachedImage = {
 };
 
 const seriesImageCache = new Map<string, CachedImage>();
+let portraitCutoutRembg: Rembg | null = null;
+let portraitCutoutModelReady: Promise<void> | null = null;
 
-const buildSeriesImageCacheKey = (provider: string, request: SeriesImageRequest) =>
+const pathExists = async (targetPath: string) => {
+  try {
+    await stat(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const resolvePortraitCutoutModelDir = () =>
+  clean(process.env.SERIES_IMAGE_CUTOUT_MODEL_DIR || process.env.U2NET_HOME) ||
+  path.resolve(os.homedir(), ".u2net");
+
+const resolvePortraitCutoutModelPath = () =>
+  path.resolve(resolvePortraitCutoutModelDir(), "u2net.onnx");
+
+const resolvePortraitCutoutModelUrls = () => {
+  const raw = clean(process.env.SERIES_IMAGE_CUTOUT_MODEL_URLS || process.env.SERIES_IMAGE_CUTOUT_MODEL_URL);
+  const seen = new Set<string>();
+  return (raw ? raw.split(",").map((part) => clean(part)).filter(Boolean) : [])
+    .concat(DEFAULT_SERIES_IMAGE_CUTOUT_MODEL_URLS)
+    .filter((entry) => {
+      if (!entry) return false;
+      if (seen.has(entry)) return false;
+      seen.add(entry);
+      return true;
+    });
+};
+
+const downloadPortraitCutoutModel = async (url: string, modelPath: string) => {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        "User-Agent": "tomoshibi-mastra/portrait-cutout-model",
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(SERIES_IMAGE_CUTOUT_MODEL_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (isAbortLikeError(error)) {
+      throw new Error(`cutout_model_download_timeout:${Math.floor(SERIES_IMAGE_CUTOUT_MODEL_TIMEOUT_MS / 1000)}s`);
+    }
+    throw error;
+  }
+
+  if (!response.ok) {
+    throw new Error(`cutout_model_download_error:${response.status}`);
+  }
+
+  const bytes = await response.arrayBuffer();
+  if (bytes.byteLength < 1_000_000) {
+    throw new Error("cutout_model_payload_too_small");
+  }
+
+  const tmpPath = `${modelPath}.tmp-${randomUUID()}`;
+  await writeFile(tmpPath, Buffer.from(bytes));
+  await rename(tmpPath, modelPath);
+};
+
+const ensurePortraitCutoutModel = async () => {
+  const modelPath = resolvePortraitCutoutModelPath();
+  if (await pathExists(modelPath)) return;
+
+  if (!portraitCutoutModelReady) {
+    portraitCutoutModelReady = (async () => {
+      const modelDir = resolvePortraitCutoutModelDir();
+      await mkdir(modelDir, { recursive: true });
+
+      const errors: string[] = [];
+      for (const url of resolvePortraitCutoutModelUrls()) {
+        try {
+          await downloadPortraitCutoutModel(url, modelPath);
+          if (await pathExists(modelPath)) return;
+        } catch (error: any) {
+          errors.push(`${url}:${clean(error?.message || String(error))}`.slice(0, 260));
+        }
+      }
+      throw new Error(`cutout_model_unavailable:${errors.join("|") || "download_failed"}`);
+    })();
+  }
+
+  try {
+    await portraitCutoutModelReady;
+  } catch (error) {
+    portraitCutoutModelReady = null;
+    throw error;
+  }
+};
+
+const buildSeriesImageCacheKey = (
+  provider: string,
+  request: SeriesImageRequest,
+  options?: { cutout?: boolean }
+) =>
   createHash("sha256")
     .update(
       [
         provider,
+        options?.cutout ? "cutout" : "raw",
         String(request.seed),
         String(request.width),
         String(request.height),
@@ -139,6 +249,33 @@ const setSeriesImageCache = (cacheKey: string, payload: { contentType: string; d
     data: payload.data,
     expiresAt: Date.now() + IMAGE_CACHE_TTL_SECONDS * 1000,
   });
+};
+
+const getPortraitCutoutRembg = async () => {
+  if (!portraitCutoutRembg) {
+    await ensurePortraitCutoutModel();
+    portraitCutoutRembg = new Rembg({ logging: false });
+  }
+  return portraitCutoutRembg;
+};
+
+const applyPortraitCutout = async (payload: { contentType: string; data: ArrayBuffer }) => {
+  const rembg = await getPortraitCutoutRembg();
+  const sharpInput = sharp(Buffer.from(payload.data), { failOnError: false }).rotate();
+  const transparentForeground = await rembg.remove(sharpInput);
+  const png = await transparentForeground
+    .trim()
+    .png({ compressionLevel: 9, adaptiveFiltering: true })
+    .toBuffer();
+
+  if (!png || png.byteLength === 0) {
+    throw new Error("portrait_cutout_empty");
+  }
+
+  return {
+    contentType: "image/png",
+    data: toArrayBuffer(new Uint8Array(png)),
+  };
 };
 
 type GeminiExtractedImage = {
@@ -1482,34 +1619,73 @@ app.get("/api/series/image", async (c) => {
       );
     }
 
+    const cutoutQuery = clean(c.req.query("cutout")).toLowerCase();
+    const isCutoutDisabledByQuery =
+      cutoutQuery === "0" ||
+      cutoutQuery === "false" ||
+      cutoutQuery === "off" ||
+      cutoutQuery === "no";
+    const shouldApplyPortraitCutout =
+      SERIES_IMAGE_CUTOUT_ENABLED &&
+      request.purpose === "character_portrait" &&
+      !isCutoutDisabledByQuery;
+
     const cacheProviders = normalizeHybridProviderOrder(request);
     for (const provider of cacheProviders) {
-      const cacheKey = buildSeriesImageCacheKey(provider, request);
+      const cacheKey = buildSeriesImageCacheKey(provider, request, {
+        cutout: shouldApplyPortraitCutout,
+      });
       const cached = getSeriesImageCache(cacheKey);
       if (!cached) continue;
       const headers = new Headers();
       headers.set("Content-Type", cached.contentType);
       headers.set("Cache-Control", `public, max-age=${IMAGE_CACHE_TTL_SECONDS}, s-maxage=${IMAGE_CACHE_TTL_SECONDS}`);
-      headers.set("X-Series-Image-Provider", `${provider}:cache`);
+      headers.set(
+        "X-Series-Image-Provider",
+        shouldApplyPortraitCutout ? `${provider}:cutout:cache` : `${provider}:cache`
+      );
       return new Response(cached.data, { status: 200, headers });
     }
 
-    const generated = await generateSeriesImageHybrid(request);
+    let generated = await generateSeriesImageHybrid(request);
+    let responsePayload = {
+      contentType: generated.contentType || "image/png",
+      data: generated.data,
+    };
+    let cutoutApplied = false;
+
+    if (shouldApplyPortraitCutout) {
+      try {
+        responsePayload = await applyPortraitCutout(responsePayload);
+        cutoutApplied = true;
+      } catch (error: any) {
+        console.warn(
+          `[series-image] portrait cutout failed (provider=${generated.provider}): ${
+            clean(error?.message || String(error)) || "unknown"
+          }`
+        );
+      }
+    }
 
     const headers = new Headers();
-    headers.set("Content-Type", generated.contentType || "image/png");
+    headers.set("Content-Type", responsePayload.contentType || "image/png");
     headers.set(
       "Cache-Control",
       `public, max-age=${IMAGE_CACHE_TTL_SECONDS}, s-maxage=${IMAGE_CACHE_TTL_SECONDS}`
     );
-    headers.set("X-Series-Image-Provider", generated.provider);
+    headers.set(
+      "X-Series-Image-Provider",
+      cutoutApplied ? `${generated.provider}:cutout` : generated.provider
+    );
 
-    setSeriesImageCache(buildSeriesImageCacheKey(generated.provider, request), {
+    setSeriesImageCache(buildSeriesImageCacheKey(generated.provider, request, {
+      cutout: cutoutApplied,
+    }), {
       contentType: headers.get("Content-Type") || "image/png",
-      data: generated.data,
+      data: responsePayload.data,
     });
 
-    return new Response(generated.data, {
+    return new Response(responsePayload.data, {
       status: 200,
       headers,
     });

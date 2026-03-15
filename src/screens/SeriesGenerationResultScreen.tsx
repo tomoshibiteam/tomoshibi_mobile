@@ -15,12 +15,6 @@ type Props = NativeStackScreenProps<RootStackParamList, "SeriesGenerationResult"
 
 type ResultTabKey = "overview" | "characters" | "world";
 
-type RuleItem = {
-  title: string;
-  description: string;
-  tone: "warning" | "accent";
-};
-
 const HERO_IMAGE_URI =
   "https://lh3.googleusercontent.com/aida-public/AB6AXuClaK6Cep3ioLM4ETJDiSBSHomcRYBC44vZUU6feXa67oKcHgv0H75jOgYm6ns5DWBqix-Xeu0UGZyMGGUgWBeq3p9qztCn2lpS6NDefOwUrmNFsyyplPmT0yQpjhACOp57nmStss03to0qE8PfSvvJgMV11p-18haW6Gggq1KHkasxWV_yw-qAqF8hDATxrLPFRQ7NE1BOFNw4WDdM1Kyfngzf7m8h8FueIsGtHNt7f-hjlQ6TLEMhG5sFs0wN6IYUG4zxziPvP0ih";
 
@@ -149,8 +143,11 @@ const formatDateLabel = () => {
 
 const pickCharacterTone = (index: number) => CHARACTER_TONES[index % CHARACTER_TONES.length];
 const PROTAGONIST_ROLE_PATTERN = /(主人公|主役|メイン|語り手|protagonist|hero|lead|main character|mc)/i;
+const COMPANION_ROLE_PATTERN = /(相棒|バディ|相方|同行|旅の相手|伴走|partner|buddy|companion|guide|案内)/i;
+const COMPANION_RELATION_PATTERN = /(相棒|バディ|同行|伴走|支える|旅を共に|partner|buddy|companion|guide)/i;
 
 const isProtagonistRole = (role?: string | null) => PROTAGONIST_ROLE_PATTERN.test(normalizeText(role, ""));
+const isCompanionRole = (role?: string | null) => COMPANION_ROLE_PATTERN.test(normalizeText(role, ""));
 
 const sortCharactersForDisplay = (characters: GeneratedSeriesCharacter[]) =>
   characters
@@ -189,6 +186,38 @@ const buildCharacterTags = (character: GeneratedSeriesCharacter) => {
   return [`#${fallback.slice(0, 10)}`];
 };
 
+const resolveCompanionCharacterIndex = (characters: GeneratedSeriesCharacter[]) => {
+  if (characters.length === 0) return -1;
+
+  let bestIndex = -1;
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  characters.forEach((character, index) => {
+    const roleText = normalizeText(character.role, "");
+    let score = 0;
+    if (isCompanionRole(roleText)) score += 120;
+    if ((character.relationshipHooks || []).some((item) => COMPANION_RELATION_PATTERN.test(normalizeText(item, "")))) {
+      score += 40;
+    }
+    if (character.mustAppear) score += 24;
+    if (character.tier === "primary") score += 16;
+    if (character.isKeyPerson) score += 8;
+    if (isProtagonistRole(roleText)) score -= 28;
+    score -= index * 0.01;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  });
+
+  if (bestIndex >= 0 && bestScore > 0) return bestIndex;
+
+  const fallbackNonProtagonist = characters.findIndex((character) => !isProtagonistRole(character.role));
+  if (fallbackNonProtagonist >= 0) return fallbackNonProtagonist;
+  return 0;
+};
+
 export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
   const { generated, sourcePrompt, imagesPreloaded } = route.params;
   const { userId } = useSessionUserId();
@@ -205,91 +234,20 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
 
   const dateLabel = useMemo(() => formatDateLabel(), []);
   const orderedCharacters = useMemo(() => sortCharactersForDisplay(generated.characters), [generated.characters]);
-  const coverConsistency = generated.coverConsistencyReport;
-  const keyPersonSummary = useMemo(() => {
-    const byId = new Map(generated.characters.map((character) => [character.id || "", character]));
-    if (generated.identityPack?.keyPersonCharacterIds?.length) {
-      return generated.identityPack.keyPersonCharacterIds
-        .map((id) => {
-          const fromPack = generated.identityPack?.characters.find((row) => row.characterId === id);
-          const fromCharacter = byId.get(id);
-          return {
-            id,
-            name: fromPack?.name || fromCharacter?.name || "キーパーソン",
-            role: fromPack?.role || fromCharacter?.role || "主要人物",
-            anchor:
-              fromPack?.identityAnchorTokens?.distinguishingFeature ||
-              fromCharacter?.identityAnchorTokens?.distinguishingFeature ||
-              fromCharacter?.visualDesign?.distinguishingFeature ||
-              "印象的なシルエット",
-          };
-        })
-        .slice(0, 3);
-    }
-
-    return (generated.coverFocusCharacters || [])
-      .slice(0, 3)
-      .map((row) => ({
-        id: row.characterId,
-        name: row.name,
-        role: row.role,
-        anchor: row.visualAnchor || "印象的なシルエット",
-      }));
-  }, [generated.characters, generated.coverFocusCharacters, generated.identityPack]);
+  const companionCharacterIndex = useMemo(
+    () => resolveCompanionCharacterIndex(orderedCharacters),
+    [orderedCharacters]
+  );
+  const companionCharacter = useMemo(
+    () => (companionCharacterIndex >= 0 ? orderedCharacters[companionCharacterIndex] : null),
+    [companionCharacterIndex, orderedCharacters]
+  );
 
   const storyParagraphs = useMemo(() => {
     const paragraphs = splitParagraphs(generated.overview, generated.premise);
     if (paragraphs.length > 0) return paragraphs;
     return ["あらすじ情報はまだ生成されていません。"];
   }, [generated.overview, generated.premise]);
-
-  const ruleItems = useMemo<RuleItem[]>(() => {
-    const fromWorld = (generated.world?.tabooRules || []).map((item) => ({
-      text: normalizeText(item, ""),
-      tone: "warning" as const,
-    }));
-
-    const fromContinuity = (generated.continuity?.invariantRules || []).map((item) => ({
-      text: normalizeText(item, ""),
-      tone: "accent" as const,
-    }));
-
-    const fromAiRule = generated.aiRules
-      .split(/[。.!?]/)
-      .map((item) => normalizeText(item, ""))
-      .filter(Boolean)
-      .map((item) => ({ text: item, tone: "accent" as const }));
-
-    const merged = [...fromWorld, ...fromContinuity, ...fromAiRule].filter((item) => item.text.length > 0);
-    const unique: Array<{ text: string; tone: "warning" | "accent" }> = [];
-    const seen = new Set<string>();
-
-    for (const item of merged) {
-      if (seen.has(item.text)) continue;
-      seen.add(item.text);
-      unique.push(item);
-      if (unique.length >= 5) break;
-    }
-
-    if (unique.length === 0) {
-      return [
-        {
-          title: "ルール未設定",
-          description: "特有のルールはまだ生成されていません。",
-          tone: "accent",
-        },
-      ];
-    }
-
-    return unique.map((item, index) => {
-      const shortTitle = item.text.length > 16 ? `${item.text.slice(0, 16)}...` : item.text;
-      return {
-        title: shortTitle || `Rule ${index + 1}`,
-        description: item.text,
-        tone: item.tone,
-      };
-    });
-  }, [generated.aiRules, generated.continuity?.invariantRules, generated.world?.tabooRules]);
 
   const settingRows = useMemo(
     () => [
@@ -298,16 +256,6 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
       { label: "シーズンゴール", value: normalizeText(generated.seasonGoal, "未設定") },
     ],
     [generated.genre, generated.seasonGoal, generated.tone]
-  );
-
-  const worldRows = useMemo(
-    () => [
-      { label: "舞台", value: normalizeText(generated.world?.setting, "未設定") },
-      { label: "時代", value: normalizeText(generated.world?.era, "未設定") },
-      { label: "社会構造", value: normalizeText(generated.world?.socialStructure, "未設定") },
-      { label: "中核対立", value: normalizeText(generated.world?.coreConflict, "未設定") },
-    ],
-    [generated.world?.coreConflict, generated.world?.era, generated.world?.setting, generated.world?.socialStructure]
   );
 
   const characterPageWidth = Math.max(1, width);
@@ -473,8 +421,6 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
     const genre = settingRows.find((row) => row.label === "ジャンル")?.value || "未設定";
     const tone = settingRows.find((row) => row.label === "トーン")?.value || "未設定";
     const seasonGoal = settingRows.find((row) => row.label === "シーズンゴール")?.value || "未設定";
-    const primaryRule = ruleItems[0];
-    const secondaryRule = ruleItems[1];
     const charactersThumb =
       orderedCharacters[0]?.portraitImageUrl ||
       buildSeedFallbackImageUrl(`${generated.title}-characters-thumb`, 640, 400);
@@ -538,7 +484,7 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
           <View className="flex-row items-center gap-2 mb-4">
             <Ionicons name="book-outline" size={20} color="#EE8C2B" />
             <Text className="text-xs text-[#EE8C2B] tracking-[0.9px]" style={{ fontFamily: fonts.displayBold }}>
-              Story Logic
+              物語のあらすじ
             </Text>
           </View>
           <Text className="text-xl text-[#221910] leading-9 mb-5" style={{ fontFamily: fonts.displayBold }}>
@@ -550,133 +496,6 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
                 {paragraph}
               </Text>
             ))}
-          </View>
-        </View>
-
-        <View className="rounded-2xl border border-[#EFE6DD] bg-white p-5 overflow-hidden">
-          <View className="absolute -top-8 -right-8 w-24 h-24 rounded-full bg-[#EE8C2B]/10" />
-          <View className="flex-row items-center justify-between mb-3">
-            <View className="flex-row items-center gap-2">
-              <Ionicons name="images-outline" size={18} color="#EE8C2B" />
-              <Text className="text-base text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
-                世界観カバー検証
-              </Text>
-            </View>
-            <View
-              className={`rounded-full px-2.5 py-1 ${coverConsistency?.passed ? "bg-[#DCFCE7]" : "bg-[#FEF3C7]"}`}
-            >
-              <Text
-                className={`text-[10px] ${coverConsistency?.passed ? "text-[#166534]" : "text-[#92400E]"}`}
-                style={{ fontFamily: fonts.displayBold }}
-              >
-                {coverConsistency?.passed ? "世界観一致" : "再調整推奨"}
-              </Text>
-            </View>
-          </View>
-
-          <Text className="text-xs text-[#6B5F53] leading-5 mb-3" style={{ fontFamily: fonts.bodyRegular }}>
-            {normalizeText(
-              coverConsistency?.summary,
-              "カバーは人物なしの世界観ポスターとして、雰囲気と画風の整合を確認しています。"
-            )}
-          </Text>
-
-          {keyPersonSummary.length > 0 ? (
-            <View className="gap-2.5">
-              <Text className="text-[11px] text-[#7C6D5D]" style={{ fontFamily: fonts.bodyRegular }}>
-                キーパーソン（登場人物カード専用）
-              </Text>
-              {keyPersonSummary.map((person, index) => (
-                <View
-                  key={`${person.id}-${index}`}
-                  className="rounded-xl border border-[#EFE6DD] bg-[#FCFBFA] px-3 py-2.5"
-                >
-                  <View className="flex-row items-center justify-between">
-                    <Text className="text-sm text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
-                      {person.name}
-                    </Text>
-                    <Text className="text-[11px] text-[#7C6D5D]" style={{ fontFamily: fonts.bodyMedium }}>
-                      {person.role}
-                    </Text>
-                  </View>
-                  <Text className="mt-1 text-[11px] text-[#62584E]" style={{ fontFamily: fonts.bodyRegular }}>
-                    アンカー: {person.anchor}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          ) : (
-            <Text className="text-xs text-[#7C6D5D]" style={{ fontFamily: fonts.bodyRegular }}>
-              キーパーソン情報は次回生成時に補完されます（カバーには人物を表示しません）。
-            </Text>
-          )}
-        </View>
-
-        <View className="gap-4">
-          <View className="flex-row items-center gap-2 px-1">
-            <Ionicons name="hammer-outline" size={18} color="#EE8C2B" />
-            <Text className="text-lg text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
-              特有のルール・制約
-            </Text>
-          </View>
-
-          <View className="rounded-2xl border border-[#EFE6DD] bg-white overflow-hidden">
-            <View className="flex-row">
-              <View className="w-1.5 bg-[#EF4444]" />
-              <View className="flex-1 p-4">
-                <View className="flex-row items-center justify-between mb-2">
-                  <View className="flex-row items-center gap-2 flex-1 pr-2">
-                    <Ionicons name="warning-outline" size={18} color="#EF4444" />
-                    <Text className="text-sm text-[#221910] flex-1" style={{ fontFamily: fonts.displayBold }}>
-                      {normalizeText(primaryRule?.title, "重要な制約")}
-                    </Text>
-                  </View>
-                  <View className="rounded-full bg-[#FEE2E2] px-2 py-0.5">
-                    <Text className="text-[10px] text-[#B91C1C]" style={{ fontFamily: fonts.displayBold }}>
-                      重罪
-                    </Text>
-                  </View>
-                </View>
-                <Text className="text-sm text-[#62584E] leading-6 mb-3" style={{ fontFamily: fonts.bodyRegular }}>
-                  {normalizeText(primaryRule?.description, "この世界では厳格な禁止事項が存在します。")}
-                </Text>
-                <View className="h-12 rounded-lg bg-[#F3F1EE] relative overflow-hidden">
-                  <View className="absolute top-1/2 left-4 right-4 h-px bg-[#CEC6BC]" />
-                  <View className="absolute top-1/2 left-[26%] w-3 h-3 rounded-full bg-[#F87171] -mt-1.5" />
-                  <View className="absolute top-1/2 left-[66%] w-2 h-2 rounded-full bg-[#9A9084] -mt-1" />
-                </View>
-              </View>
-            </View>
-          </View>
-
-          <View className="rounded-2xl border border-[#EFE6DD] bg-white overflow-hidden">
-            <View className="flex-row">
-              <View className="w-1.5 bg-[#EE8C2B]" />
-              <View className="flex-1 p-4">
-                <View className="flex-row items-center justify-between mb-2">
-                  <View className="flex-row items-center gap-2 flex-1 pr-2">
-                    <Ionicons name="layers-outline" size={18} color="#EE8C2B" />
-                    <Text className="text-sm text-[#221910] flex-1" style={{ fontFamily: fonts.displayBold }}>
-                      {normalizeText(secondaryRule?.title, "社会ルール")}
-                    </Text>
-                  </View>
-                  <View className="rounded-full bg-[#FFEDD5] px-2 py-0.5">
-                    <Text className="text-[10px] text-[#C2410C]" style={{ fontFamily: fonts.displayBold }}>
-                      社会構造
-                    </Text>
-                  </View>
-                </View>
-                <Text className="text-sm text-[#62584E] leading-6 mb-3" style={{ fontFamily: fonts.bodyRegular }}>
-                  {normalizeText(secondaryRule?.description, "社会構造そのものが、行動範囲や立場を決めています。")}
-                </Text>
-                <View className="h-12 rounded-lg bg-[#F3F1EE] flex-row items-end gap-1 px-4 py-2">
-                  <View className="h-8 flex-1 rounded-sm bg-[#A855F7]" />
-                  <View className="h-6 flex-1 rounded-sm bg-[#3B82F6]" />
-                  <View className="h-4 flex-1 rounded-sm bg-[#22C55E]" />
-                  <View className="h-2 flex-1 rounded-sm bg-[#9CA3AF]" />
-                </View>
-              </View>
-            </View>
           </View>
         </View>
 
@@ -737,6 +556,11 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
             <Text className="text-xs text-[#62584E]" style={{ fontFamily: fonts.bodyRegular }}>
               役割と関係性を中心に、物語の主要人物を確認できます。
             </Text>
+            {companionCharacter ? (
+              <Text className="text-xs text-[#9A734C] mt-1.5" style={{ fontFamily: fonts.displayBold }}>
+                あなたの相棒: {stripAlphabetFromName(normalizeText(companionCharacter.name, "未設定"))}
+              </Text>
+            ) : null}
           </View>
 
           <ScrollView
@@ -757,9 +581,12 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
             {orderedCharacters.map((character, index) => {
               const tone = pickCharacterTone(index);
               const cardKey = `${character.id || index}-${character.name}`;
+              const isCompanion = index === companionCharacterIndex;
               const relation = normalizeText(character.relationshipHooks?.[0], "他の登場人物との関係性は未設定です。");
               const role = normalizeText(character.role, "主要人物");
-              const tags = buildCharacterTags(character);
+              const tags = isCompanion
+                ? ["#あなたの相棒", ...buildCharacterTags(character)].slice(0, 4)
+                : buildCharacterTags(character);
               const portraitFallback = buildSeedFallbackImageUrl(
                 `${generated.title}-${character.name}-${character.role}-character`,
                 640,
@@ -824,6 +651,15 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
                         <Text className="text-3xl text-[#221910] mb-4" style={{ fontFamily: fonts.displayExtraBold }}>
                           {stripAlphabetFromName(normalizeText(character.name, `人物${index + 1}`))}
                         </Text>
+
+                        {isCompanion ? (
+                          <View className="mb-3 px-3 py-1.5 rounded-full border border-[#F5D4AF] bg-[#FFF4E7] flex-row items-center gap-1.5">
+                            <Ionicons name="sparkles-outline" size={13} color="#B86921" />
+                            <Text className="text-[11px] text-[#B86921]" style={{ fontFamily: fonts.displayBold }}>
+                              あなたの相棒
+                            </Text>
+                          </View>
+                        ) : null}
 
                         <View className="flex-row flex-wrap justify-center gap-2 mb-6">
                           {tags.map((tag, tagIndex) => (
@@ -993,54 +829,6 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
         </View>
       </View>
 
-      <View className="gap-3 mb-4">
-        <View className="flex-row items-center gap-2 px-1">
-          <Ionicons name="hammer-outline" size={18} color="#EE8C2B" />
-          <Text className="text-lg text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
-            都市の掟
-          </Text>
-        </View>
-
-        <View className="rounded-2xl border border-[#FECACA] bg-[#FEF2F2] p-4 flex-row items-center gap-4 overflow-hidden">
-          <View className="w-12 h-12 rounded-full border border-[#FCA5A5] bg-[#FEE2E2] items-center justify-center">
-            <Ionicons name="ban-outline" size={24} color="#DC2626" />
-          </View>
-          <View className="flex-1">
-            <View className="flex-row items-center gap-2 mb-1">
-              <View className="rounded bg-[#DC2626] px-1.5 py-0.5">
-                <Text className="text-[10px] text-white tracking-[0.6px]" style={{ fontFamily: fonts.displayBold }}>
-                  Warning
-                </Text>
-              </View>
-              <Text className="text-sm text-[#7F1D1D]" style={{ fontFamily: fonts.displayBold }}>
-                {normalizeText(ruleItems[0]?.title, "抽出禁止")}
-              </Text>
-            </View>
-            <Text className="text-[11px] text-[#991B1B] leading-5" style={{ fontFamily: fonts.bodyRegular }}>
-              {normalizeText(ruleItems[0]?.description, "違反行為は都市からの追放対象となる。")}
-            </Text>
-          </View>
-        </View>
-
-        <View className="rounded-2xl border border-[#EFE6DD] bg-white p-4 flex-row items-center gap-4">
-          <View className="w-12 h-12 rounded-full bg-[#FFF7E6] items-center justify-center">
-            <Ionicons name="color-palette-outline" size={24} color="#F59E0B" />
-          </View>
-          <View className="flex-1">
-            <Text className="text-sm text-[#221910] mb-1" style={{ fontFamily: fonts.displayBold }}>
-              {normalizeText(ruleItems[1]?.title, "色彩階級制度")}
-            </Text>
-            <View className="h-1.5 rounded-full overflow-hidden flex-row mb-1.5">
-              <View className="flex-1 bg-[#EF4444]" />
-              <View className="flex-1 bg-[#22C55E]" />
-              <View className="flex-1 bg-[#3B82F6]" />
-            </View>
-            <Text className="text-[10px] text-[#62584E] leading-5" style={{ fontFamily: fonts.bodyRegular }}>
-              {normalizeText(ruleItems[1]?.description, "社会階層は色の純度や希少性によって規定される。")}
-            </Text>
-          </View>
-        </View>
-      </View>
     </View>
   );
 

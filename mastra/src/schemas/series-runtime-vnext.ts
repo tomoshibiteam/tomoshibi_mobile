@@ -302,6 +302,8 @@ export const localEpisodeCharacterSchema = z.object({
   relationToSpot: z.string(),
   relationToSeriesTheme: z.string(),
   speechStyle: z.array(z.string()),
+  portraitPrompt: z.string().optional(),
+  portraitImageUrl: z.string().optional(),
   callbackEligible: z.boolean(),
 });
 
@@ -404,6 +406,8 @@ export const episodeOutputSchema = z.object({
   episodeId: z.string(),
   seriesBlueprintId: z.string(),
   userSeriesStateId: z.string(),
+  coverImagePrompt: z.string().optional(),
+  coverImageUrl: z.string().optional(),
   episodeMeta: z.object({
     episodeIndex: z.number().int().min(1),
     title: z.string(),
