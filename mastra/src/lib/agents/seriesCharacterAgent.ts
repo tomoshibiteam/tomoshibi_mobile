@@ -1,7 +1,11 @@
 import { Agent } from "@mastra/core/agent";
 import { z } from "zod";
 import { MASTRA_SERIES_CHARACTER_MODEL } from "../modelConfig";
-import { seriesCharacterSchema } from "../../schemas/series";
+import {
+  seriesCharacterSchema,
+  seriesMysteryProfileSchema,
+  seriesRecentGenerationContextSchema,
+} from "../../schemas/series";
 import { buildCharacterPortraitPrompt, buildSeriesImageUrl } from "../seriesVisuals";
 
 export const seriesCharacterAgentInputSchema = z.object({
@@ -14,6 +18,8 @@ export const seriesCharacterAgentInputSchema = z.object({
   partner_description: z.string(),
   style_guide: z.string().optional(),
   target_count: z.number().int().min(3).max(8).default(4),
+  mystery_profile: seriesMysteryProfileSchema.optional(),
+  recent_generation_context: seriesRecentGenerationContextSchema.optional(),
 });
 
 export const seriesCharacterAgentOutputSchema = z.object({
@@ -34,6 +40,14 @@ const lightCharacterSchema = z.object({
   appearance: z.string(),
   secrets: z.array(z.string()),
   relationship_hooks: z.array(z.string()),
+  investigation_function: z.string().optional(),
+  emotional_temperature: z.string().optional(),
+  relationship_temperature: z.string().optional(),
+  signature_prop: z.string().optional(),
+  environment_residue: z.string().optional(),
+  posture_grammar: z.string().optional(),
+  truth_proximity: z.string().optional(),
+  hypothesis_pressure: z.string().optional(),
 });
 
 const lightOutputSchema = z.object({
@@ -55,12 +69,27 @@ const SERIES_CHARACTER_AGENT_INSTRUCTIONS = `
 - must_appear は primary のみ true を許可。
 - portrait_prompt: 画像生成用の短い英語説明（1文）。portrait_image_url: 空文字 "" でよい。
 - secrets, relationship_hooks は文字列の配列（空配列可）。
-- 上記以外の拡張フィールドは出力しない（レスポンス短縮のため）。
+- 拡張フィールドは必要最小限に限定し、特に investigation_function / emotional_temperature / relationship_temperature / signature_prop / environment_residue / posture_grammar / truth_proximity / hypothesis_pressure を優先する。
+
+## ジャンル契約
+- 本シリーズは「現実拡張型・外出周遊ミステリー」である。
+- 超常は雰囲気演出までで、真相解決の主因にはしない。
+- 固定キャラクターは「雰囲気」ではなく「捜査構造の役割」で差分を作る。
+- primary 同士は investigation_function を被らせない。
+- 相棒は有能すぎて全てを解決しない。ユーザーが観察・推理に参加できる余白を残す。
+- 少なくとも1人は「真相に近いが全部は知らない立場」にする。
+- 少なくとも1人は「ユーザーの仮説を揺らす立場」にする。
+- 各キャラは signature_prop と environment_residue を持ち、事件世界の住人として視覚的に識別できるようにする。
 
 ## 差別化
 - キャラ数は3〜5。名前・口癖・dominant_colorは互いに被らせない。
 - primary は1〜2人を必須。secondary は最大3人。
 - name に「あなた」「アナタ」「プレイヤー」「主人公」「You」など自己参照語を使わない。全員を固有名詞で命名する。
+- primary/secondary を問わず、少なくとも以下3点で差分を作る。
+  - duo_dynamic
+  - investigation_function
+  - emotional_temperature
+- 「謎多き美形相棒」「少し皮肉」「過去に傷」という generic な安全テンプレへ寄せない。
 `;
 
 export const seriesCharacterAgent = new Agent({
@@ -72,12 +101,33 @@ export const seriesCharacterAgent = new Agent({
 
 const clean = (value?: string) => (value || "").replace(/\s+/g, " ").trim();
 
+const formatRecentContext = (
+  recent?: z.infer<typeof seriesRecentGenerationContextSchema>
+) => {
+  const value = recent || undefined;
+  if (!value) return "なし";
+  const sections = [
+    ["recent_character_archetypes", value.recent_character_archetypes],
+    ["recent_relationship_patterns", value.recent_relationship_patterns],
+    ["recent_appearance_patterns", value.recent_appearance_patterns],
+    ["recent_visual_motifs", value.recent_visual_motifs],
+  ] as const;
+  const lines = sections
+    .map(([label, items]) => {
+      const joined = (items || []).map((item) => clean(item)).filter(Boolean).join(" / ");
+      return joined ? `- ${label}: ${joined}` : "";
+    })
+    .filter(Boolean);
+  return lines.length > 0 ? lines.join("\n") : "なし";
+};
+
 const hasModelApiKey = () =>
   Boolean(
     process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
-    process.env.OPENAI_API_KEY ||
-    process.env.ANTHROPIC_API_KEY
+      process.env.OPENAI_API_KEY ||
+      process.env.ANTHROPIC_API_KEY
   );
+const SERIES_AGENT_FALLBACK_ENABLED = false;
 
 // ─── Visual design helpers ─────────────────────────────────────────────
 const DOMINANT_COLORS = ["深紅", "群青", "翡翠", "金", "銀灰", "紫紺", "珊瑚", "墨黒"];
@@ -426,6 +476,46 @@ const normalizeCharacter = (
       ? raw.quirks.map((q) => clean(q)).filter(Boolean)
       : fallback.quirks,
     appearance: clean(raw.appearance) || fallback.appearance,
+    investigation_function:
+      clean(raw.investigation_function) ||
+      clean(fallback.investigation_function) ||
+      ["観察と仮説構築", "聞き込みと現地判断", "記録照合と背景整理", "対立構造の揺さぶり"][index % 4],
+    emotional_temperature:
+      clean(raw.emotional_temperature) ||
+      clean(fallback.emotional_temperature) ||
+      ["静かな緊張", "乾いた実務感", "穏やかな含み", "挑発的な熱量"][index % 4],
+    relationship_temperature:
+      clean(raw.relationship_temperature) ||
+      clean(fallback.relationship_temperature) ||
+      clean(raw.emotional_temperature) ||
+      clean(fallback.emotional_temperature) ||
+      ["慎重な協働", "実務的な連帯", "牽制を含む信頼", "熱を帯びた緊張"][index % 4],
+    signature_prop:
+      clean(raw.signature_prop) ||
+      clean(fallback.signature_prop) ||
+      (index % 4 === 0
+        ? "注釈だらけのフィールドノート"
+        : index % 4 === 1
+          ? "折り目の残る地図と時刻メモ"
+          : index % 4 === 2
+            ? "記録照合用のファイル束"
+            : "矛盾箇所に印を付けたタイムライン表"),
+    environment_residue:
+      clean(raw.environment_residue) ||
+      clean(fallback.environment_residue) ||
+      "現地素材の摩耗痕や湿度・風の影響が衣服や小物に残っている",
+    posture_grammar:
+      clean(raw.posture_grammar) ||
+      clean(fallback.posture_grammar) ||
+      (index % 2 === 0 ? "前傾で観察する姿勢" : "余白を保って全体を俯瞰する姿勢"),
+    truth_proximity:
+      clean(raw.truth_proximity) ||
+      clean(fallback.truth_proximity) ||
+      (index === 0 ? "断片的に真相へ触れる" : index === 1 ? "真相に近いが全貌は知らない" : "外縁から真相をずらして見せる"),
+    hypothesis_pressure:
+      clean(raw.hypothesis_pressure) ||
+      clean(fallback.hypothesis_pressure) ||
+      (index === 0 ? "ユーザーの初期仮説を組み立てる" : index === 1 ? "ユーザーの仮説を補強と攪乱の両方で揺らす" : "別解釈を差し込んで認識反転を促す"),
     visual_design: raw.visual_design || fallback.visual_design || {
       dominant_color: DOMINANT_COLORS[index % DOMINANT_COLORS.length],
       body_type: BODY_TYPES[index % BODY_TYPES.length],
@@ -486,7 +576,13 @@ const normalizeCharacterOutput = (
             role: normalized.role,
             personality: normalized.personality,
             appearance: normalized.appearance,
-            setting: input.premise,
+            setting: clean(input.mystery_profile?.environment_layer) || input.premise,
+            caseCore: clean(input.mystery_profile?.case_core),
+            environmentLayer: clean(input.mystery_profile?.environment_layer),
+            investigationFunction: normalized.investigation_function,
+            relationshipTemperature: normalized.relationship_temperature || normalized.emotional_temperature,
+            signatureProp: normalized.signature_prop,
+            environmentResidue: normalized.environment_residue,
             dominantColor: normalized.visual_design?.dominant_color,
             bodyType: normalized.visual_design?.body_type,
             distinguishingFeature: normalized.visual_design?.distinguishing_feature,
@@ -508,16 +604,16 @@ const normalizeCharacterOutput = (
 };
 
 const CHARACTER_GENERATION_TIMEOUT_MS = Math.max(
-  60_000,
-  Number.parseInt(clean(process.env.SERIES_CHARACTER_GENERATION_TIMEOUT_MS) || "180000", 10) || 180_000
+  45_000,
+  Number.parseInt(clean(process.env.SERIES_CHARACTER_GENERATION_TIMEOUT_MS) || "120000", 10) || 120_000
 );
 const CHARACTER_GENERATION_MAX_ATTEMPTS = Math.max(
   1,
-  Math.min(3, Number.parseInt(clean(process.env.SERIES_CHARACTER_GENERATION_MAX_ATTEMPTS) || "2", 10) || 2)
+  Math.min(3, Number.parseInt(clean(process.env.SERIES_CHARACTER_GENERATION_MAX_ATTEMPTS) || "1", 10) || 1)
 );
 const CHARACTER_GENERATION_TIMEOUT_GROWTH = Math.max(
   1,
-  Number.parseFloat(clean(process.env.SERIES_CHARACTER_GENERATION_TIMEOUT_GROWTH) || "1.35") || 1.35
+  Number.parseFloat(clean(process.env.SERIES_CHARACTER_GENERATION_TIMEOUT_GROWTH) || "1.15") || 1.15
 );
 
 export const generateSeriesCharacters = async (
@@ -525,16 +621,35 @@ export const generateSeriesCharacters = async (
 ): Promise<SeriesCharacterAgentOutput> => {
   const logPrefix = "[series-character-agent]";
   console.log(`${logPrefix} 開始 — title: ${input.title}, target_count: ${input.target_count}`);
+  const fallbackOutput =
+    normalizeCharacterOutput(input, { characters: fallbackCharacters(input) }) || {
+      characters: applyTierPolicy(enforceCharacterNamePolicy(fallbackCharacters(input))),
+    };
 
   if (!hasModelApiKey()) {
-    console.error(`${logPrefix} APIキー未設定`);
-    throw new Error("AI生成に必要なAPIキーが設定されていません。GOOGLE_GENERATIVE_AI_API_KEY を確認してください。");
+    if (SERIES_AGENT_FALLBACK_ENABLED) {
+      console.warn(`${logPrefix} APIキー未設定 — fallback characters を使用`);
+      return fallbackOutput;
+    }
+    throw new Error("キャラクター生成に失敗しました。利用可能なAIモデルがありません。");
   }
 
   const prompt = `
 シリーズ「${input.title}」のキャラクターを ${Math.max(3, Math.min(5, input.target_count))} 人分、JSON で出力してください。
 ジャンル: ${input.genre} / トーン: ${input.tone} / 前提: ${input.premise}
 主人公: ${input.protagonist_position} / 相棒像: ${input.partner_description} / シーズン目標: ${input.season_goal}
+ミステリープロファイル:
+- case_core: ${clean(input.mystery_profile?.case_core) || "未指定"}
+- investigation_style: ${clean(input.mystery_profile?.investigation_style) || "未指定"}
+- emotional_tone: ${clean(input.mystery_profile?.emotional_tone) || "未指定"}
+- duo_dynamic: ${clean(input.mystery_profile?.duo_dynamic) || "未指定"}
+- truth_nature: ${clean(input.mystery_profile?.truth_nature) || "未指定"}
+- visual_language: ${clean(input.mystery_profile?.visual_language) || "未指定"}
+- environment_layer: ${clean(input.mystery_profile?.environment_layer) || "未指定"}
+
+Variation reference:
+- 直近との差分を最低3点作ること
+${formatRecentContext(input.recent_generation_context)}
 
 各キャラクターに以下のフィールドを含めてください:
 - id: "char_1" から連番
@@ -549,10 +664,22 @@ export const generateSeriesCharacters = async (
 - appearance: 外見（1〜2文）
 - secrets: 秘密の配列（1〜2個）
 - relationship_hooks: 関係性フック（1〜2個）
+- investigation_function: 捜査上の担当機能（観察/聞き込み/記録照合/地理把握/矛盾検知など）
+- emotional_temperature: 感情の温度感
+- relationship_temperature: 他者との関係温度（緊張/信頼/牽制など）
+- signature_prop: その人物を象徴する事件関連小道具
+- environment_residue: 場所由来の素材痕跡（潮気/湿度/粉塵など）
+- posture_grammar: 立ち姿・動作の癖（観察/対話時の姿勢）
+- truth_proximity: 真相との距離感
+- hypothesis_pressure: ユーザーの仮説をどう揺らすか
 
 名前・性格・外見が互いに被らないようにしてください。
 primary は1〜2人、secondary は最大3人にしてください。
 name には「あなた」「アナタ」「プレイヤー」「主人公」「You」など自己参照語を使わず、全員を固有名詞で命名してください。
+primary 同士で investigation_function を被らせないでください。
+少なくとも1人は「真相に近いが全部は知らない立場」にしてください。
+少なくとも1人は「ユーザーの仮説を揺らす立場」にしてください。
+generic な「謎多き美形相棒」へ逃げないでください。
 `;
 
   const maxAttempts = CHARACTER_GENERATION_MAX_ATTEMPTS;
@@ -600,5 +727,9 @@ name には「あなた」「アナタ」「プレイヤー」「主人公」「
   }
 
   console.error(`${logPrefix} 全試行失敗`);
+  if (SERIES_AGENT_FALLBACK_ENABLED) {
+    console.warn(`${logPrefix} fallback characters を使用`);
+    return fallbackOutput;
+  }
   throw new Error("キャラクター生成に失敗しました。AIモデルからの応答が得られませんでした。再度お試しください。");
 };

@@ -87,7 +87,7 @@ const mapLegacyCharacter = (character: any, index: number): SeriesCharacter => {
       immutableTraits: dedupe([personality]),
       mutableTraits: dedupe([arcStart, arcEnd]),
       speechStyle: dedupe([clean(character?.speech_pattern), clean(character?.catchphrase)]),
-      worldview: clean(character?.drive) || "街の意味を読み解く視点を持つ",
+      worldview: clean(character?.drive) || "現地の見え方の差から事実を読み解く視点を持つ",
       motivationCore: clean(character?.core_desire) || clean(character?.goal) || "ユーザーとの旅で真相に近づく",
       fearOrWound: clean(character?.core_fear) || undefined,
       attractionOrAffinityToUser: clean(character?.arc_trigger) || undefined,
@@ -143,11 +143,15 @@ const buildSeriesBlueprint = (params: {
   const meta = output.meta || {};
 
   const title = clean(series?.title) || "灯火シリーズ";
-  const overview = clean(series?.overview) || clean(series?.premise) || "継続して歩ける街の物語";
+  const overview = clean(series?.overview) || clean(series?.premise) || "現実世界を巡りながら真相へ近づく物語";
   const premise = clean(series?.premise) || overview;
   const aiRules = parseBulletLines(series?.ai_rules);
   const continuity = series?.continuity || {};
   const world = series?.world || {};
+  const mysteryProfile =
+    series?.mystery_profile && typeof series.mystery_profile === "object"
+      ? (series.mystery_profile as Record<string, unknown>)
+      : undefined;
 
   const characters: SeriesCharacter[] = (Array.isArray(series?.characters) ? series.characters : [])
     .slice(0, 8)
@@ -279,7 +283,24 @@ const buildSeriesBlueprint = (params: {
       title,
       oneLineHook: clean(series?.season_goal) || overview,
       premise,
-      worldviewCore: clean(world?.setting) || clean(series?.genre) || "街を舞台にした継続物語",
+      worldviewCore: clean(world?.setting) || clean(series?.genre) || "現実世界を巡る継続ミステリー",
+      mysteryProfile: mysteryProfile
+        ? {
+            case_core: clean(mysteryProfile.case_core),
+            investigation_style: clean(mysteryProfile.investigation_style),
+            emotional_tone: clean(mysteryProfile.emotional_tone),
+            duo_dynamic: clean(mysteryProfile.duo_dynamic),
+            truth_nature: clean(mysteryProfile.truth_nature),
+            visual_language: clean(mysteryProfile.visual_language),
+            environment_layer: clean(mysteryProfile.environment_layer),
+            differentiation_axes: dedupe(Array.isArray(mysteryProfile.differentiation_axes) ? mysteryProfile.differentiation_axes : []),
+            banned_templates_avoided: dedupe(
+              Array.isArray(mysteryProfile.banned_templates_avoided)
+                ? mysteryProfile.banned_templates_avoided
+                : []
+            ),
+          }
+        : undefined,
       emotionalPromise: dedupe([
         clean(series?.tone),
         clean(raw.interview),
@@ -299,7 +320,8 @@ const buildSeriesBlueprint = (params: {
       longArcGoal: clean(series?.season_goal) || "各話の体験を積み重ねて結末へ収束する",
       plannedEnding: clean(continuity?.finale_payoff) || "主要な未解決要素が収束する",
       endingType: mapEndingType(continuity),
-      coreMysteryOrDrive: clean(continuity?.global_mystery) || clean(series?.premise) || "街に散在する手がかりをつなぐ",
+      coreMysteryOrDrive:
+        clean(continuity?.global_mystery) || clean(series?.premise) || "複数地点に散らばる手掛かりをつなぐ",
       progressionMode: mapProgressionMode(series?.genre, raw.interview),
       freePlanDefaultEpisodeLimit: desiredEpisodeLimit,
     },
@@ -558,7 +580,7 @@ const toLegacySeriesGenerationInput = (raw: RawSeriesGenerationRequest) => {
 
   return {
     interview: {
-      genre_world: genreHint || prompt || interview || "現代日本の徒歩街歩き",
+      genre_world: genreHint || prompt || interview || "現代日本の現実拡張型・外出周遊ミステリー",
       desired_emotion: interview || "余韻と発見",
       companion_preference: "固定キャラクターと継続対話したい",
       continuation_trigger: "前話の伏線が次話で進むこと",
@@ -575,6 +597,18 @@ const toLegacySeriesGenerationInput = (raw: RawSeriesGenerationRequest) => {
     prompt: prompt || undefined,
     language: "ja",
     generation_mode: "full" as const,
+    recent_generation_context: {
+      recent_titles: dedupe(raw.recentTitles || []),
+      recent_case_motifs: dedupe(raw.recentCaseMotifs || []),
+      recent_character_archetypes: dedupe(raw.recentCharacterArchetypes || []),
+      recent_relationship_patterns: dedupe(raw.recentRelationshipPatterns || []),
+      recent_visual_motifs: dedupe(raw.recentVisualMotifs || []),
+      recent_truth_patterns: dedupe(raw.recentTruthPatterns || []),
+      recent_checkpoint_patterns: dedupe(raw.recentCheckpointPatterns || []),
+      recent_first_episode_patterns: dedupe(raw.recentFirstEpisodePatterns || []),
+      recent_environment_patterns: dedupe(raw.recentEnvironmentPatterns || []),
+      recent_appearance_patterns: dedupe(raw.recentAppearancePatterns || []),
+    },
   };
 };
 
@@ -767,7 +801,8 @@ const toLegacyRuntimeInput = (
         objective: seriesBlueprint.firstEpisodeSeed.purpose,
         opening_scene: seriesBlueprint.firstEpisodeSeed.openingSituation,
         expected_duration_minutes: clamp(request.episodeRequest.locationContext.availableMinutes || 30, 10, 45),
-        route_style: "walk",
+        route_style: "mixed",
+        movement_style: "現地の自然な移動手段を含む周遊",
         completion_condition: seriesBlueprint.firstEpisodeSeed.whyGoThereLogic,
         carry_over_hint:
           seriesBlueprint.firstEpisodeSeed.foreshadowingPlan.seed[0] ||
@@ -900,7 +935,6 @@ const ensureEpisodeLocalCharacterPortraits = (params: {
         width: 768,
         height: 1024,
         purpose: "character_portrait",
-        styleReference: styleGuide,
       });
 
     return {
@@ -1710,7 +1744,7 @@ const mapLegacyEpisodeToVNext = (params: {
     episodeMeta: {
       episodeIndex: continuityContext.episodeIndex,
       title: clean(legacyEpisode?.title) || `第${continuityContext.episodeIndex}話`,
-      summaryHook: clean(legacyEpisode?.one_liner) || clean(legacyEpisode?.summary) || "新たな街歩き体験",
+      summaryHook: clean(legacyEpisode?.one_liner) || clean(legacyEpisode?.summary) || "新たな外出周遊ミステリー体験",
       episodePurpose:
         clean(legacyEpisode?.main_plot?.goal) || clean(input.request.episodeRequest.tourismGoal) || "継続物語を進める",
       arcRole: arcRoleFromCheckpoint(input.seriesBlueprint, input.userSeriesState.currentProgress.currentCheckpointIndex),

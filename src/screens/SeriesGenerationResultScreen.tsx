@@ -15,9 +15,6 @@ type Props = NativeStackScreenProps<RootStackParamList, "SeriesGenerationResult"
 
 type ResultTabKey = "overview" | "characters" | "world";
 
-const HERO_IMAGE_URI =
-  "https://lh3.googleusercontent.com/aida-public/AB6AXuClaK6Cep3ioLM4ETJDiSBSHomcRYBC44vZUU6feXa67oKcHgv0H75jOgYm6ns5DWBqix-Xeu0UGZyMGGUgWBeq3p9qztCn2lpS6NDefOwUrmNFsyyplPmT0yQpjhACOp57nmStss03to0qE8PfSvvJgMV11p-18haW6Gggq1KHkasxWV_yw-qAqF8hDATxrLPFRQ7NE1BOFNw4WDdM1Kyfngzf7m8h8FueIsGtHNt7f-hjlQ6TLEMhG5sFs0wN6IYUG4zxziPvP0ih";
-
 const SERIES_OPTIONS_KEY = "tomoshibi.seriesOptions";
 const SELECTED_SERIES_KEY = "tomoshibi.selectedSeries";
 const SERIES_DRAFTS_KEY = "tomoshibi.seriesDrafts";
@@ -174,7 +171,7 @@ const buildCharacterTags = (character: GeneratedSeriesCharacter) => {
   const unique: string[] = [];
   const seen = new Set<string>();
   for (const source of sources) {
-    const tag = source.replace(/[「」『』()（）]/g, "").slice(0, 10);
+    const tag = source.replace(/[「」『』()（）]/g, "").trim();
     if (!tag || seen.has(tag)) continue;
     seen.add(tag);
     unique.push(`#${tag}`);
@@ -183,7 +180,7 @@ const buildCharacterTags = (character: GeneratedSeriesCharacter) => {
 
   if (unique.length > 0) return unique;
   const fallback = normalizeText(character.role, "人物");
-  return [`#${fallback.slice(0, 10)}`];
+  return [`#${fallback}`];
 };
 
 const resolveCompanionCharacterIndex = (characters: GeneratedSeriesCharacter[]) => {
@@ -389,8 +386,7 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
 
   const renderCharacterAvatar = (character: GeneratedSeriesCharacter, index: number, size: number) => {
     const portraitKey = `${character.id || index}-${character.name}`;
-    const fallbackUrl = buildSeedFallbackImageUrl(`${generated.title}-${character.name}-portrait`, 512, 512);
-    const portraitUri = failedPortraits[portraitKey] ? fallbackUrl : character.portraitImageUrl || fallbackUrl;
+    const portraitUri = failedPortraits[portraitKey] ? "" : character.portraitImageUrl || "";
 
     if (!portraitUri) {
       return (
@@ -587,12 +583,7 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
               const tags = isCompanion
                 ? ["#あなたの相棒", ...buildCharacterTags(character)].slice(0, 4)
                 : buildCharacterTags(character);
-              const portraitFallback = buildSeedFallbackImageUrl(
-                `${generated.title}-${character.name}-${character.role}-character`,
-                640,
-                640
-              );
-              const portraitUri = failedPortraits[cardKey] ? portraitFallback : character.portraitImageUrl || portraitFallback;
+              const portraitUri = failedPortraits[cardKey] ? "" : character.portraitImageUrl || "";
 
               return (
                 <View
@@ -663,8 +654,15 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
 
                         <View className="flex-row flex-wrap justify-center gap-2 mb-6">
                           {tags.map((tag, tagIndex) => (
-                            <View key={`${cardKey}-tag-${tagIndex}`} className="px-2.5 py-1 rounded-full bg-[#F3F1EE]">
-                              <Text className="text-xs text-[#62584E]" style={{ fontFamily: fonts.bodyMedium }}>
+                            <View
+                              key={`${cardKey}-tag-${tagIndex}`}
+                              className="px-2.5 py-1 rounded-2xl bg-[#F3F1EE]"
+                              style={{ maxWidth: "100%" }}
+                            >
+                              <Text
+                                className="text-xs text-[#62584E] leading-4 text-center"
+                                style={{ fontFamily: fonts.bodyMedium, flexShrink: 1 }}
+                              >
                                 {tag}
                               </Text>
                             </View>
@@ -832,9 +830,7 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
     </View>
   );
 
-  const coverImageUri = heroImageFailed
-    ? buildSeedFallbackImageUrl(`${generated.title}-cover-fallback`, 1024, 1365)
-    : generated.coverImageUrl || HERO_IMAGE_URI;
+  const coverImageUri = heroImageFailed ? "" : generated.coverImageUrl || "";
 
   const allImageUris = useMemo(() => {
     const uris: string[] = [];
@@ -940,13 +936,16 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
         stickyHeaderIndices={[1]}
       >
         <View className="relative h-[280px]">
-          <ImageBackground
-            source={{ uri: coverImageUri }}
-            resizeMode="cover"
-            className="absolute inset-0"
-            onError={() => setHeroImageFailed(true)}
-          >
-          </ImageBackground>
+          {coverImageUri ? (
+            <ImageBackground
+              source={{ uri: coverImageUri }}
+              resizeMode="cover"
+              className="absolute inset-0"
+              onError={() => setHeroImageFailed(true)}
+            />
+          ) : (
+            <View className="absolute inset-0 bg-[#CFC6BD]" />
+          )}
 
           <SafeAreaView edges={["top"]} className="absolute top-0 left-0 right-0">
             <View className="px-4 py-3">

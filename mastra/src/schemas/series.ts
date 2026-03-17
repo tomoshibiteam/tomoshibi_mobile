@@ -15,6 +15,31 @@ export const seriesInterviewSchema = z.object({
   partner_description: z.string().optional(),
 });
 
+export const seriesRecentGenerationContextSchema = z.object({
+  recent_titles: z.array(z.string()).max(12),
+  recent_case_motifs: z.array(z.string()).max(12),
+  recent_character_archetypes: z.array(z.string()).max(12),
+  recent_relationship_patterns: z.array(z.string()).max(12),
+  recent_visual_motifs: z.array(z.string()).max(12),
+  recent_truth_patterns: z.array(z.string()).max(12),
+  recent_checkpoint_patterns: z.array(z.string()).max(12),
+  recent_first_episode_patterns: z.array(z.string()).max(12),
+  recent_environment_patterns: z.array(z.string()).max(12),
+  recent_appearance_patterns: z.array(z.string()).max(12),
+});
+
+export const seriesMysteryProfileSchema = z.object({
+  case_core: z.string(),
+  investigation_style: z.string(),
+  emotional_tone: z.string(),
+  duo_dynamic: z.string(),
+  truth_nature: z.string(),
+  visual_language: z.string(),
+  environment_layer: z.string(),
+  differentiation_axes: z.array(z.string()).max(7).default([]),
+  banned_templates_avoided: z.array(z.string()).max(8).default([]),
+});
+
 export const seriesGenerationRequestSchema = z.object({
   interview: seriesInterviewSchema,
   desired_episode_count: z.number().int().min(3).max(24).optional(),
@@ -24,6 +49,7 @@ export const seriesGenerationRequestSchema = z.object({
   generation_mode: z.enum(["proposal", "full"]).optional(),
   existing_identity_pack: z.unknown().optional(),
   identity_retcon: z.boolean().optional(),
+  recent_generation_context: seriesRecentGenerationContextSchema.optional(),
 });
 
 export const seriesPreferenceSheetSchema = z.object({
@@ -196,6 +222,14 @@ export const seriesCharacterSchema = z.object({
   portrait_image_url: z.string(),
   secrets: z.array(z.string()),
   relationship_hooks: z.array(z.string()),
+  investigation_function: z.string().optional(),
+  emotional_temperature: z.string().optional(),
+  relationship_temperature: z.string().optional(),
+  signature_prop: z.string().optional(),
+  environment_residue: z.string().optional(),
+  posture_grammar: z.string().optional(),
+  truth_proximity: z.string().optional(),
+  hypothesis_pressure: z.string().optional(),
   // Extended fields (optional for backward compatibility)
   archetype: z.string().optional(),
   drive: z.string().optional(),
@@ -239,6 +273,9 @@ export const seriesCheckpointSchema = z.object({
   unlock_hint: z.string(),
   expected_emotion: z.string(),
   carry_over: z.string(),
+  knowledge_gain: z.string().optional(),
+  remaining_unknown: z.string().optional(),
+  next_move_reason: z.string().optional(),
 });
 
 export const seriesEpisodeSeedSpotRequirementSchema = z.object({
@@ -256,8 +293,13 @@ export const seriesEpisodeSeedSchema = z.object({
   opening_scene: z.string(),
   expected_duration_minutes: z.number().int().min(10).max(45),
   route_style: z.string(),
+  movement_style: z.string().optional(),
   completion_condition: z.string(),
   carry_over_hint: z.string(),
+  inciting_incident: z.string().optional(),
+  first_false_assumption: z.string().optional(),
+  first_reversal: z.string().optional(),
+  unresolved_hook: z.string().optional(),
   spot_requirements: z.array(seriesEpisodeSeedSpotRequirementSchema).min(2).max(4),
   // Legacy compatibility field. New planner no longer decides concrete spot names.
   suggested_spots: z.array(z.string()).max(6).optional(),
@@ -337,7 +379,7 @@ export const seriesCoverCandidateReportSchema = z.object({
 });
 
 export const seriesCoverConsistencyReportSchema = z.object({
-  mode: z.enum(["quality_first"]),
+  mode: z.enum(["quality_first", "single_pass"]),
   thresholds: z.object({
     required_axes_per_character: z.number().int().min(1).max(3),
     min_average_pass_rate: z.number().min(0).max(1),
@@ -372,6 +414,7 @@ export const seriesOutputSchema = z.object({
   cover_consistency_report: seriesCoverConsistencyReportSchema,
   checkpoints: z.array(seriesCheckpointSchema).min(4).max(8),
   first_episode_seed: seriesEpisodeSeedSchema,
+  mystery_profile: seriesMysteryProfileSchema,
   progress_state: seriesProgressStateSchema,
   // Keep legacy field for compatibility with older clients.
   episode_blueprints: z.array(seriesEpisodeBlueprintSchema).min(0).max(24).default([]),

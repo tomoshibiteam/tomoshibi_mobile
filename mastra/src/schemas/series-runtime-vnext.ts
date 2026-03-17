@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { seriesMysteryProfileSchema } from "./series";
 
 const nonEmptyStringArray = z.array(z.string().min(1));
 
@@ -115,6 +116,7 @@ export const seriesBlueprintSchema = z.object({
     oneLineHook: z.string(),
     premise: z.string(),
     worldviewCore: z.string(),
+    mysteryProfile: seriesMysteryProfileSchema.optional(),
     emotionalPromise: z.array(z.string()),
     toneKeywords: z.array(z.string()),
     genreAxes: z.array(z.string()),
@@ -224,7 +226,7 @@ export const episodeRuntimeRequestSchema = z.object({
       cityOrArea: z.string(),
       coordinates: coordinatesSchema.optional(),
       candidateSpots: z.array(z.string()).optional(),
-      transportMode: z.enum(["walk", "public", "mixed"]).optional(),
+      transportMode: z.enum(["walk", "public", "mixed", "bike", "car", "ropeway", "ferry"]).optional(),
       availableMinutes: z.number().int().min(1).optional(),
       weatherHint: z.string().optional(),
     }),
@@ -493,6 +495,16 @@ export const rawSeriesGenerationRequestSchema = z.object({
   explicitGenreHints: z.array(z.string()).optional(),
   excludedDirections: z.array(z.string()).optional(),
   safetyPreferences: z.array(z.string()).optional(),
+  recentTitles: z.array(z.string()).optional(),
+  recentCaseMotifs: z.array(z.string()).optional(),
+  recentCharacterArchetypes: z.array(z.string()).optional(),
+  recentRelationshipPatterns: z.array(z.string()).optional(),
+  recentVisualMotifs: z.array(z.string()).optional(),
+  recentTruthPatterns: z.array(z.string()).optional(),
+  recentCheckpointPatterns: z.array(z.string()).optional(),
+  recentFirstEpisodePatterns: z.array(z.string()).optional(),
+  recentEnvironmentPatterns: z.array(z.string()).optional(),
+  recentAppearancePatterns: z.array(z.string()).optional(),
 });
 
 export const sanitizedSeriesRequestSchema = z.object({

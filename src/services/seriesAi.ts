@@ -2,16 +2,21 @@ import Constants from "expo-constants";
 import { NativeModules } from "react-native";
 
 const clean = (value?: string | null) => (value || "").replace(/\s+/g, " ").trim();
-const WALKABLE_WORLD_FALLBACK = "現代日本の徒歩で巡れる街区（駅前・商店街・公園・川沿い）";
+const WALKABLE_WORLD_FALLBACK = "人々の記憶と記録のずれが静かに事件性を生む現代の生活圏";
 const INCOMPATIBLE_WORLD_PATTERN =
   /(空中都市|天空都市|浮遊都市|雲上都市|宇宙|月面|火星|宇宙船|海底都市|閉鎖施設|オフィス内(?:だけ|のみ)?|屋内(?:だけ|のみ)?|建物内(?:だけ|のみ)?|社内(?:だけ|のみ)?)/i;
 const INCOMPATIBLE_SPOT_PATTERN =
   /(空中都市|天空都市|浮遊都市|宇宙|海底|閉鎖施設|オフィス内(?:だけ|のみ)?|屋内(?:だけ|のみ)?|建物内(?:だけ|のみ)?|社内(?:だけ|のみ)?)/i;
-const WALK_ROUTE_PATTERN = /(徒歩|街歩き|周遊|散策)/;
+const WALK_ROUTE_PATTERN = /(徒歩|周遊|散策|移動|公共交通|自転車|フェリー|ロープウェイ)/;
+const SERIES_META_OUTPUT_PATTERN =
+  /(現実拡張型|外出周遊|周遊ミステリー|シリーズ型ミステリー|スポット|2〜4|移動手段|徒歩|公共交通|自転車|フェリー|ロープウェイ|その土地|その地域|各島|島々|離島ごと|島ごと|15〜45分|15〜30分)/;
+const TITLE_LOCATION_LOCK_PATTERN =
+  /(群島|離島|港町|温泉街|温泉郷|旧市街|城下町|宿場町|商店街|駅前|高架下|団地|海辺|湾岸|岬|渓谷|高原|農村|漁村|村落)/;
 const MANDATORY_WALK_RULES = [
-  "各エピソードは徒歩で2〜4スポットを巡る街歩き導線を維持する。",
-  "単一屋内拠点だけで完結させず、街路・公共空間での移動を必ず入れる。",
-  "空中都市・宇宙・海底・閉鎖施設内のみなど街歩き不能な舞台へ逸脱しない。",
+  "真相は現実因果で回収し、超常を解決の主因にしない。",
+  "固定キャラクターの役割分担と関係変化を継続管理する。",
+  "各話で新しい手掛かりか認識更新を最低1つ追加する。",
+  "局所事件とシリーズ大謎の接続を少しずつ前進させる。",
 ];
 
 const dedupeStrings = (values: string[]) => {
@@ -30,24 +35,25 @@ const ensureWalkableSetting = (value?: string | null) => {
   const normalized = clean(value);
   if (!normalized) return WALKABLE_WORLD_FALLBACK;
   if (INCOMPATIBLE_WORLD_PATTERN.test(normalized)) return WALKABLE_WORLD_FALLBACK;
+  if (SERIES_META_OUTPUT_PATTERN.test(normalized)) return WALKABLE_WORLD_FALLBACK;
   return normalized;
 };
 
 const ensureWalkRouteStyle = (value?: string | null) => {
   const normalized = clean(value);
   if (normalized && WALK_ROUTE_PATTERN.test(normalized)) return normalized;
-  return "徒歩中心の周遊";
+  return "現地の自然な移動手段を含む周遊";
 };
 
 const ensureWalkSuggestedSpots = (spots: string[], settingHint?: string) => {
   const normalized = dedupeStrings(spots).filter((spot) => !INCOMPATIBLE_SPOT_PATTERN.test(spot));
   if (normalized.length >= 2) return normalized.slice(0, 6);
-  const fallback = dedupeStrings([settingHint || "", "駅前広場", "商店街"]).filter(
+  const fallback = dedupeStrings([settingHint || "", "半公共の記録確認地点", "導線差を観察できる地点"]).filter(
     (spot) => !INCOMPATIBLE_SPOT_PATTERN.test(spot)
   );
   const merged = dedupeStrings([...normalized, ...fallback]);
   if (merged.length >= 2) return merged.slice(0, 6);
-  return ["駅前広場", "商店街"];
+  return ["半公共の記録確認地点", "導線差を観察できる地点"];
 };
 
 const SCENE_ROLES = ["起", "承", "転", "結"] as const;
@@ -97,8 +103,8 @@ const normalizeSpotRequirements = (
     {
       requirementId: "req_2",
       sceneRole: "承",
-      spotRole: "関係進展が起こる回遊拠点",
-      requiredAttributes: ["会話しやすい", "徒歩導線で接続可能"],
+      spotRole: "証言確認と聞き込みがしやすい接続地点",
+      requiredAttributes: ["会話しやすい", "現実的な移動手段で接続可能"],
       visitConstraints: ["移動負荷を抑える"],
       tourismValueType: "文化体験",
     },
@@ -126,9 +132,104 @@ const ensureWalkAiRules = (value?: string | null) => {
     .split(/\n+/)
     .map((line) => clean(line))
     .filter(Boolean);
-  const withPrefix = rawLines.map((line) => (line.startsWith("-") ? line : `- ${line}`));
+  const filtered = rawLines.filter((line) => !SERIES_META_OUTPUT_PATTERN.test(line));
+  const withPrefix = filtered.map((line) => (line.startsWith("-") ? line : `- ${line}`));
   const mandatory = MANDATORY_WALK_RULES.map((rule) => `- ${rule}`);
   return dedupeStrings([...withPrefix, ...mandatory]).join("\n");
+};
+
+export type GeneratedSeriesRecentContext = {
+  recentTitles?: string[];
+  recentCaseMotifs?: string[];
+  recentCharacterArchetypes?: string[];
+  recentRelationshipPatterns?: string[];
+  recentVisualMotifs?: string[];
+  recentTruthPatterns?: string[];
+  recentCheckpointPatterns?: string[];
+  recentFirstEpisodePatterns?: string[];
+  recentEnvironmentPatterns?: string[];
+  recentAppearancePatterns?: string[];
+};
+
+export type GeneratedSeriesMysteryProfile = {
+  caseCore: string;
+  investigationStyle: string;
+  emotionalTone: string;
+  duoDynamic: string;
+  truthNature: string;
+  visualLanguage: string;
+  environmentLayer: string;
+  differentiationAxes?: string[];
+  bannedTemplatesAvoided?: string[];
+};
+
+const derivePortableGenre = (
+  genre?: string | null,
+  mysteryProfile?: GeneratedSeriesMysteryProfile
+) => {
+  const source = `${clean(genre)} ${clean(mysteryProfile?.caseCore)} ${clean(mysteryProfile?.investigationStyle)} ${clean(
+    mysteryProfile?.truthNature
+  )}`;
+  if (/(記録|改ざん|履歴|台帳)/.test(source)) return "記録反転ミステリー";
+  if (/(証言|矛盾|食い違い)/.test(source)) return "証言対立ミステリー";
+  if (/(失踪|行方|消失)/.test(source)) return "失踪連作ミステリー";
+  if (/(盗難|すり替え|欠落)/.test(source)) return "痕跡追跡ミステリー";
+  return "連作ミステリー";
+};
+
+const derivePortableTitle = (mysteryProfile?: GeneratedSeriesMysteryProfile) => {
+  const emotionalTone = clean(mysteryProfile?.emotionalTone);
+  if (/(静|不穏|緊張)/.test(emotionalTone)) return "静かな誤差録";
+  if (/(温|余韻|切な)/.test(emotionalTone)) return "余白の記録";
+  if (/(知的|乾)/.test(emotionalTone)) return "白日の痕跡";
+  return "未解記録譚";
+};
+
+const buildPortablePremise = (mysteryProfile?: GeneratedSeriesMysteryProfile) => {
+  const duoDynamic = clean(mysteryProfile?.duoDynamic) || "補い合う二人";
+  const caseCore = clean(mysteryProfile?.caseCore) || "小さな異変や矛盾";
+  const truthNature = clean(mysteryProfile?.truthNature) || "現実因果で説明可能な真相";
+  return `${duoDynamic}の関係にある二人が、${caseCore}に見える出来事を追ううちに、${truthNature}へとつながる連鎖に巻き込まれていく。`;
+};
+
+const buildPortableOverview = (mysteryProfile?: GeneratedSeriesMysteryProfile) => {
+  const investigationStyle = clean(mysteryProfile?.investigationStyle) || "観察と照合";
+  return `一見すると個別の案件に見える出来事の背後には、同じ種類の歪みが潜んでいる。二人は${investigationStyle}を重ねながら、見えていた説明が噛み合わなくなる瞬間を拾い上げ、やがて全体を貫く真相へ近づいていく。`;
+};
+
+const buildPortableSeasonGoal = (mysteryProfile?: GeneratedSeriesMysteryProfile) => {
+  const truthNature = clean(mysteryProfile?.truthNature) || "積み重なる食い違いの先にある真相";
+  return `${truthNature}として現れるシリーズ大謎の正体を突き止め、主要人物たちの関係を決定づける選択へ辿り着く。`;
+};
+
+const buildPortableGlobalMystery = (mysteryProfile?: GeneratedSeriesMysteryProfile) => {
+  const truthNature = clean(mysteryProfile?.truthNature) || "積み重なる違和感の連鎖";
+  return `${truthNature}へつながる見落としの正体は何か。`;
+};
+
+const buildPortableMidSeasonTwist = () => "中盤で、それまで信じていた説明が別の意味へ反転する。";
+
+const buildPortableFinalePayoff = () => "積み重ねた手掛かりが一つの真相として結び直される。";
+
+const isSeriesMetaLeak = (value?: string | null) => SERIES_META_OUTPUT_PATTERN.test(clean(value));
+
+const sanitizeSeriesField = (
+  value: string | null | undefined,
+  fallback: string
+) => {
+  const normalized = clean(value);
+  if (!normalized) return fallback;
+  if (INCOMPATIBLE_WORLD_PATTERN.test(normalized)) return fallback;
+  if (isSeriesMetaLeak(normalized)) return fallback;
+  return normalized;
+};
+
+const sanitizeSeriesTitle = (value: string | null | undefined, mysteryProfile?: GeneratedSeriesMysteryProfile) => {
+  const normalized = clean(value);
+  if (!normalized) return derivePortableTitle(mysteryProfile);
+  if (isSeriesMetaLeak(normalized)) return derivePortableTitle(mysteryProfile);
+  if (TITLE_LOCATION_LOCK_PATTERN.test(normalized)) return derivePortableTitle(mysteryProfile);
+  return normalized;
 };
 
 export type SeriesInterviewInput = {
@@ -206,6 +307,14 @@ export type GeneratedSeriesCharacter = {
   secrets?: string[];
   relationshipHooks?: string[];
   relationships?: GeneratedSeriesCharacterRelationship[];
+  investigationFunction?: string;
+  emotionalTemperature?: string;
+  relationshipTemperature?: string;
+  signatureProp?: string;
+  environmentResidue?: string;
+  postureGrammar?: string;
+  truthProximity?: string;
+  hypothesisPressure?: string;
   // Flattened personality extensions
   bigFive?: GeneratedSeriesCharacterPersonality['bigFive'];
   enneagramType?: number;
@@ -237,6 +346,9 @@ export type GeneratedSeriesCheckpoint = {
   unlockHint: string;
   expectedEmotion: string;
   carryOver: string;
+  knowledgeGain?: string;
+  remainingUnknown?: string;
+  nextMoveReason?: string;
 };
 
 export type GeneratedSeriesFirstEpisodeSeed = {
@@ -245,8 +357,13 @@ export type GeneratedSeriesFirstEpisodeSeed = {
   openingScene: string;
   expectedDurationMinutes: number;
   routeStyle: string;
+  movementStyle?: string;
   completionCondition: string;
   carryOverHint: string;
+  incitingIncident?: string;
+  firstFalseAssumption?: string;
+  firstReversal?: string;
+  unresolvedHook?: string;
   spotRequirements: Array<{
     requirementId: string;
     sceneRole: "起" | "承" | "転" | "結";
@@ -347,7 +464,7 @@ export type GeneratedSeriesCoverConsistencyCandidateReport = {
 };
 
 export type GeneratedSeriesCoverConsistencyReport = {
-  mode: "quality_first";
+  mode: "quality_first" | "single_pass";
   thresholds: {
     requiredAxesPerCharacter: number;
     minAveragePassRate: number;
@@ -377,6 +494,7 @@ export type GeneratedSeriesDraft = {
   visualStylePreset?: string;
   visualStyleNotes?: string;
   world?: GeneratedSeriesWorld;
+  mysteryProfile?: GeneratedSeriesMysteryProfile;
   checkpoints?: GeneratedSeriesCheckpoint[];
   firstEpisodeSeed?: GeneratedSeriesFirstEpisodeSeed;
   progressState?: GeneratedSeriesProgressState;
@@ -633,6 +751,7 @@ export type GenerateSeriesByMastraPayload = {
   generationMode?: "proposal" | "full";
   existingIdentityPack?: GeneratedSeriesIdentityPack;
   identityRetcon?: boolean;
+  recentGenerationContext?: GeneratedSeriesRecentContext;
 };
 
 const SERIES_DRAFT_GENERATION_PHASES = [
@@ -680,6 +799,9 @@ const SERIES_DRAFT_DEFAULT_POLL_INTERVAL_MS = 700;
 const SERIES_VNEXT_STRICT =
   clean(process.env.EXPO_PUBLIC_SERIES_VNEXT_STRICT ?? process.env.SERIES_VNEXT_STRICT).toLowerCase() !==
   "false";
+const SERIES_VNEXT_LEGACY_FALLBACK_ALLOWED = false;
+const SERIES_VNEXT_SYNC_FALLBACK_ALLOWED = false;
+const SERIES_RUNTIME_EPISODE_LEGACY_FALLBACK_ALLOWED = false;
 const SERIES_VNEXT_REQUEST_TIMEOUT_MS = (() => {
   const parsed = Number.parseInt(
     clean(
@@ -700,6 +822,40 @@ const normalizeStringArray = (value: unknown) => {
   return value.map((item) => clean(typeof item === "string" ? item : String(item ?? ""))).filter(Boolean);
 };
 const asStringArray = (value: unknown) => normalizeStringArray(value);
+
+const normalizeMysteryProfile = (raw: unknown): GeneratedSeriesMysteryProfile | undefined => {
+  if (!raw || typeof raw !== "object") return undefined;
+  const row = raw as Record<string, unknown>;
+  const caseCore = clean(typeof row.case_core === "string" ? row.case_core : "");
+  const investigationStyle = clean(typeof row.investigation_style === "string" ? row.investigation_style : "");
+  const emotionalTone = clean(typeof row.emotional_tone === "string" ? row.emotional_tone : "");
+  const duoDynamic = clean(typeof row.duo_dynamic === "string" ? row.duo_dynamic : "");
+  const truthNature = clean(typeof row.truth_nature === "string" ? row.truth_nature : "");
+  const visualLanguage = clean(typeof row.visual_language === "string" ? row.visual_language : "");
+  const environmentLayer = clean(typeof row.environment_layer === "string" ? row.environment_layer : "");
+  if (
+    !caseCore &&
+    !investigationStyle &&
+    !emotionalTone &&
+    !duoDynamic &&
+    !truthNature &&
+    !visualLanguage &&
+    !environmentLayer
+  ) {
+    return undefined;
+  }
+  return {
+    caseCore,
+    investigationStyle,
+    emotionalTone,
+    duoDynamic,
+    truthNature,
+    visualLanguage,
+    environmentLayer,
+    differentiationAxes: normalizeStringArray(row.differentiation_axes),
+    bannedTemplatesAvoided: normalizeStringArray(row.banned_templates_avoided),
+  };
+};
 
 const normalizeIdentityAnchorTokens = (raw: unknown): GeneratedSeriesCharacterIdentityAnchorTokens | undefined => {
   if (!raw || typeof raw !== "object") return undefined;
@@ -934,9 +1090,25 @@ const normalizeCharacters = (raw: unknown): GeneratedSeriesCharacter[] => {
       portraitPrompt: clean(typeof row.portrait_prompt === "string" ? row.portrait_prompt : undefined) || undefined,
       portraitImageUrl:
         normalizeMediaUrlForClient(typeof row.portrait_image_url === "string" ? row.portrait_image_url : undefined) ||
-        buildSeedFallbackImageUrl(`${name}-${role}-portrait`, 768, 1024),
+        undefined,
       secrets: normalizeStringArray(row.secrets),
       relationshipHooks: normalizeStringArray(row.relationship_hooks),
+      investigationFunction:
+        clean(typeof row.investigation_function === "string" ? row.investigation_function : undefined) || undefined,
+      emotionalTemperature:
+        clean(typeof row.emotional_temperature === "string" ? row.emotional_temperature : undefined) || undefined,
+      relationshipTemperature:
+        clean(typeof row.relationship_temperature === "string" ? row.relationship_temperature : undefined) || undefined,
+      signatureProp:
+        clean(typeof row.signature_prop === "string" ? row.signature_prop : undefined) || undefined,
+      environmentResidue:
+        clean(typeof row.environment_residue === "string" ? row.environment_residue : undefined) || undefined,
+      postureGrammar:
+        clean(typeof row.posture_grammar === "string" ? row.posture_grammar : undefined) || undefined,
+      truthProximity:
+        clean(typeof row.truth_proximity === "string" ? row.truth_proximity : undefined) || undefined,
+      hypothesisPressure:
+        clean(typeof row.hypothesis_pressure === "string" ? row.hypothesis_pressure : undefined) || undefined,
       relationships,
     });
 
@@ -993,6 +1165,10 @@ const normalizeCheckpoints = (raw: unknown): GeneratedSeriesCheckpoint[] => {
       unlockHint: clean(typeof row.unlock_hint === "string" ? row.unlock_hint : undefined),
       expectedEmotion: clean(typeof row.expected_emotion === "string" ? row.expected_emotion : undefined),
       carryOver: clean(typeof row.carry_over === "string" ? row.carry_over : undefined),
+      knowledgeGain: clean(typeof row.knowledge_gain === "string" ? row.knowledge_gain : undefined) || undefined,
+      remainingUnknown:
+        clean(typeof row.remaining_unknown === "string" ? row.remaining_unknown : undefined) || undefined,
+      nextMoveReason: clean(typeof row.next_move_reason === "string" ? row.next_move_reason : undefined) || undefined,
     });
 
     return acc;
@@ -1007,6 +1183,9 @@ const deriveCheckpointsFromLegacyEpisodes = (episodes: GeneratedSeriesEpisodeBlu
     unlockHint: episode.requiredSetups?.join(" / ") || "前話の結果を引き継ぐ。",
     expectedEmotion: episode.emotionalBeat || "発見",
     carryOver: episode.cliffhanger || episode.continuityNotes || "次回に続く余韻を残す。",
+    knowledgeGain: episode.synopsis || undefined,
+    remainingUnknown: episode.cliffhanger || undefined,
+    nextMoveReason: episode.suggestedMission || undefined,
   }));
 
 const normalizeWorld = (raw: unknown): GeneratedSeriesWorld | undefined => {
@@ -1053,10 +1232,20 @@ const normalizeWorld = (raw: unknown): GeneratedSeriesWorld | undefined => {
 const normalizeContinuity = (raw: unknown): GeneratedSeriesContinuity | undefined => {
   if (!raw || typeof raw !== "object") return undefined;
   const continuity = raw as Record<string, unknown>;
+  const mysteryProfile = normalizeMysteryProfile((continuity as Record<string, unknown>).mystery_profile);
   return {
-    globalMystery: clean(typeof continuity.global_mystery === "string" ? continuity.global_mystery : undefined) || undefined,
-    midSeasonTwist: clean(typeof continuity.mid_season_twist === "string" ? continuity.mid_season_twist : undefined) || undefined,
-    finalePayoff: clean(typeof continuity.finale_payoff === "string" ? continuity.finale_payoff : undefined) || undefined,
+    globalMystery: sanitizeSeriesField(
+      typeof continuity.global_mystery === "string" ? continuity.global_mystery : undefined,
+      buildPortableGlobalMystery(mysteryProfile)
+    ),
+    midSeasonTwist: sanitizeSeriesField(
+      typeof continuity.mid_season_twist === "string" ? continuity.mid_season_twist : undefined,
+      buildPortableMidSeasonTwist()
+    ),
+    finalePayoff: sanitizeSeriesField(
+      typeof continuity.finale_payoff === "string" ? continuity.finale_payoff : undefined,
+      buildPortableFinalePayoff()
+    ),
     invariantRules: normalizeStringArray(continuity.invariant_rules),
     episodeLinkPolicy: normalizeStringArray(continuity.episode_link_policy),
   };
@@ -1135,7 +1324,8 @@ const normalizeCoverConsistencyReport = (raw: unknown): GeneratedSeriesCoverCons
   if (!raw || typeof raw !== "object") return undefined;
   const row = raw as Record<string, unknown>;
   const modeRaw = clean(typeof row.mode === "string" ? row.mode : "");
-  const mode: GeneratedSeriesCoverConsistencyReport["mode"] = modeRaw === "quality_first" ? "quality_first" : "quality_first";
+  const mode: GeneratedSeriesCoverConsistencyReport["mode"] =
+    modeRaw === "single_pass" ? "single_pass" : "quality_first";
 
   const thresholdsRaw =
     row.thresholds && typeof row.thresholds === "object" ? (row.thresholds as Record<string, unknown>) : {};
@@ -1225,7 +1415,8 @@ const normalizeFirstEpisodeSeed = (raw: unknown): GeneratedSeriesFirstEpisodeSee
   );
   const legacySuggested = ensureWalkSuggestedSpots(
     normalizeStringArray(seed.suggested_spots),
-    clean(typeof seed.route_style === "string" ? seed.route_style : undefined)
+    clean(typeof seed.movement_style === "string" ? seed.movement_style : undefined) ||
+      clean(typeof seed.route_style === "string" ? seed.route_style : undefined)
   );
   const suggestedSpots = dedupeStrings([...legacySuggested, ...deriveSuggestedSpotsFromRequirements(spotRequirements)]).slice(0, 6);
   return {
@@ -1233,14 +1424,20 @@ const normalizeFirstEpisodeSeed = (raw: unknown): GeneratedSeriesFirstEpisodeSee
     objective:
       clean(typeof seed.objective === "string" ? seed.objective : undefined) || "シリーズの目的へ向かう最初の手がかりを得る。",
     openingScene:
-      clean(typeof seed.opening_scene === "string" ? seed.opening_scene : undefined) || "街歩きの導入で違和感に出会う。",
+      clean(typeof seed.opening_scene === "string" ? seed.opening_scene : undefined) || "外出の導入で小さな違和感に出会う。",
     expectedDurationMinutes,
     routeStyle: ensureWalkRouteStyle(typeof seed.route_style === "string" ? seed.route_style : undefined),
+    movementStyle: clean(typeof seed.movement_style === "string" ? seed.movement_style : undefined) || undefined,
     completionCondition:
       clean(typeof seed.completion_condition === "string" ? seed.completion_condition : undefined) ||
       "主要スポットで発見を得る。",
     carryOverHint:
       clean(typeof seed.carry_over_hint === "string" ? seed.carry_over_hint : undefined) || "次回に続く問いが残る。",
+    incitingIncident: clean(typeof seed.inciting_incident === "string" ? seed.inciting_incident : undefined) || undefined,
+    firstFalseAssumption:
+      clean(typeof seed.first_false_assumption === "string" ? seed.first_false_assumption : undefined) || undefined,
+    firstReversal: clean(typeof seed.first_reversal === "string" ? seed.first_reversal : undefined) || undefined,
+    unresolvedHook: clean(typeof seed.unresolved_hook === "string" ? seed.unresolved_hook : undefined) || undefined,
     spotRequirements,
     suggestedSpots,
   };
@@ -1290,12 +1487,23 @@ const normalizeDraftFromVNextResponse = (
   const firstEpisodeSeedRaw = asObject(blueprint.firstEpisodeSeed);
   const initialTemplate = asObject(payloadObject.initialUserSeriesStateTemplate);
 
-  const title = clean(typeof concept.title === "string" ? concept.title : "");
-  if (!title) return null;
-
   const oneLineHook = clean(typeof concept.oneLineHook === "string" ? concept.oneLineHook : "");
   const premise = clean(typeof concept.premise === "string" ? concept.premise : "");
   const worldviewCore = clean(typeof concept.worldviewCore === "string" ? concept.worldviewCore : "");
+  const mysteryProfile = normalizeMysteryProfile(concept.mysteryProfile);
+  const title = sanitizeSeriesTitle(typeof concept.title === "string" ? concept.title : "", mysteryProfile);
+  if (!title) return null;
+  const sanitizedPremise = sanitizeSeriesField(premise, buildPortablePremise(mysteryProfile));
+  const sanitizedOverview = sanitizeSeriesField(oneLineHook || premise, buildPortableOverview(mysteryProfile));
+  const sanitizedGenre = sanitizeSeriesField(
+    normalizeStringArray(concept.genreAxes)[0] || clean(fallback.interview.genreWorld),
+    derivePortableGenre(clean(fallback.interview.genreWorld), mysteryProfile)
+  );
+  const sanitizedSeasonGoal = sanitizeSeriesField(
+    clean(typeof narrative.longArcGoal === "string" ? narrative.longArcGoal : ""),
+    buildPortableSeasonGoal(mysteryProfile)
+  );
+  const sanitizedWorldSetting = sanitizeSeriesField(worldviewCore, WALKABLE_WORLD_FALLBACK);
 
   const hardRules = normalizeStringArray(worldRules.hardRules);
   const mandatoryCallbacks = normalizeStringArray(continuityContract.mandatoryCallbackTypes);
@@ -1373,22 +1581,36 @@ const normalizeDraftFromVNextResponse = (
             : "") || undefined,
         relationshipHooks: normalizeStringArray(hooks.conversationalHooks),
         secrets: normalizeStringArray(usageRules.cannotContradict),
+        relationshipTemperature:
+          clean(typeof (row as Record<string, unknown>).relationshipTemperature === "string"
+            ? (row as Record<string, unknown>).relationshipTemperature as string
+            : "") || undefined,
+        signatureProp:
+          clean(typeof (row as Record<string, unknown>).signatureProp === "string"
+            ? (row as Record<string, unknown>).signatureProp as string
+            : "") || undefined,
+        environmentResidue:
+          clean(typeof (row as Record<string, unknown>).environmentResidue === "string"
+            ? (row as Record<string, unknown>).environmentResidue as string
+            : "") || undefined,
+        postureGrammar:
+          clean(typeof (row as Record<string, unknown>).postureGrammar === "string"
+            ? (row as Record<string, unknown>).postureGrammar as string
+            : "") || undefined,
         portraitPrompt: visual?.portraitPrompt,
-        portraitImageUrl:
-          visual?.portraitImageUrl ||
-          buildSeedFallbackImageUrl(`${title}-${name}-portrait`, 768, 1024),
+        portraitImageUrl: visual?.portraitImageUrl || undefined,
       } satisfies GeneratedSeriesCharacter;
     })
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
 
   const vNextCheckpointsRaw = Array.isArray(blueprint.checkpoints) ? blueprint.checkpoints : [];
-  const checkpoints: GeneratedSeriesCheckpoint[] = vNextCheckpointsRaw
-    .map((item, index) => {
+  const checkpoints: GeneratedSeriesCheckpoint[] = vNextCheckpointsRaw.reduce<GeneratedSeriesCheckpoint[]>(
+    (acc, item, index) => {
       const row = asObject(item);
       const label = clean(typeof row.label === "string" ? row.label : "");
-      if (!label) return null;
+      if (!label) return acc;
       const checkpointNo = Number.parseInt(String(row.index ?? index), 10);
-      return {
+      acc.push({
         checkpointNo: Number.isFinite(checkpointNo) ? checkpointNo + 1 : index + 1,
         title: label,
         purpose: clean(typeof row.narrativePurpose === "string" ? row.narrativePurpose : "") || "",
@@ -1397,11 +1619,17 @@ const normalizeDraftFromVNextResponse = (
           normalizeStringArray(row.expectedUserEmotion)[0] ||
           mapVNextSceneRoleToLegacy(clean(typeof row.roleInArc === "string" ? row.roleInArc : "")),
         carryOver: normalizeStringArray(row.mustRememberAfterPassing).join(" / "),
-      } satisfies GeneratedSeriesCheckpoint;
-    })
-    .filter((item): item is GeneratedSeriesCheckpoint => Boolean(item));
+        knowledgeGain: clean(typeof row.narrativePurpose === "string" ? row.narrativePurpose : "") || undefined,
+        remainingUnknown: normalizeStringArray(row.requiredCallbackKinds).join(" / ") || undefined,
+        nextMoveReason: normalizeStringArray(row.requiredProgressConditions).join(" / ") || undefined,
+      });
+      return acc;
+    },
+    []
+  );
 
   const seedSpotTypes = normalizeStringArray(firstEpisodeSeedRaw.suggestedPlaceTypes);
+  const handoffNotes = normalizeStringArray(firstEpisodeSeedRaw.handoffNotesForEpisodeRuntime);
   const firstEpisodeSeed: GeneratedSeriesFirstEpisodeSeed = {
     title: `${title} 第1話`,
     objective: clean(typeof firstEpisodeSeedRaw.purpose === "string" ? firstEpisodeSeedRaw.purpose : "") || "導入",
@@ -1409,11 +1637,20 @@ const normalizeDraftFromVNextResponse = (
       clean(typeof firstEpisodeSeedRaw.openingSituation === "string" ? firstEpisodeSeedRaw.openingSituation : "") ||
       "旅の入口で違和感と出会う",
     expectedDurationMinutes: 20,
-    routeStyle: "徒歩中心の周遊",
+    routeStyle: "現地の自然な移動手段を含む周遊",
+    movementStyle: handoffNotes.find((note) => /移動|徒歩|公共交通|自転車|フェリー|ロープウェイ/.test(note)),
     completionCondition:
       clean(typeof firstEpisodeSeedRaw.whyGoThereLogic === "string" ? firstEpisodeSeedRaw.whyGoThereLogic : "") ||
       "主要スポットで手がかりを得る。",
     carryOverHint: normalizeStringArray(asObject(firstEpisodeSeedRaw.foreshadowingPlan).seed)[0] || "次話に続く問いが残る。",
+    incitingIncident:
+      handoffNotes.find((note) => /きっかけ|incident|異変|依頼|発端/.test(note)) || "現地で小さな異変が発生する。",
+    firstFalseAssumption:
+      handoffNotes.find((note) => /誤認|仮説|assumption/.test(note)) || "最初の見立てが後で揺らぐ。",
+    firstReversal:
+      handoffNotes.find((note) => /反転|reversal|矛盾/.test(note)) || "別地点の情報で認識が反転する。",
+    unresolvedHook:
+      normalizeStringArray(asObject(firstEpisodeSeedRaw.foreshadowingPlan).seed)[0] || "回収しきれない問いが残る。",
     spotRequirements: normalizeSpotRequirements(
       seedSpotTypes.map((spotRole, index) => ({
         requirement_id: `req_${index + 1}`,
@@ -1513,23 +1750,24 @@ const normalizeDraftFromVNextResponse = (
     clean(typeof visualBundle.coverImagePrompt === "string" ? visualBundle.coverImagePrompt : "") || undefined;
   const coverImageUrl =
     normalizeMediaUrlForClient(typeof visualBundle.coverImageUrl === "string" ? visualBundle.coverImageUrl : "") ||
-    buildSeedFallbackImageUrl(`${title}-cover`, 1024, 1365);
+    undefined;
   const coverConsistencyReport = normalizeCoverConsistencyReport(visualBundle.coverConsistencyReport);
 
   return {
     title,
-    overview: oneLineHook || premise || "概要を生成できませんでした。",
+    overview: sanitizedOverview || "概要を生成できませんでした。",
     aiRules,
     characters: characters.length > 0 ? characters : [],
     coverImagePrompt,
     coverImageUrl,
-    genre: normalizeStringArray(concept.genreAxes)[0] || clean(fallback.interview.genreWorld) || undefined,
+    genre: sanitizedGenre || undefined,
     tone: normalizeStringArray(concept.toneKeywords)[0] || clean(fallback.interview.desiredEmotion) || undefined,
-    premise: premise || undefined,
-    seasonGoal: clean(typeof narrative.longArcGoal === "string" ? narrative.longArcGoal : "") || undefined,
+    premise: sanitizedPremise || undefined,
+    seasonGoal: sanitizedSeasonGoal || undefined,
+    mysteryProfile,
     world: {
       visualAssets: worldVisualAssets,
-      setting: ensureWalkableSetting(worldviewCore),
+      setting: sanitizedWorldSetting,
       coreConflict:
         clean(typeof narrative.coreMysteryOrDrive === "string" ? narrative.coreMysteryOrDrive : "") || undefined,
       recurringMotifs: normalizeStringArray(concept.aestheticKeywords),
@@ -1539,9 +1777,14 @@ const normalizeDraftFromVNextResponse = (
     firstEpisodeSeed,
     progressState,
     continuity: {
-      globalMystery:
-        clean(typeof narrative.coreMysteryOrDrive === "string" ? narrative.coreMysteryOrDrive : "") || undefined,
-      finalePayoff: clean(typeof narrative.plannedEnding === "string" ? narrative.plannedEnding : "") || undefined,
+      globalMystery: sanitizeSeriesField(
+        typeof narrative.coreMysteryOrDrive === "string" ? narrative.coreMysteryOrDrive : "",
+        buildPortableGlobalMystery(mysteryProfile)
+      ),
+      finalePayoff: sanitizeSeriesField(
+        typeof narrative.plannedEnding === "string" ? narrative.plannedEnding : "",
+        buildPortableFinalePayoff()
+      ),
       invariantRules: hardRules,
       episodeLinkPolicy: normalizeStringArray(continuityContract.mandatoryCallbackTypes),
     },
@@ -1621,6 +1864,32 @@ export const generateSeriesDraftViaMastra = async (
         }
       : undefined,
     identity_retcon: payload.identityRetcon ? true : undefined,
+    recent_generation_context: payload.recentGenerationContext
+      ? {
+          recent_titles: dedupeStrings(payload.recentGenerationContext.recentTitles || []),
+          recent_case_motifs: dedupeStrings(payload.recentGenerationContext.recentCaseMotifs || []),
+          recent_character_archetypes: dedupeStrings(
+            payload.recentGenerationContext.recentCharacterArchetypes || []
+          ),
+          recent_relationship_patterns: dedupeStrings(
+            payload.recentGenerationContext.recentRelationshipPatterns || []
+          ),
+          recent_visual_motifs: dedupeStrings(payload.recentGenerationContext.recentVisualMotifs || []),
+          recent_truth_patterns: dedupeStrings(payload.recentGenerationContext.recentTruthPatterns || []),
+          recent_checkpoint_patterns: dedupeStrings(
+            payload.recentGenerationContext.recentCheckpointPatterns || []
+          ),
+          recent_first_episode_patterns: dedupeStrings(
+            payload.recentGenerationContext.recentFirstEpisodePatterns || []
+          ),
+          recent_environment_patterns: dedupeStrings(
+            payload.recentGenerationContext.recentEnvironmentPatterns || []
+          ),
+          recent_appearance_patterns: dedupeStrings(
+            payload.recentGenerationContext.recentAppearancePatterns || []
+          ),
+        }
+      : undefined,
   };
 
   const emitProgress = (event: SeriesDraftGenerationEvent) => {
@@ -1645,12 +1914,29 @@ export const generateSeriesDraftViaMastra = async (
     const seriesRaw = (payloadObject.series as Record<string, unknown> | undefined) || payloadObject;
     const metaRaw = (payloadObject.meta as Record<string, unknown> | undefined) || null;
 
-    const title = clean(typeof seriesRaw.title === "string" ? seriesRaw.title : undefined) || "新しいシリーズ";
-    const overview =
+    const mysteryProfile = normalizeMysteryProfile(seriesRaw.mystery_profile);
+    const title = sanitizeSeriesTitle(
+      typeof seriesRaw.title === "string" ? seriesRaw.title : undefined,
+      mysteryProfile
+    );
+    const rawOverview =
       clean(typeof seriesRaw.overview === "string" ? seriesRaw.overview : undefined) ||
       clean(typeof seriesRaw.premise === "string" ? seriesRaw.premise : undefined) ||
       "概要を生成できませんでした。";
+    const overview = sanitizeSeriesField(rawOverview, buildPortableOverview(mysteryProfile));
     const aiRules = ensureWalkAiRules(typeof seriesRaw.ai_rules === "string" ? seriesRaw.ai_rules : undefined);
+    const sanitizedGenre = sanitizeSeriesField(
+      typeof seriesRaw.genre === "string" ? seriesRaw.genre : undefined,
+      derivePortableGenre(typeof seriesRaw.genre === "string" ? seriesRaw.genre : undefined, mysteryProfile)
+    );
+    const sanitizedPremise = sanitizeSeriesField(
+      typeof seriesRaw.premise === "string" ? seriesRaw.premise : undefined,
+      buildPortablePremise(mysteryProfile)
+    );
+    const sanitizedSeasonGoal = sanitizeSeriesField(
+      typeof seriesRaw.season_goal === "string" ? seriesRaw.season_goal : undefined,
+      buildPortableSeasonGoal(mysteryProfile)
+    );
 
     const characters = normalizeCharacters(seriesRaw.characters);
     if (characters.length === 0) {
@@ -1678,11 +1964,12 @@ export const generateSeriesDraftViaMastra = async (
         clean(typeof seriesRaw.cover_image_prompt === "string" ? seriesRaw.cover_image_prompt : undefined) || undefined,
       coverImageUrl:
         normalizeMediaUrlForClient(typeof seriesRaw.cover_image_url === "string" ? seriesRaw.cover_image_url : undefined) ||
-        buildSeedFallbackImageUrl(`${title}-${clean(typeof seriesRaw.genre === "string" ? seriesRaw.genre : undefined)}`, 1024, 1365),
-      genre: clean(typeof seriesRaw.genre === "string" ? seriesRaw.genre : undefined) || undefined,
+        undefined,
+      genre: sanitizedGenre || undefined,
       tone: clean(typeof seriesRaw.tone === "string" ? seriesRaw.tone : undefined) || undefined,
-      premise: clean(typeof seriesRaw.premise === "string" ? seriesRaw.premise : undefined) || undefined,
-      seasonGoal: clean(typeof seriesRaw.season_goal === "string" ? seriesRaw.season_goal : undefined) || undefined,
+      premise: sanitizedPremise || undefined,
+      seasonGoal: sanitizedSeasonGoal || undefined,
+      mysteryProfile,
       visualStylePreset:
         clean(typeof seriesRaw.visual_style_preset === "string" ? seriesRaw.visual_style_preset : undefined) ||
         clean(payload.interview.visualStylePreset) ||
@@ -1699,9 +1986,9 @@ export const generateSeriesDraftViaMastra = async (
           ? {
             title: checkpoints[0].title || "第1話: 旅の始まり",
             objective: checkpoints[0].purpose || "シリーズ導入の体験を進める。",
-            openingScene: checkpoints[0].unlockHint || "街歩きの導入で違和感に出会う。",
+            openingScene: checkpoints[0].unlockHint || "外出の導入で小さな違和感に出会う。",
             expectedDurationMinutes: 20,
-            routeStyle: "徒歩中心の周遊",
+            routeStyle: "現地の自然な移動手段を含む周遊",
             completionCondition: "主要スポットで発見を得る。",
             carryOverHint: checkpoints[0].carryOver || "次回に続く問いが残る。",
             spotRequirements: normalizeSpotRequirements([], normalizedWorld?.setting || WALKABLE_WORLD_FALLBACK),
@@ -1803,6 +2090,28 @@ export const generateSeriesDraftViaMastra = async (
           .filter(Boolean)
       ),
       safetyPreferences: [],
+      recentTitles: dedupeStrings(payload.recentGenerationContext?.recentTitles || []),
+      recentCaseMotifs: dedupeStrings(payload.recentGenerationContext?.recentCaseMotifs || []),
+      recentCharacterArchetypes: dedupeStrings(
+        payload.recentGenerationContext?.recentCharacterArchetypes || []
+      ),
+      recentRelationshipPatterns: dedupeStrings(
+        payload.recentGenerationContext?.recentRelationshipPatterns || []
+      ),
+      recentVisualMotifs: dedupeStrings(payload.recentGenerationContext?.recentVisualMotifs || []),
+      recentTruthPatterns: dedupeStrings(payload.recentGenerationContext?.recentTruthPatterns || []),
+      recentCheckpointPatterns: dedupeStrings(
+        payload.recentGenerationContext?.recentCheckpointPatterns || []
+      ),
+      recentFirstEpisodePatterns: dedupeStrings(
+        payload.recentGenerationContext?.recentFirstEpisodePatterns || []
+      ),
+      recentEnvironmentPatterns: dedupeStrings(
+        payload.recentGenerationContext?.recentEnvironmentPatterns || []
+      ),
+      recentAppearancePatterns: dedupeStrings(
+        payload.recentGenerationContext?.recentAppearancePatterns || []
+      ),
     };
 
     const runVNextSyncFallback = async (): Promise<GeneratedSeriesDraft> => {
@@ -1875,7 +2184,10 @@ export const generateSeriesDraftViaMastra = async (
 
     if (!createJobResponse.ok) {
       if (createJobResponse.status === 404 || createJobResponse.status === 405) {
-        return runVNextSyncFallback();
+        if (SERIES_VNEXT_SYNC_FALLBACK_ALLOWED) {
+          return runVNextSyncFallback();
+        }
+        throw new Error("vNextシリーズ生成ジョブAPIが利用できません。");
       }
       const errMsg =
         createJobJson && typeof createJobJson === "object" && "error" in createJobJson
@@ -1893,7 +2205,10 @@ export const generateSeriesDraftViaMastra = async (
           : ""
     );
     if (!jobId) {
-      return runVNextSyncFallback();
+      if (SERIES_VNEXT_SYNC_FALLBACK_ALLOWED) {
+        return runVNextSyncFallback();
+      }
+      throw new Error("vNextシリーズ生成ジョブIDが取得できませんでした。");
     }
 
     const initialEvents = Array.isArray(createJobPayload.events) ? createJobPayload.events : [];
@@ -2012,11 +2327,11 @@ export const generateSeriesDraftViaMastra = async (
     return vNext;
   } catch (vNextError) {
     const message = clean(vNextError instanceof Error ? vNextError.message : String(vNextError));
+    if (SERIES_VNEXT_STRICT || !SERIES_VNEXT_LEGACY_FALLBACK_ALLOWED) {
+      console.warn("[seriesAi] vNext series generate failed (no-fallback mode):", message);
+      throw new Error(message || "vNextシリーズ生成に失敗しました。");
+    }
     if (message !== "vnext_endpoint_not_available") {
-      if (SERIES_VNEXT_STRICT) {
-        console.warn("[seriesAi] vNext series generate failed (strict mode):", message);
-        throw new Error(message || "vNextシリーズ生成に失敗しました。");
-      }
       console.warn("[seriesAi] vNext series generate fallback to legacy:", message);
     }
   }
@@ -2057,7 +2372,10 @@ export const generateSeriesDraftViaMastra = async (
 
   if (!createJobResponse.ok) {
     if (createJobResponse.status === 404 || createJobResponse.status === 405) {
-      return runLegacyEndpoint();
+      if (SERIES_VNEXT_LEGACY_FALLBACK_ALLOWED) {
+        return runLegacyEndpoint();
+      }
+      throw new Error("シリーズ生成ジョブAPIが利用できません。");
     }
     const errMsg =
       createJobJson && typeof createJobJson === "object" && "error" in createJobJson
@@ -2075,7 +2393,10 @@ export const generateSeriesDraftViaMastra = async (
         : ""
   );
   if (!jobId) {
-    return runLegacyEndpoint();
+    if (SERIES_VNEXT_LEGACY_FALLBACK_ALLOWED) {
+      return runLegacyEndpoint();
+    }
+    throw new Error("シリーズ生成ジョブIDが取得できませんでした。");
   }
 
   const initialEvents = Array.isArray(createJobPayload.events) ? createJobPayload.events : [];
@@ -2247,11 +2568,11 @@ const normalizeEpisodeWorld = (raw: unknown): EpisodeWorld => {
     mood: clean(typeof row.mood === "string" ? row.mood : "") || "発見と余韻",
     atmosphere:
       clean(typeof row.atmosphere === "string" ? row.atmosphere : "") ||
-      "現実の街を歩きながら物語を体験する",
+      "現実の外出先を巡りながら物語を体験する",
     sensoryKeywords: normalizeStringArray(row.sensory_keywords).slice(0, 8),
     storyAxis:
       clean(typeof row.story_axis === "string" ? row.story_axis : "") ||
-      "街の断片情報を繋ぎ次話へ進む",
+      "複数地点の断片情報を繋ぎ次話へ進む",
     emotionalArc:
       clean(typeof row.emotional_arc === "string" ? row.emotional_arc : "") ||
       "導入から収束へ向かう感情曲線",
@@ -3276,7 +3597,7 @@ export const generateSeriesEpisodeViaMastra = async (
       cityOrArea: payload.stageLocation,
       coordinates: parseInlineCoordinates(payload.stageLocation),
       candidateSpots: payload.series.firstEpisodeSeed?.suggestedSpots || undefined,
-      transportMode: "walk" as const,
+      transportMode: "mixed" as const,
       availableMinutes: payload.desiredDurationMinutes ?? 20,
     };
 
@@ -3295,7 +3616,7 @@ export const generateSeriesEpisodeViaMastra = async (
         runtimeOptions: {
           maxSpots: desiredSpotCount,
           minSpots: Math.min(3, desiredSpotCount),
-          fallbackAllowed: true,
+          fallbackAllowed: false,
           plannerRetries: 2,
         },
       },
@@ -3412,17 +3733,23 @@ export const generateSeriesEpisodeViaMastra = async (
 
   if (!createJobResponse.ok) {
     if (createJobResponse.status === 404 || createJobResponse.status === 405) {
-      return runLegacyEndpoint();
+      if (SERIES_RUNTIME_EPISODE_LEGACY_FALLBACK_ALLOWED) {
+        return runLegacyEndpoint();
+      }
+      throw new Error("エピソード生成ジョブAPIが利用できません。");
     }
     if (
       vNextEpisodeBody &&
       (createJobResponse.status === 400 || createJobResponse.status === 422)
     ) {
-      console.warn(
-        "[seriesAi] vNext episode job rejected, fallback to legacy format",
-        createJobRaw
-      );
-      return runLegacyEndpoint();
+      if (SERIES_RUNTIME_EPISODE_LEGACY_FALLBACK_ALLOWED) {
+        console.warn(
+          "[seriesAi] vNext episode job rejected, fallback to legacy format",
+          createJobRaw
+        );
+        return runLegacyEndpoint();
+      }
+      throw new Error(`Mastra episode job rejected (${createJobResponse.status}): ${createJobRaw || "unknown"}`);
     }
     const errorBody = createJobJson && typeof createJobJson === "object" ? JSON.stringify(createJobJson) : createJobRaw;
     throw new Error(`Mastra episode job creation failed (${createJobResponse.status}): ${errorBody || "unknown"}`);
@@ -3437,7 +3764,10 @@ export const generateSeriesEpisodeViaMastra = async (
         : ""
   );
   if (!jobId) {
-    return runLegacyEndpoint();
+    if (SERIES_RUNTIME_EPISODE_LEGACY_FALLBACK_ALLOWED) {
+      return runLegacyEndpoint();
+    }
+    throw new Error("エピソード生成ジョブIDが取得できませんでした。");
   }
 
   const initialEvents = Array.isArray(createJobPayload.events) ? createJobPayload.events : [];

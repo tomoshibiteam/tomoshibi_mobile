@@ -5,6 +5,8 @@ import {
   seriesCharacterSchema,
   seriesCheckpointSchema,
   seriesEpisodeSeedSchema,
+  seriesMysteryProfileSchema,
+  seriesRecentGenerationContextSchema,
   seriesWorldSchema,
 } from "../../schemas/series";
 
@@ -17,6 +19,8 @@ export const seriesEpisodePlannerAgentInputSchema = z.object({
   world: seriesWorldSchema,
   characters: z.array(seriesCharacterSchema).min(3).max(8),
   desired_episode_count: z.number().int().min(3).max(24),
+  mystery_profile: seriesMysteryProfileSchema.optional(),
+  recent_generation_context: seriesRecentGenerationContextSchema.optional(),
 });
 
 export const seriesEpisodePlannerAgentOutputSchema = z.object({
@@ -29,14 +33,17 @@ export type SeriesEpisodePlannerAgentOutput = z.infer<typeof seriesEpisodePlanne
 
 const SERIES_EPISODE_AGENT_INSTRUCTIONS = `
 あなたは連載シリーズの体験設計作家です。
-シリーズの継続導線を設計しつつ、初回の街歩きエピソードに着地させてください。
+シリーズの継続導線を設計しつつ、初回の現実連動型・外出周遊ミステリーエピソードに着地させてください。
 
 ## 必須方針
 - checkpoints は 4〜8 個
 - checkpoints.checkpoint_no は 1 から連番
-- checkpoints.carry_over は次回に引き継ぐ状態変化を記述
-- first_episode_seed は 15〜30 分の街歩き体験を想定
+- checkpoints.carry_over は次回に持ち越す未解決情報・疑念・証拠断片・関係変化を記述
+- 各 checkpoint は「事件理解が一段階変わる認識更新点」にする
+- 各 checkpoint には少なくとも1つの knowledge_gain / remaining_unknown / next_move_reason を持たせる
+- first_episode_seed は 15〜45 分程度の現実的な外出として成立させる
 - first_episode_seed.carry_over_hint は次回へ続けたくなる余韻にする
+- first_episode_seed には inciting_incident / first_false_assumption / first_reversal / unresolved_hook を必ず入れる
 - first_episode_seed.spot_requirements は2〜4件で、各件に
   - requirement_id
   - scene_role
@@ -45,8 +52,11 @@ const SERIES_EPISODE_AGENT_INSTRUCTIONS = `
   - visit_constraints
   - tourism_value_type
   を必ず入れる
-- 単一の屋内拠点で完結させず、街路・公共空間の移動を含める
-- 空中都市・宇宙・海底・閉鎖施設内のみ等、街歩き不能な舞台を避ける
+- 具体スポット名は決めない（spot_roleまで）
+- 単一の屋内拠点で完結させず、現実的な外出・移動・周遊を含める
+- 移動手段は徒歩固定にせず、その地域で自然な移動手段を許容する
+- 極端に遠距離な移動や、1話で現実的でない大移動は避ける
+- 超常依存、偶然依存、説明不足依存、ご都合主義依存を避ける
 - ここで具体スポット名は決めない（spot_roleまで）
 `;
 
@@ -58,7 +68,7 @@ export const seriesEpisodePlannerAgent = new Agent({
 });
 
 const clean = (value?: string) => (value || "").replace(/\s+/g, " ").trim();
-const WALK_ROUTE_PATTERN = /(徒歩|街歩き|周遊|散策)/;
+const TRAVERSAL_PATTERN = /(外出|周遊|巡る|移動|公共交通|自転車|フェリー|ロープウェイ|車)/;
 const INCOMPATIBLE_ROLE_PATTERN =
   /(オフィス内(?:だけ|のみ)?|社内(?:だけ|のみ)?|会議室|閉鎖施設|空中都市|天空都市|浮遊都市|宇宙|海底|塔内(?:だけ|のみ)?)/i;
 
@@ -74,10 +84,30 @@ const dedupeStrings = (values: string[]) => {
     });
 };
 
-const ensureWalkableRouteStyle = (value?: string) => {
+const formatRecentContext = (
+  recent?: z.infer<typeof seriesRecentGenerationContextSchema>
+) => {
+  const value = recent || undefined;
+  if (!value) return "なし";
+  const sections = [
+    ["recent_checkpoint_patterns", value.recent_checkpoint_patterns],
+    ["recent_first_episode_patterns", value.recent_first_episode_patterns],
+    ["recent_environment_patterns", value.recent_environment_patterns],
+    ["recent_truth_patterns", value.recent_truth_patterns],
+  ] as const;
+  const lines = sections
+    .map(([label, items]) => {
+      const joined = dedupeStrings(items || []).join(" / ");
+      return joined ? `- ${label}: ${joined}` : "";
+    })
+    .filter(Boolean);
+  return lines.length > 0 ? lines.join("\n") : "なし";
+};
+
+const ensureTraversalStyle = (value?: string) => {
   const normalized = clean(value);
-  if (normalized && WALK_ROUTE_PATTERN.test(normalized)) return normalized;
-  return "徒歩中心の周遊";
+  if (normalized && TRAVERSAL_PATTERN.test(normalized)) return normalized;
+  return "地域に応じた自然な移動手段で巡る外出周遊";
 };
 
 const SCENE_ROLES = ["起", "承", "転", "結"] as const;
@@ -98,26 +128,26 @@ const buildFallbackSpotRequirements = (setting: string) => {
     {
       requirement_id: "req_1",
       scene_role: "起" as const,
-      spot_role: "導入用の静かな公共スポット",
-      required_attributes: ["公共アクセス可能", "徒歩導線の起点", `${area}らしさが分かる`],
-      visit_constraints: ["日中訪問を想定", "単独屋内完結にしない"],
-      tourism_value_type: "地域導入",
+      spot_role: "初期違和感を観察できる開けた地点",
+      required_attributes: ["公共アクセス可能", `${area}らしさが分かる`, "現地の見え方の差が観察できる"],
+      visit_constraints: ["単独屋内完結にしない", "1回の外出として無理のない導線にする"],
+      tourism_value_type: "初期違和感の提示",
     },
     {
       requirement_id: "req_2",
       scene_role: "承" as const,
-      spot_role: "関係進展が起こる回遊拠点",
-      required_attributes: ["滞在余地がある", "会話が発生しやすい", "観光文脈に接続できる"],
-      visit_constraints: ["徒歩10〜20分圏", "公共空間または準公共空間"],
-      tourism_value_type: "文化体験",
+      spot_role: "証言確認や記録照合がしやすい半公共空間",
+      required_attributes: ["人の出入りがある", "聞き込みや観察が成立する", "記録物や掲示物へ接続できる"],
+      visit_constraints: ["現実的に移動可能な範囲", "公共空間または準公共空間"],
+      tourism_value_type: "証言・記録の照合",
     },
     {
       requirement_id: "req_3",
       scene_role: "結" as const,
-      spot_role: "最後の余韻に向く見晴らし地点",
-      required_attributes: ["締めに使える景観", "次話フックを置きやすい", "安全にアクセス可能"],
-      visit_constraints: ["日没後も危険が低い", "徒歩で戻れる範囲"],
-      tourism_value_type: "景観",
+      spot_role: "認識反転を確かめられる視点差のある地点",
+      required_attributes: ["締めに使える景観や視界差", "次話フックを置きやすい", "安全にアクセス可能"],
+      visit_constraints: ["日中または一般的な営業時間内に成立", "帰路を現実的に確保できる"],
+      tourism_value_type: "認識反転と未解決フック",
     },
   ];
 };
@@ -128,6 +158,7 @@ const hasModelApiKey = () =>
       process.env.OPENAI_API_KEY ||
       process.env.ANTHROPIC_API_KEY
   );
+const SERIES_AGENT_FALLBACK_ENABLED = false;
 
 const toPositiveInt = (value: string | undefined, fallback: number) => {
   const parsed = Number.parseInt(String(value ?? ""), 10);
@@ -141,15 +172,15 @@ const toGrowthFactor = (value: string | undefined, fallback: number) => {
 
 const EPISODE_PLANNER_MAX_ATTEMPTS = toPositiveInt(
   process.env.SERIES_EPISODE_PLANNER_MAX_ATTEMPTS,
-  2
+  1
 );
 const EPISODE_PLANNER_BASE_TIMEOUT_MS = toPositiveInt(
   process.env.SERIES_EPISODE_PLANNER_TIMEOUT_MS,
-  75_000
+  90_000
 );
 const EPISODE_PLANNER_TIMEOUT_GROWTH = toGrowthFactor(
   process.env.SERIES_EPISODE_PLANNER_TIMEOUT_GROWTH,
-  1.35
+  1.15
 );
 
 const resolveCheckpointCount = (desiredEpisodeCount: number) =>
@@ -174,24 +205,32 @@ const buildFallbackCheckpoint = (
     purpose:
       checkpointNo === checkpointCount
         ? "シーズン目標の達成条件を満たし、主要対立を決着へ導く。"
-        : `${pivotCharacter.name}の選択で、徒歩で巡る次の街歩き目的を明確化する。`,
+        : `${pivotCharacter.name}の選択で、次に何を確認しに行くべきかを明確化する。`,
     unlock_hint:
       checkpointNo === 1
-        ? "初回エピソードで街路の違和感を提示し、伏線として固定する。"
+        ? "初回エピソードで現地の違和感を提示し、誤認の種を固定する。"
         : `CP${checkpointNo - 1}で生じた未解決点を、移動先スポットで回収して前進する。`,
     expected_emotion: checkpointNo === checkpointCount ? "達成と余韻" : "発見と高まり",
-    carry_over: "次回冒頭で参照する状態変化を1つ明示する。",
+    carry_over: "次回冒頭で参照する未解決情報か証拠断片を1つ明示する。",
+    knowledge_gain: "この地点で得られる新情報を1つ明示する。",
+    remaining_unknown: "まだ説明できない矛盾を1つ残す。",
+    next_move_reason: "次の地点へ移動する因果を1文で示す。",
   };
 };
 
 const buildFallbackEpisodeSeed = (input: SeriesEpisodePlannerAgentInput) => ({
   title: "第1話: 旅の始まり",
-  objective: "シリーズの主要目的へ向かう最初の手がかりを得る。",
-  opening_scene: `${input.world.setting}を歩き始めた直後に小さな違和感に出会い、2〜4スポットを巡る行動を開始する。`,
-  expected_duration_minutes: 20,
-  route_style: "徒歩中心の周遊",
-  completion_condition: "主要スポットを2つ以上巡り、次回につながる発見を得る。",
-  carry_over_hint: "相棒との会話で新たな疑問が残る。",
+  objective: "シリーズの主要目的へ向かう最初の局所事件を追い、次回へ持ち越す疑問を得る。",
+  opening_scene: `${input.world.setting}で、見えている事実と説明が食い違う小さな異変に遭遇し、2〜4スポットを巡る捜査行動を開始する。`,
+  expected_duration_minutes: 30,
+  route_style: "現実的に到達可能な複数スポットを巡る外出周遊",
+  movement_style: "地域に応じた自然な移動手段を含む現実的な周遊",
+  completion_condition: "主要スポットを2つ以上巡り、最初の誤認を崩して未解決の核心を持ち帰る。",
+  carry_over_hint: "最初の仮説は崩れたが、次に確かめるべき相手と場所が残る。",
+  inciting_incident: "現地で見たものと、事前に聞いていた説明が食い違う。",
+  first_false_assumption: "最初は単純な行き違いか偶然だと思う。",
+  first_reversal: "現地確認により、人為的な隠し方か誤認誘導の可能性が浮かぶ。",
+  unresolved_hook: "真相に近い人物や記録は見えたが、まだ決定打が足りない。",
   spot_requirements: buildFallbackSpotRequirements(input.world.setting),
 });
 
@@ -239,6 +278,9 @@ const normalizeCheckpoint = (
     unlock_hint: clean(raw.unlock_hint) || fallback.unlock_hint,
     expected_emotion: clean(raw.expected_emotion) || fallback.expected_emotion,
     carry_over: clean(raw.carry_over) || fallback.carry_over,
+    knowledge_gain: clean(raw.knowledge_gain) || fallback.knowledge_gain,
+    remaining_unknown: clean(raw.remaining_unknown) || fallback.remaining_unknown,
+    next_move_reason: clean(raw.next_move_reason) || fallback.next_move_reason,
   };
 };
 
@@ -254,10 +296,16 @@ const normalizeEpisodeSeed = (
     objective: clean(raw.objective) || fallback.objective,
     opening_scene: clean(raw.opening_scene) || fallback.opening_scene,
     expected_duration_minutes: safeDuration,
-    route_style: ensureWalkableRouteStyle(raw.route_style || fallback.route_style),
+    route_style: ensureTraversalStyle(raw.route_style || fallback.route_style),
+    movement_style: clean(raw.movement_style) || clean(fallback.movement_style) || ensureTraversalStyle(raw.route_style || fallback.route_style),
     completion_condition: clean(raw.completion_condition) || fallback.completion_condition,
     carry_over_hint: clean(raw.carry_over_hint) || fallback.carry_over_hint,
+    inciting_incident: clean(raw.inciting_incident) || fallback.inciting_incident,
+    first_false_assumption: clean(raw.first_false_assumption) || fallback.first_false_assumption,
+    first_reversal: clean(raw.first_reversal) || fallback.first_reversal,
+    unresolved_hook: clean(raw.unresolved_hook) || fallback.unresolved_hook,
     spot_requirements: normalizeSpotRequirements(raw.spot_requirements, fallback.spot_requirements),
+    suggested_spots: Array.isArray(raw.suggested_spots) && raw.suggested_spots.length > 0 ? raw.suggested_spots : fallback.suggested_spots,
   };
 };
 
@@ -305,8 +353,11 @@ export const generateSeriesEpisodePlan = async (
   input: SeriesEpisodePlannerAgentInput
 ): Promise<SeriesEpisodePlannerAgentOutput> => {
   if (!hasModelApiKey()) {
-    console.warn("[series-episode-planner-agent] API key not found, fallback episode plan used");
-    return buildFallbackPlan(input);
+    if (SERIES_AGENT_FALLBACK_ENABLED) {
+      console.warn("[series-episode-planner-agent] API key not found, fallback episode plan used");
+      return buildFallbackPlan(input);
+    }
+    throw new Error("エピソード計画生成に失敗しました。利用可能なAIモデルがありません。");
   }
 
   const prompt = `
@@ -319,21 +370,56 @@ export const generateSeriesEpisodePlan = async (
 - 世界の対立: ${input.world.core_conflict}
 - 想定エピソード数: ${input.desired_episode_count}
 
+## mystery_profile
+- case_core: ${clean(input.mystery_profile?.case_core) || "未指定"}
+- investigation_style: ${clean(input.mystery_profile?.investigation_style) || "未指定"}
+- emotional_tone: ${clean(input.mystery_profile?.emotional_tone) || "未指定"}
+- duo_dynamic: ${clean(input.mystery_profile?.duo_dynamic) || "未指定"}
+- truth_nature: ${clean(input.mystery_profile?.truth_nature) || "未指定"}
+- visual_language: ${clean(input.mystery_profile?.visual_language) || "未指定"}
+- environment_layer: ${clean(input.mystery_profile?.environment_layer) || "未指定"}
+
 ## TOMOSHIBI 制約（最優先）
-- 各 checkpoint は「徒歩で2〜4スポットを巡る」導線を前提にする。
-- first_episode_seed.route_style は徒歩中心にする。
+- 各 checkpoint は「事件理解が一段階変わる認識更新点」にする。
+- checkpoints は観光イベント列ではなく、捜査と認識更新の列にする。
+- 各 checkpoint に「何が分かるか」「何がまだ分からないか」「なぜ次の地点へ移動するのか」を明示する。
+- first_episode_seed は 1回の外出として成立する長さにする。
 - first_episode_seed.spot_requirements は2〜4件にする。
 - spot_requirements では spot_role / scene_role / required_attributes / visit_constraints / tourism_value_type を必ず出す。
 - 具体スポット名は出さない。
+- movement_style / traversal_style は徒歩固定にしない。
+- 現実的に移動可能な範囲にする。
 - 単一屋内完結・空中都市・宇宙・海底・閉鎖施設内のみの舞台は採用しない。
+- 1話目には必ず inciting_incident / first_false_assumption / first_reversal / unresolved_hook を入れる。
+
+## Variation reference
+- 直近との差分を最低3点作ること。
+${formatRecentContext(input.recent_generation_context)}
 
 ## キャラクター
 ${input.characters
   .map(
     (character) =>
-      `- ${character.id} ${character.name} (${character.role}) / goal: ${character.goal}`
+      `- ${character.id} ${character.name} (${character.role}) / goal: ${character.goal} / investigation=${clean(character.investigation_function)}`
   )
   .join("\n")}
+
+## checkpoint 設計ルール
+- 各 checkpoint に少なくとも1つ含める:
+  - 新しい手掛かり
+  - 証言の矛盾
+  - 現場と記録の不一致
+  - 仮説の反転
+  - キャラクター認識の更新
+- 「手掛かりが更新されるから次の地点へ移動する」構造にする。
+
+## spot_requirements 設計ルール
+- spot_role は観光カテゴリではなく、捜査上の役割で書く。
+- 例:
+  - 初期違和感を観察できる開けた場所
+  - 証言確認がしやすい人の出入りがある地点
+  - 掲示物や記録と接続できる半公共空間
+  - 導線矛盾を確かめられる分岐点や視点差のある場所
 
 seriesEpisodePlannerAgentOutputSchema を満たす JSON を返してください。
 `;
@@ -375,5 +461,8 @@ seriesEpisodePlannerAgentOutputSchema を満たす JSON を返してください
   }
 
   console.error(`${logPrefix} 全試行失敗 — fallback plan を使用`);
-  return buildFallbackPlan(input);
+  if (SERIES_AGENT_FALLBACK_ENABLED) {
+    return buildFallbackPlan(input);
+  }
+  throw new Error("エピソード計画生成に失敗しました。AIモデルからの応答が得られませんでした。再度お試しください。");
 };

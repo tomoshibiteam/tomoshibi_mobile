@@ -1,6 +1,6 @@
 # 意思決定ログ（Decision Log）
 
-- 最終更新日: 2026-03-15
+- 最終更新日: 2026-03-16
 
 ## 使い方
 - 重要な意思決定を時系列で追記する（上に新しいものを追加）
@@ -23,6 +23,76 @@
 ```
 
 ## ログ
+
+### [DEC-20260316-033] シリーズ画像生成promptを「Rendering Bible」と「Narrative Visual Brief」に分離
+- 日付: 2026-03-16
+- ステータス: 決定
+- 決定内容: シリーズのカバー画像・登場人物画像の prompt は、単一 styleGuide 依存をやめ、(1) 画風不変ルールの `Rendering Bible` と (2) 事件性・場所性を視覚へ翻訳する `Narrative Visual Brief` の2層を分離して投入する。カバーは「world concept poster」ではなく「grounded mystery key art」を明示し、`clue_objects` と `human_traces` を必須化する。
+- 理由: 旧promptでは統一意図はあるが「何を統一し、何を差別化するか」が未分離で、カバーが汎用コンセプトアート化し、キャラが汎用立ち絵化しやすかったため。
+- 影響範囲: `mastra/src/lib/seriesVisuals.ts`（promptビルダー刷新）、`mastra/src/workflows/series-workflow.ts`（mystery_profile差し込みとカバー用途文言更新）、`mastra/src/lib/agents/seriesCharacterAgent.ts` と `mastra/src/schemas/series.ts`（キャラの visual context 拡張: relationship_temperature/signature_prop/environment_residue/posture_grammar）、`src/services/seriesAi.ts`（新キャラ項目の受け取り）。
+- 関連仮説: 将来的に `seriesVisualDNA` を永続化して episode 側生成でも再利用すると、シリーズ内の視覚一貫性はさらに安定する。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/business/COMMON_UNDERSTANDING_OPERATIONS.md
+
+### [DEC-20260316-032] シリーズ生成のユーザー向け文面にエピソード導線制約を露出しない
+- 日付: 2026-03-16
+- ステータス: 決定
+- 決定内容: シリーズ生成の `genre / overview / premise / season_goal / world.setting / ai_rules` などユーザー向け文面には、スポット数・移動手段・徒歩可否・地域地形・プロダクト用メタ語を直接書かない。外出周遊や場所適応の制約は内部設計ルールとして保持し、実際の地理・導線・移動構成はエピソード側で確定する。
+- 理由: シリーズ層にエピソード層の制約や地理ロックが混入すると、他地域での後続エピソード生成と矛盾し、ユーザーには「入力文をそのまま言い換えただけ」に見えるため。
+- 影響範囲: `mastra/src/lib/agents/seriesConceptAgent.ts`、`seriesConsistencyAgent.ts`、`mastra/src/workflows/series-workflow.ts` fallback concept、`src/services/seriesAi.ts` の正規化と表示用 rule 補強処理、シリーズ結果画面で見える文面。
+- 関連仮説: 今後 episode runtime 側の内部 field 名 (`routeStyle` など) も一般化すると、概念境界がさらに明確になる。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/business/COMMON_UNDERSTANDING_OPERATIONS.md
+
+### [DEC-20260316-030] シリーズ生成を「現実拡張型・外出周遊ミステリー」に収束させる
+- 日付: 2026-03-16
+- ステータス: 決定
+- 決定内容: シリーズ生成の上流4エージェント（concept / character / episode planner / consistency）は、ジャンルを「現実拡張型・外出周遊ミステリー」に限定し、「街歩き」「徒歩中心」「都市街区」への固定を外す。舞台は都市に限らず、村、離島、港町、温泉街、自然観光地、郊外、生活圏などを許容し、各話は現実的に到達可能な複数スポットを巡る前提で設計する。
+- 理由: 体験の本質は「現実に外出し、複数地点を巡り、物語を伴って認識更新すること」であり、「街」や「徒歩」は本質条件ではないため。既存の街歩き/徒歩前提はシリーズ多様性と場所適応性を不必要に狭めていた。
+- 影響範囲: `mastra/src/lib/agents/seriesConceptAgent.ts`、`seriesCharacterAgent.ts`、`seriesEpisodePlannerAgent.ts`、`seriesConsistencyAgent.ts`、`mastra/src/workflows/series-workflow.ts`、`mastra/src/lib/runtime/seriesRuntimeVNext.ts`、`src/services/seriesAi.ts`、基準文書の体験定義。
+- 関連仮説: エピソード runtime 側でも transport / route metrics の表現を将来的に walk 固定から一般化すると、さらに実装一貫性が上がる。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/business/COMMON_UNDERSTANDING_OPERATIONS.md
+  - docs/product/SERIES_EPISODE_GENERATION_FLOW_DETAIL.md
+
+### [DEC-20260316-031] シリーズ生成に mystery_profile と recent_* 差分制御を導入
+- 日付: 2026-03-16
+- ステータス: 決定
+- 決定内容: シリーズ生成では `case_core / investigation_style / emotional_tone / duo_dynamic / truth_nature / visual_language / environment_layer` を `mystery_profile` として保持し、後続エージェントへ受け渡す。あわせて `recent_titles` などの `recent_*` コンテキストを runtime prompt に渡し、直近生成との差分を最低3軸以上作ることを必須化する。
+- 理由: 既存実装は破綻防止は効く一方で、安全テンプレへの収束が強く、シリーズ・キャラ・第1話導線の同質化が発生していたため。
+- 影響範囲: `mastra/src/schemas/series.ts`、各 series agent prompt、`mastra/src/workflows/series-workflow.ts` の配線、`mastra/src/schemas/series-runtime-vnext.ts` / `seriesRuntimeVNext.ts` / `src/services/seriesAi.ts` の adapter と request payload。
+- 関連仮説: 直近生成差分の実効性は、将来的に Supabase 側から recent_* を自動収集して渡す運用を組むとさらに高まる。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/business/COMMON_UNDERSTANDING_OPERATIONS.md
+  - docs/product/SERIES_EPISODE_GENERATION_FLOW_DETAIL.md
+
+### [DEC-20260316-029] シリーズカバー画像の多候補生成を停止し単発生成へ変更
+- 日付: 2026-03-16
+- ステータス: 決定
+- 決定内容: シリーズ生成時のカバー画像は、複数候補を生成して Vision 評価で勝者を選ぶ方式を停止し、1枚だけ生成してそのまま採用する。`cover_consistency_report` は単一候補の評価結果のみ保持する。
+- 理由: プロトタイプ段階ではカバー画像の多候補比較は API コストに対して過剰であり、本文生成と同様に単一路線へ揃えた方が運用が明快なため。
+- 影響範囲: `mastra/src/workflows/series-workflow.ts` のカバー生成処理、カバー画像生成回数、Vision 評価回数、シリーズ生成全体コスト。
+- 関連仮説: 品質低下が見える場合は「多候補比較」ではなく「1枚生成後の軽量な再生成条件」を別途設ける方が良い。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/business/COMMON_UNDERSTANDING_OPERATIONS.md
+  - docs/product/SERIES_EPISODE_GENERATION_FLOW_DETAIL.md
+
+### [DEC-20260316-028] プロトタイプ期間のシリーズ生成を単一路線に固定
+- 日付: 2026-03-16
+- ステータス: 決定
+- 決定内容: `generateSeriesWorkflowWithProgress` では、多候補の series quality pipeline（concept seed多案生成、候補展開、text judge/pairwise rerank による勝者選定）を停止し、単一路線の series generation のみを実行する。prototype 期間は 1シリーズにつき 1本だけ生成することを標準動作とする。
+- 理由: 多候補探索は API コストが高く、試作段階で優先すべき「低コストでの反復改善」と「1本の生成品質改善」に対して過剰だったため。
+- 影響範囲: `mastra/src/workflows/series-workflow.ts` の分岐、シリーズ生成時の LLM 呼び出し回数、`workflow_version` の識別、シリーズ生成コストの前提。
+- 関連仮説: 将来的に品質ゲート再試行を導入する可能性はあるが、その場合も「複数案を同時展開して勝者を選ぶ」方式ではなく、「単一路線を基準で再修正する」方式が望ましい。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/business/COMMON_UNDERSTANDING_OPERATIONS.md
+  - docs/product/SERIES_EPISODE_GENERATION_FLOW_DETAIL.md
 
 ### [DEC-20260315-027] シリーズ生成を多候補探索＋text judge rerankの品質パイプラインへ更新
 - 日付: 2026-03-15

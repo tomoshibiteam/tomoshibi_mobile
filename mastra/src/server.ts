@@ -51,6 +51,106 @@ await server.init();
 app.get("/", (c) => c.text("TOMOSHIBI Mastra API"));
 
 const clean = (value?: string | null) => (value || "").replace(/\s+/g, " ").trim();
+const SERIES_VERBOSE_CONSOLE = clean(process.env.SERIES_VERBOSE_CONSOLE).toLowerCase() !== "off";
+const truncate = (value: string, max = 120) => {
+  const normalized = clean(value);
+  if (!normalized) return "";
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, Math.max(0, max - 1))}…`;
+};
+const formatList = (values: Array<string | undefined | null>, max = 3) =>
+  values
+    .map((value) => clean(value))
+    .filter(Boolean)
+    .slice(0, max)
+    .join(" / ");
+const formatRecentCountSummary = (raw: Record<string, unknown>) => {
+  const pairs = [
+    ["titles", Array.isArray(raw.recentTitles) ? raw.recentTitles.length : 0],
+    ["cases", Array.isArray(raw.recentCaseMotifs) ? raw.recentCaseMotifs.length : 0],
+    ["chars", Array.isArray(raw.recentCharacterArchetypes) ? raw.recentCharacterArchetypes.length : 0],
+    ["relations", Array.isArray(raw.recentRelationshipPatterns) ? raw.recentRelationshipPatterns.length : 0],
+    ["visuals", Array.isArray(raw.recentVisualMotifs) ? raw.recentVisualMotifs.length : 0],
+    ["truths", Array.isArray(raw.recentTruthPatterns) ? raw.recentTruthPatterns.length : 0],
+    ["envs", Array.isArray(raw.recentEnvironmentPatterns) ? raw.recentEnvironmentPatterns.length : 0],
+  ] as const;
+  return pairs.filter(([, count]) => count > 0).map(([label, count]) => `${label}=${count}`).join(", ");
+};
+const summarizeVNextSeriesRequest = (input: {
+  interview?: string;
+  prompt?: string;
+  desiredEpisodeLimit?: number;
+  explicitGenreHints?: string[];
+  excludedDirections?: string[];
+}): string =>
+  [
+    `episodeLimit=${Number.isFinite(input.desiredEpisodeLimit) ? input.desiredEpisodeLimit : "default"}`,
+    truncate(`interview=${input.interview || "none"}`, 140),
+    input.prompt ? truncate(`prompt=${input.prompt}`, 140) : "",
+    input.explicitGenreHints?.length ? `hints=${formatList(input.explicitGenreHints)}` : "",
+    input.excludedDirections?.length ? `avoid=${formatList(input.excludedDirections)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" | ");
+const summarizeLegacySeriesRequest = (input: {
+  desired_episode_count?: number;
+  prompt?: string;
+  interview: {
+    genre_world?: string;
+    desired_emotion?: string;
+    companion_preference?: string;
+    continuation_trigger?: string;
+    avoidance_preferences?: string;
+  };
+}): string =>
+  [
+    `episodeCount=${Number.isFinite(input.desired_episode_count) ? input.desired_episode_count : "default"}`,
+    truncate(`genre=${input.interview.genre_world || "none"}`, 100),
+    truncate(`emotion=${input.interview.desired_emotion || "none"}`, 80),
+    truncate(`companion=${input.interview.companion_preference || "none"}`, 80),
+    truncate(`hook=${input.interview.continuation_trigger || "none"}`, 80),
+    input.interview.avoidance_preferences
+      ? truncate(`avoid=${input.interview.avoidance_preferences}`, 100)
+      : "",
+    input.prompt ? truncate(`prompt=${input.prompt}`, 120) : "",
+  ]
+    .filter(Boolean)
+    .join(" | ");
+const logSeriesProgressEvent = (
+  logPrefix: string,
+  params: {
+    jobId?: string;
+    startedMs: number;
+    event: { phase: string; detail?: string; at?: string };
+  }
+) => {
+  if (!SERIES_VERBOSE_CONSOLE) return;
+  const elapsedSec = ((Date.now() - params.startedMs) / 1000).toFixed(1);
+  const idPart = params.jobId ? ` id=${params.jobId}` : "";
+  const detailPart = clean(params.event.detail) ? ` detail=${truncate(params.event.detail || "", 180)}` : "";
+  console.log(
+    `${logPrefix} progress${idPart} +${elapsedSec}s phase=${clean(params.event.phase) || "unknown"}${detailPart}`
+  );
+};
+const logSeriesResultSummary = (
+  logPrefix: string,
+  params: {
+    jobId?: string;
+    startedMs: number;
+    title?: string;
+    characterCount?: number;
+    checkpointCount?: number;
+    workflowVersion?: string;
+  }
+) => {
+  const elapsedSec = ((Date.now() - params.startedMs) / 1000).toFixed(1);
+  const idPart = params.jobId ? ` id=${params.jobId}` : "";
+  console.log(
+    `${logPrefix} result${idPart} +${elapsedSec}s title=${truncate(params.title || "unknown", 80)} characters=${
+      params.characterCount ?? 0
+    } checkpoints=${params.checkpointCount ?? 0} workflow=${clean(params.workflowVersion) || "unknown"}`
+  );
+};
 const GEMINI_IMAGE_MODEL = clean(process.env.SERIES_IMAGE_GEMINI_MODEL) || "gemini-3-pro-image-preview";
 const GEMINI_API_KEY =
   clean(process.env.GOOGLE_GENERATIVE_AI_API_KEY) || clean(process.env.GEMINI_API_KEY);
@@ -537,18 +637,30 @@ const isIdentityLockedRequest = (request?: SeriesImageRequest) =>
       Boolean(request.styleReference))
   );
 
+const allowIdentityLockedPollinationsFallback = (request?: SeriesImageRequest) =>
+  Boolean(
+    request &&
+      GEMINI_POLLINATIONS_FALLBACK &&
+      request.purpose === "character_portrait"
+  );
+
 const normalizeHybridProviderOrder = (request?: SeriesImageRequest): HybridImageProvider[] => {
   const identityLocked = isIdentityLockedRequest(request);
+  const allowPollinationsFallback = allowIdentityLockedPollinationsFallback(request);
   const allowed = new Set<HybridImageProvider>(["vertex", "diffusers", "gemini", "pollinations"]);
   let parsed = SERIES_IMAGE_HYBRID_ORDER
     .split(",")
     .map((part) => clean(part).toLowerCase())
     .filter((part): part is HybridImageProvider => allowed.has(part as HybridImageProvider));
-  if (identityLocked) {
+  if (identityLocked && !allowPollinationsFallback) {
     parsed = parsed.filter((provider) => provider !== "pollinations");
   }
   if (parsed.length > 0) return parsed;
-  if (identityLocked) return ["vertex", "diffusers", "gemini"];
+  if (identityLocked) {
+    return allowPollinationsFallback
+      ? ["vertex", "diffusers", "gemini", "pollinations"]
+      : ["vertex", "diffusers", "gemini"];
+  }
   return ["vertex", "diffusers", "gemini", "pollinations"];
 };
 
@@ -644,7 +756,13 @@ const generateSeriesImageWithCustomEndpoint = async (
 const generateSeriesImageWithPollinations = async (
   request: SeriesImageRequest
 ): Promise<HybridImageResult> => {
-  const upstreamUrl = buildSeriesImageProviderUrl(request);
+  const pollinationsRequest: SeriesImageRequest = {
+    ...request,
+    // Pollinations は style_ref / refs を付けると失敗率が上がるため最小化する。
+    styleReference: undefined,
+    references: [],
+  };
+  const upstreamUrl = buildSeriesImageProviderUrl(pollinationsRequest);
   let upstream: Response;
   try {
     upstream = await fetch(upstreamUrl, {
@@ -678,6 +796,7 @@ const generateSeriesImageHybrid = async (
   request: SeriesImageRequest
 ): Promise<HybridImageResult> => {
   const identityLocked = isIdentityLockedRequest(request);
+  const allowPollinationsFallback = allowIdentityLockedPollinationsFallback(request);
   const order = normalizeHybridProviderOrder(request);
   const errors: string[] = [];
 
@@ -712,7 +831,10 @@ const generateSeriesImageHybrid = async (
       }
     } catch (error: any) {
       errors.push(`${provider}:${clean(error?.message || String(error))}`.slice(0, 200));
-      if (provider === "gemini" && (identityLocked || !GEMINI_POLLINATIONS_FALLBACK)) {
+      if (
+        provider === "gemini" &&
+        ((identityLocked && !allowPollinationsFallback) || !GEMINI_POLLINATIONS_FALLBACK)
+      ) {
         throw error;
       }
     }
@@ -994,7 +1116,31 @@ app.post("/api/series/generate", async (c) => {
       return c.json({ status: "failed", error: `リクエストが不正です: ${msg}` }, 400);
     }
 
-    const result = await generateSeriesGenerationResultVNext(parsed.data);
+    const startedMs = Date.now();
+    if (SERIES_VERBOSE_CONSOLE) {
+      const rawRow = parsed.data as unknown as Record<string, unknown>;
+      console.log(`${logPrefix} request accepted — ${summarizeVNextSeriesRequest(parsed.data)}`);
+      const recentSummary = formatRecentCountSummary(rawRow);
+      if (recentSummary) {
+        console.log(`${logPrefix} recent context — ${recentSummary}`);
+      }
+    }
+
+    const result = await generateSeriesGenerationResultVNext(parsed.data, {
+      onProgress: async (event) => {
+        logSeriesProgressEvent(logPrefix, {
+          startedMs,
+          event,
+        });
+      },
+    });
+    logSeriesResultSummary(logPrefix, {
+      startedMs,
+      title: result.seriesBlueprint.concept.title,
+      characterCount: result.seriesBlueprint.characters.length,
+      checkpointCount: result.seriesBlueprint.checkpoints.length,
+      workflowVersion: result.workflowVersion,
+    });
     return c.json(result);
   } catch (error: any) {
     console.error(`${logPrefix} error:`, error?.message || error);
@@ -1031,6 +1177,14 @@ app.post("/api/series/generate/jobs", async (c) => {
       events: [],
     };
     seriesGenerationVNextJobs.set(jobId, job);
+    if (SERIES_VERBOSE_CONSOLE) {
+      const rawRow = parsed.data as unknown as Record<string, unknown>;
+      console.log(`${logPrefix} request accepted — id=${jobId} ${summarizeVNextSeriesRequest(parsed.data)}`);
+      const recentSummary = formatRecentCountSummary(rawRow);
+      if (recentSummary) {
+        console.log(`${logPrefix} recent context — id=${jobId} ${recentSummary}`);
+      }
+    }
 
     appendSeriesJobEvent(job, {
       phase: "request_received",
@@ -1043,10 +1197,16 @@ app.post("/api/series/generate/jobs", async (c) => {
 
     void (async () => {
       try {
+        const startedMs = Date.now();
         console.log(`${logPrefix} ジョブ開始 — id: ${jobId}`);
         const result = await generateSeriesGenerationResultVNext(parsed.data, {
           onProgress: async (event) => {
             appendSeriesJobEvent(job, event);
+            logSeriesProgressEvent(logPrefix, {
+              jobId,
+              startedMs,
+              event,
+            });
           },
         });
 
@@ -1059,6 +1219,14 @@ app.post("/api/series/generate/jobs", async (c) => {
         appendSeriesJobEvent(job, {
           phase: "completed",
           detail: "vNextシリーズ生成が完了",
+        });
+        logSeriesResultSummary(logPrefix, {
+          jobId,
+          startedMs,
+          title: result.seriesBlueprint.concept.title,
+          characterCount: result.seriesBlueprint.characters.length,
+          checkpointCount: result.seriesBlueprint.checkpoints.length,
+          workflowVersion: result.workflowVersion,
         });
         console.log(`${logPrefix} ジョブ成功 — id: ${jobId}, title: ${result.seriesBlueprint.concept.title}`);
       } catch (error: any) {
@@ -1134,6 +1302,9 @@ app.post("/api/series/jobs", async (c) => {
       events: [],
     };
     seriesGenerationJobs.set(jobId, job);
+    if (SERIES_VERBOSE_CONSOLE) {
+      console.log(`${logPrefix} request accepted — id=${jobId} ${summarizeLegacySeriesRequest(parsed.data)}`);
+    }
 
     appendSeriesJobEvent(job, {
       phase: "request_received",
@@ -1146,10 +1317,16 @@ app.post("/api/series/jobs", async (c) => {
 
     void (async () => {
       try {
+        const startedMs = Date.now();
         console.log(`${logPrefix} ジョブ開始 — id: ${jobId}`);
         const output = await generateSeriesWorkflowWithProgress(parsed.data, {
           onProgress: async (event) => {
             appendSeriesJobEvent(job, event);
+            logSeriesProgressEvent(logPrefix, {
+              jobId,
+              startedMs,
+              event,
+            });
           },
         });
 
@@ -1167,6 +1344,14 @@ app.post("/api/series/jobs", async (c) => {
           appendSeriesJobEvent(job, {
             phase: "completed",
             detail: "シリーズ生成が完了",
+          });
+          logSeriesResultSummary(logPrefix, {
+            jobId,
+            startedMs,
+            title: series.title,
+            characterCount: Array.isArray(series.characters) ? series.characters.length : 0,
+            checkpointCount: Array.isArray(series.checkpoints) ? series.checkpoints.length : 0,
+            workflowVersion: clean(output?.meta?.workflow_version),
           });
           console.log(`${logPrefix} ジョブ成功 — id: ${jobId}, title: ${series.title}`);
           return;
@@ -1222,19 +1407,24 @@ app.get("/api/series/jobs/:jobId", async (c) => {
 });
 
 app.post("/api/series", async (c) => {
+  const logPrefix = "[api/series]";
   try {
     const raw = await c.req.json();
     const parsed = seriesGenerationRequestSchema.safeParse(raw);
     if (!parsed.success) {
       const msg = parsed.error.flatten().formErrors?.join("; ") || parsed.error.message;
-      console.error("[api/series] invalid request:", msg, parsed.error.flatten());
+      console.error(`${logPrefix} invalid request:`, msg, parsed.error.flatten());
       return c.json({ status: "failed", error: `リクエストが不正です: ${msg}` }, 400);
     }
     const input = parsed.data;
-    console.log("[api/series] リクエスト受付 — ワークフロー開始");
+    const startedMs = Date.now();
+    if (SERIES_VERBOSE_CONSOLE) {
+      console.log(`${logPrefix} request accepted — ${summarizeLegacySeriesRequest(input)}`);
+    }
+    console.log(`${logPrefix} リクエスト受付 — ワークフロー開始`);
     const run = await seriesWorkflow.createRun();
     const result = await run.start({ inputData: input });
-    console.log("[api/series] ワークフロー実行完了");
+    console.log(`${logPrefix} ワークフロー実行完了`);
     const output = unwrapMastraOutput(result);
 
     const series = output?.series || output;
@@ -1249,12 +1439,19 @@ app.post("/api/series", async (c) => {
     const hasLegacyEpisodes = Array.isArray(series?.episode_blueprints);
     const hasCheckpoints = Array.isArray(series?.checkpoints);
     if (series?.title && (hasCheckpoints || hasLegacyEpisodes)) {
-      console.log("[api/series] 成功 — シリーズ返却:", series?.title ?? "—");
+      logSeriesResultSummary(logPrefix, {
+        startedMs,
+        title: series?.title,
+        characterCount: Array.isArray(series?.characters) ? series.characters.length : 0,
+        checkpointCount: Array.isArray(series?.checkpoints) ? series.checkpoints.length : 0,
+        workflowVersion: clean(meta?.workflow_version),
+      });
+      console.log(`${logPrefix} 成功 — シリーズ返却:`, series?.title ?? "—");
       return c.json({ series, meta });
     }
 
     const failure = extractFailure(result) || "Series payload missing in Mastra result";
-    console.error("[api/series] workflow did not return valid series:", failure, result);
+    console.error(`${logPrefix} workflow did not return valid series:`, failure, result);
     return c.json(
       {
         status: "failed",
@@ -1263,7 +1460,7 @@ app.post("/api/series", async (c) => {
       500
     );
   } catch (error: any) {
-    console.error("[api/series] error:", error?.message, error);
+    console.error(`${logPrefix} error:`, error?.message, error);
     return c.json(
       {
         status: "failed",

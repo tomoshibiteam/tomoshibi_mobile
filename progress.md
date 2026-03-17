@@ -87,6 +87,13 @@ Original prompt: えっとゲームプレイ画面におけるマップなんで
   - フォントサイズを `text-[11px]` から `text-[32px]` へ拡大し、背景上でも読めるようテキストシャドウを追加。
   - 上部の戻る/閉じるボタンは維持（オーバーレイ上で操作可能）。
   - 検証: `npm run typecheck` 成功。Playwrightクライアントでローカル画面のスクリーンショット取得は成功（`/tmp/tomoshibi_opening_check/shot-0.png`）だが、取得画面はホームで `opening_prologue` 自体の遷移確認は未実施。
+- 2026-03-16: SeriesDetail のCTA配置を最新話基準へ変更（依頼対応）。
+  - 対象: `src/screens/SeriesDetailScreen.tsx`。
+  - 下部固定CTAを「エピソード追加」から「第N話をプレイする」に変更（`episodeNo` 最大の最新話を対象）。
+  - `nextEpisode` 参照（先頭固定）を廃止し、`latestEpisode` 算出へ置換。
+  - 「物語の歩み」見出し直下に管理者向け `エピソードを追加` ボタンを移設（最新話の上に配置）。
+  - 旧モーダル導線（次エピソード確認モーダル）を削除し、最新エピソードカードは直接遷移に変更。
+  - 検証: `npm run typecheck` 成功。
 - 2026-03-15: プロローグ演出を通常シナリオUIから分離（依頼対応）。
   - `GamePlayScreen.tsx` / `GamePlayScreen.web.tsx` に `PrologueCinematicOverlay` を追加。
   - `mode === "prologue"` では全画面黒背景 + 中央テキスト逐次表示（タップで次行）に変更。
@@ -148,3 +155,44 @@ Original prompt: えっとゲームプレイ画面におけるマップなんで
   - `normalizeEpisodeCoverUrl` で `/api/series/image?purpose=character_portrait` に `cutout=0` を付与（一覧サムネイル可視性を優先）。
   - `SeriesDetailScreen` の人物アバター表示を `resizeMode='cover'` から `contain` に変更（透過PNGの切り抜き見えない問題を回避）。
   - 検証: `npm run typecheck` 成功、Expo リロード済み。
+- 2026-03-16: シリーズ生成の多候補探索を停止し、単一路線へ固定。
+  - `mastra/src/workflows/series-workflow.ts` で quality pipeline を強制無効化し、series生成は常に single-path の legacy flow を通すよう変更。
+  - `assembleSeriesBlueprint` に `workflowVersion` を渡せるようにし、単一路線は `series-workflow-v9-single-path` を返すよう整理。
+  - `docs/business/DECISION_LOG.md` に単一路線固定の判断を追記し、最終更新日を更新。
+- 2026-03-16: シリーズカバー画像の多候補生成を停止。
+  - `mastra/src/workflows/series-workflow.ts` の `buildCoverWithConsistency` を単発化し、カバー画像は `1枚生成 -> 1回評価 -> そのまま採用` へ変更。
+  - `generate_series_cover_candidates_*` の進捗文言を、多候補前提から単一カバー生成前提へ更新。
+  - `docs/business/DECISION_LOG.md` にカバー画像単発生成の判断を追記。
+- 2026-03-16: シリーズ生成を「現実拡張型・外出周遊ミステリー」へ再定義し、差分制御を追加。
+  - `mastra/src/lib/agents/seriesConceptAgent.ts` / `seriesCharacterAgent.ts` / `seriesEpisodePlannerAgent.ts` / `seriesConsistencyAgent.ts` の system prompt・runtime prompt を全面改修。
+  - `mastra/src/schemas/series.ts` に `mystery_profile` / `recent_generation_context` を追加し、`seriesCharacter` / `checkpoint` / `first_episode_seed` の出力粒度を拡張。
+  - `mastra/src/workflows/series-workflow.ts` で `mystery_profile` と `recent_generation_context` を全工程へ受け渡し、`series.mystery_profile` を最終出力に含めるよう変更。
+  - `mastra/src/schemas/series-runtime-vnext.ts` / `mastra/src/lib/runtime/seriesRuntimeVNext.ts` / `src/services/seriesAi.ts` を更新し、vNext adapter とクライアント request/normalize でも `recent_*` と `mysteryProfile` を保持。
+  - `docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md` を「街歩き」固定から「外出周遊」中心の定義へ更新し、`docs/business/DECISION_LOG.md` に判断を追記。
+- 2026-03-16: シリーズ生成の hard fail を fallback 継続型へ修正。
+  - `mastra/src/lib/agents/seriesConceptAgent.ts` は全試行失敗時に throw せず `buildFallbackConcept` を返すよう変更し、timeout も env 化して既定90秒へ延長。
+  - `mastra/src/lib/agents/seriesCharacterAgent.ts` は API キー未設定時と全試行失敗時に fallback characters を返すよう変更。
+  - `mastra/src/lib/agents/seriesConsistencyAgent.ts` も全試行失敗時に fallback consistency を返すよう変更。
+  - 検証: `npm run typecheck` / `npm --prefix ./mastra run build` 成功。
+- 2026-03-16: Mastra サーバーのシリーズ生成ログを詳細化。
+  - `mastra/src/server.ts` に request summary / recent context 件数 / progress phase / result summary を出す console logging を追加。
+  - `SERIES_VERBOSE_CONSOLE=off` を入れない限り、`/api/series/generate`、`/api/series/generate/jobs`、`/api/series/jobs`、`/api/series` で進行ログが出る。
+  - 検証: `npm run typecheck` / `npm --prefix ./mastra run build` 成功。
+- 2026-03-16: シリーズ文面からエピソード層の導線制約とメタ語の漏れを遮断。
+  - `mastra/src/lib/agents/seriesConsistencyAgent.ts` の fallback / normalize / prompt を修正し、`overview_refined` と `ai_rule_points` に「外出周遊」「複数スポット」「移動手段」等を出さないよう変更。
+  - `mastra/src/workflows/series-workflow.ts` の `buildFallbackConceptFromSeed` を抽象化し、シリーズ fallback が地理ロックや導線実装語を含まないよう変更。
+  - `src/services/seriesAi.ts` の `ensureWalkAiRules` を表示用の高レベル規則へ変更し、`genre / overview / premise / seasonGoal / world.setting / continuity` をメタ語・導線語検知時に抽象化して正規化するよう変更。
+  - `docs/business/DECISION_LOG.md` に「シリーズ生成のユーザー向け文面にエピソード導線制約を露出しない」判断を追記。
+  - 検証: `npm run typecheck` / `npm --prefix ./mastra run build` 成功。
+- 2026-03-16: シリーズ生成結果の登場人物ハッシュタグが途中で切れる問題を修正。
+  - `src/screens/SeriesGenerationResultScreen.tsx` の `buildCharacterTags` でタグ文字列の `slice(0, 10)` を削除し、全文を保持するよう変更。
+  - タグチップに `maxWidth: 100%` とテキスト折り返し前提のスタイルを追加し、長いハッシュタグでもカード内で見切れにくい表示へ変更。
+  - 検証: `npm run typecheck` 成功。
+- 2026-03-16: シリーズ画像promptを「Rendering Bible + Narrative Visual Brief」へ改修。
+  - `mastra/src/lib/seriesVisuals.ts` に `buildSeriesRenderingBible` / `buildSeriesNarrativeVisualBrief` を追加し、cover/character prompt が「統一ルール」と「事件差分」を分離して受け取る構造へ変更。
+  - カバーpromptを `world concept poster` から `grounded mystery key art` に変更し、`clue_objects` / `human_traces` / `material_anchors` / `cover_composition_family` を明示必須化。
+  - キャラpromptへ `investigation_function` / `relationship_temperature` / `signature_prop` / `environment_residue` を差し込み、汎用立ち絵化を抑制。
+  - `mastra/src/workflows/series-workflow.ts` で `mystery_profile` を cover/character prompt へ渡し、検証文言もキーアート前提に更新。
+  - `mastra/src/lib/agents/seriesCharacterAgent.ts` と `mastra/src/schemas/series.ts` を拡張し、`relationship_temperature` / `signature_prop` / `environment_residue` / `posture_grammar` を扱えるようにした。
+  - `src/services/seriesAi.ts` で新キャラ項目を正規化して受け取るよう更新。
+  - 検証: `npm run typecheck` / `npm --prefix ./mastra run build` 成功。

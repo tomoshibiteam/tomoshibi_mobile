@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   Image,
-  Modal,
   Pressable,
   ScrollView,
   Text,
@@ -86,7 +85,6 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
   const [editingEpisodeId, setEditingEpisodeId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [editingBody, setEditingBody] = useState("");
-  const [isNextActionModalOpen, setIsNextActionModalOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -114,9 +112,14 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
   const canManageSeries = Boolean(viewerUserId && series?.creatorId === viewerUserId);
 
   const timelineEpisodes = useMemo(() => [...episodes].reverse(), [episodes]);
+  const latestEpisode = useMemo(() => {
+    if (episodes.length === 0) return null;
+    return episodes.reduce<SeriesEpisode>((latest, current) =>
+      current.episodeNo > latest.episodeNo ? current : latest,
+    episodes[0]);
+  }, [episodes]);
   const totalEpisodes = episodes.length;
-  const clearedCount = 0;
-  const nextEpisode = episodes[clearedCount] || null;
+  const latestEpisodeNo = latestEpisode?.episodeNo || 0;
   const progressLabel = statusToLabel(series?.status || null);
   const resolveEpisodeCover = useCallback(
     (episode: SeriesEpisode) => {
@@ -234,47 +237,21 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
   };
 
   const handleStartGameplay = () => {
-    setIsNextActionModalOpen(false);
-
-    if (!nextEpisode) return;
+    if (!latestEpisode) return;
 
     navigation.navigate("GamePlay", {
       questId,
-      startEpisodeNo: nextEpisode.episodeNo,
+      startEpisodeNo: latestEpisode.episodeNo,
     });
   };
 
   const handleAddEpisode = () => {
-    setIsNextActionModalOpen(false);
-
     if (!series) return;
 
     navigation.navigate("AddEpisode", {
       prefillSeriesId: series.id,
       prefillSeriesTitle: series.title,
     });
-  };
-
-  const handleConfirmPrimaryAction = () => {
-    setIsNextActionModalOpen(false);
-
-    if (nextEpisode) {
-      navigation.navigate("GamePlay", {
-        questId,
-        startEpisodeNo: nextEpisode.episodeNo,
-      });
-      return;
-    }
-
-    if (canManageSeries && series) {
-      navigation.navigate("AddEpisode", {
-        prefillSeriesId: series.id,
-        prefillSeriesTitle: series.title,
-      });
-      return;
-    }
-
-    navigation.goBack();
   };
 
   if (loading) {
@@ -348,7 +325,7 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
                 </Text>
               </View>
               <Text className="text-xs text-white/90" style={{ fontFamily: fonts.bodyMedium }}>
-                エピソード: {totalEpisodes}話 / {clearedCount}話クリア
+                エピソード: {totalEpisodes}話 / 最新話: {latestEpisodeNo > 0 ? `第${latestEpisodeNo}話` : "未作成"}
               </Text>
             </View>
           </View>
@@ -410,12 +387,12 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
         <View className="px-4 pt-6">
           <View className="mb-10">
             <Text className="text-sm text-[#221910] mb-4 pl-3 border-l-4 border-[#EE8C2B]" style={{ fontFamily: fonts.displayBold }}>
-              次のエピソード
+              最新エピソード
             </Text>
 
             <Pressable
               className="rounded-2xl overflow-hidden border border-[#EFE7DD] bg-white"
-              onPress={() => setIsNextActionModalOpen(true)}
+              onPress={latestEpisode ? handleStartGameplay : canManageSeries ? handleAddEpisode : undefined}
               style={{
                 shadowColor: "#DCC8B5",
                 shadowOffset: { width: 0, height: 6 },
@@ -424,12 +401,12 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
                 elevation: 3,
               }}
             >
-              {nextEpisode ? (
+              {latestEpisode ? (
                 <>
                   <View className="h-32 relative">
                     <Image
                       source={{
-                        uri: resolveEpisodeCover(nextEpisode),
+                        uri: resolveEpisodeCover(latestEpisode),
                       }}
                       className="w-full h-full"
                       resizeMode="cover"
@@ -437,7 +414,7 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
                     <View className="absolute inset-0 bg-black/30" />
                     <View className="absolute top-0 right-0 bg-[#EE8C2B] px-3 py-1 rounded-bl-xl">
                       <Text className="text-[10px] text-white" style={{ fontFamily: fonts.displayBold }}>
-                        未プレイ
+                        最新話
                       </Text>
                     </View>
                     <View className="absolute bottom-3 left-4 flex-row items-center gap-1">
@@ -452,16 +429,16 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
                     <View className="flex-row items-start gap-4 mb-3">
                       <View className="w-10 h-10 rounded-lg bg-[#FDF2E4] border border-[#EE8C2B]/20 items-center justify-center">
                         <Text className="text-base text-[#EE8C2B]" style={{ fontFamily: fonts.displayBold }}>
-                          {nextEpisode.episodeNo}
+                          {latestEpisode.episodeNo}
                         </Text>
                       </View>
 
                       <View className="flex-1">
                         <Text className="text-[11px] text-[#B9763A] mb-1" style={{ fontFamily: fonts.displayBold }}>
-                          第{nextEpisode.episodeNo}話
+                          第{latestEpisode.episodeNo}話
                         </Text>
                         <Text className="text-xl text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
-                          {nextEpisode.title}
+                          {latestEpisode.title}
                         </Text>
                       </View>
                     </View>
@@ -469,12 +446,12 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
                     <View className="rounded-lg bg-[#FFF3E5] border border-[#F8DFC2] px-3.5 py-3 mb-4 flex-row items-start gap-2">
                       <Ionicons name="sparkles" size={14} color="#A8632D" style={{ marginTop: 2 }} />
                       <Text className="text-xs text-[#A8632D] flex-1 leading-5" style={{ fontFamily: fonts.bodyMedium }}>
-                        {summarizeEpisodeBody(nextEpisode.body, 95)}
+                        {summarizeEpisodeBody(latestEpisode.body, 95)}
                       </Text>
                     </View>
 
                     <Text className="text-sm text-[#64584D] leading-6" style={{ fontFamily: fonts.bodyRegular }}>
-                      {summarizeEpisodeBody(nextEpisode.body, 120)}
+                      {summarizeEpisodeBody(latestEpisode.body, 120)}
                     </Text>
                   </View>
                 </>
@@ -504,13 +481,32 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
               物語の歩み
             </Text>
 
+            {canManageSeries ? (
+              <View className="rounded-2xl border border-[#E8DED4] bg-[#FFF7ED] px-4 py-4 mb-4">
+                <Text className="text-sm text-[#3D2E1F] mb-2" style={{ fontFamily: fonts.displayBold }}>
+                  {latestEpisode
+                    ? `第${latestEpisode.episodeNo}話の上に、新しいエピソードを追加しますか？`
+                    : "最初のエピソードを追加しますか？"}
+                </Text>
+                <Pressable
+                  className="h-10 rounded-xl bg-[#EE8C2B] items-center justify-center flex-row gap-2"
+                  onPress={handleAddEpisode}
+                >
+                  <Ionicons name="sparkles" size={14} color="#FFFFFF" />
+                  <Text className="text-sm text-white" style={{ fontFamily: fonts.displayBold }}>
+                    エピソードを追加
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
+
             {timelineEpisodes.length === 0 ? (
               <View className="rounded-2xl border border-dashed border-[#E6DED5] bg-white/80 px-4 py-8">
                 <Text className="text-sm text-[#3D2E1F] text-center" style={{ fontFamily: fonts.displayBold }}>
                   エピソードはまだありません
                 </Text>
                 <Text className="text-xs text-[#6C5647] text-center mt-1" style={{ fontFamily: fonts.bodyRegular }}>
-                  {canManageSeries ? "「次のエピソード」から追加できます。" : "次回更新をお待ちください。"}
+                  {canManageSeries ? "上の「エピソードを追加」から開始できます。" : "次回更新をお待ちください。"}
                 </Text>
               </View>
             ) : (
@@ -657,8 +653,11 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
         </View>
       </ScrollView>
 
-      {canManageSeries ? (
-        <SafeAreaView edges={["bottom"]} className="absolute left-0 right-0 bottom-0 bg-[#F8F7F6] border-t border-[#ECE6DF]">
+      {latestEpisode ? (
+        <SafeAreaView
+          edges={["bottom"]}
+          className="absolute left-0 right-0 bottom-0 bg-[#F8F7F6] border-t border-[#ECE6DF]"
+        >
           <View className="px-4 pt-3 pb-2">
             <Pressable
               className="h-12 rounded-xl bg-[#EE8C2B] items-center justify-center flex-row gap-2"
@@ -669,135 +668,16 @@ export const SeriesDetailScreen = ({ navigation, route }: Props) => {
                 shadowRadius: 10,
                 elevation: 3,
               }}
-              onPress={() =>
-                navigation.navigate("AddEpisode", {
-                  prefillSeriesId: series.id,
-                  prefillSeriesTitle: series.title,
-                })
-              }
+              onPress={handleStartGameplay}
             >
-              <Ionicons name="sparkles" size={15} color="#FFFFFF" />
+              <Ionicons name="play" size={15} color="#FFFFFF" />
               <Text className="text-sm text-white" style={{ fontFamily: fonts.displayBold }}>
-                エピソードを追加
+                第{latestEpisode.episodeNo}話をプレイする
               </Text>
             </Pressable>
           </View>
         </SafeAreaView>
       ) : null}
-
-      <Modal visible={isNextActionModalOpen} transparent animationType="fade" onRequestClose={() => setIsNextActionModalOpen(false)}>
-        <View className="flex-1 items-center justify-center bg-black/55 px-4">
-          <Pressable className="absolute inset-0" onPress={() => setIsNextActionModalOpen(false)} />
-
-          <View className="w-full rounded-3xl border border-[#E6DED5] bg-[#F8F7F6] overflow-hidden">
-            <View className="px-5 pt-5 pb-3">
-              <View className="flex-row items-start justify-between">
-                <View className="flex-1 pr-5">
-                  <Text className="text-lg text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
-                    {nextEpisode ? "次のエピソードを開始しますか？" : "次のエピソードを生成しますか？"}
-                  </Text>
-                  <Text className="text-sm text-[#6B6762] mt-1" style={{ fontFamily: fonts.bodyRegular }}>
-                    {canManageSeries && nextEpisode
-                      ? "このエピソードをプレイするか、新しいエピソードを追加できます。"
-                      : nextEpisode
-                      ? "現在の進行から続けて、次の物語へ進みます。"
-                      : "このシリーズの新しいエピソードを作成します。"}
-                  </Text>
-                </View>
-
-                <Pressable
-                  className="w-8 h-8 rounded-full bg-[#EFE7DD] items-center justify-center"
-                  onPress={() => setIsNextActionModalOpen(false)}
-                >
-                  <Ionicons name="close" size={15} color="#6C5647" />
-                </Pressable>
-              </View>
-            </View>
-
-            <View className="px-5 pb-5">
-              <View className="rounded-2xl border border-[#ECE6DF] bg-white p-4">
-                <Text className="text-[10px] text-[#8E8984] mb-2" style={{ fontFamily: fonts.displayBold }}>
-                  対象エピソード
-                </Text>
-                {nextEpisode ? (
-                  <>
-                    <Text className="text-xs text-[#EE8C2B] mb-1" style={{ fontFamily: fonts.displayBold }}>
-                      第{nextEpisode.episodeNo}話
-                    </Text>
-                    <Text className="text-base text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
-                      {nextEpisode.title}
-                    </Text>
-                  </>
-                ) : (
-                  <Text className="text-base text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
-                    次のエピソード
-                  </Text>
-                )}
-
-                <View className="flex-row items-center gap-1 mt-1">
-                  <Ionicons name="location-outline" size={12} color="#6B6762" />
-                  <Text className="text-xs text-[#6B6762]" style={{ fontFamily: fonts.bodyRegular }}>
-                    {series.areaName || "舞台未設定"}
-                  </Text>
-                </View>
-              </View>
-
-              {canManageSeries && nextEpisode ? (
-                <View className="gap-2 mt-4">
-                  <View className="flex-row gap-2">
-                    <Pressable
-                      className="flex-1 h-11 rounded-xl border border-[#EE8C2B]/30 bg-[#FFF6EC] items-center justify-center"
-                      onPress={handleStartGameplay}
-                    >
-                      <Text className="text-sm text-[#EE8C2B]" style={{ fontFamily: fonts.displayBold }}>
-                        ゲームプレイ
-                      </Text>
-                    </Pressable>
-
-                    <Pressable
-                      className="flex-1 h-11 rounded-xl bg-[#EE8C2B] items-center justify-center"
-                      onPress={handleAddEpisode}
-                    >
-                      <Text className="text-sm text-white" style={{ fontFamily: fonts.displayBold }}>
-                        追加する
-                      </Text>
-                    </Pressable>
-                  </View>
-
-                  <Pressable
-                    className="h-11 rounded-xl border border-[#DDD5CC] bg-white items-center justify-center"
-                    onPress={() => setIsNextActionModalOpen(false)}
-                  >
-                    <Text className="text-sm text-[#3E332B]" style={{ fontFamily: fonts.displayBold }}>
-                      キャンセル
-                    </Text>
-                  </Pressable>
-                </View>
-              ) : (
-                <View className="flex-row gap-2 mt-4">
-                  <Pressable
-                    className="flex-1 h-11 rounded-xl border border-[#DDD5CC] bg-white items-center justify-center"
-                    onPress={() => setIsNextActionModalOpen(false)}
-                  >
-                    <Text className="text-sm text-[#3E332B]" style={{ fontFamily: fonts.displayBold }}>
-                      キャンセル
-                    </Text>
-                  </Pressable>
-
-                  <Pressable
-                    className="flex-1 h-11 rounded-xl bg-[#EE8C2B] items-center justify-center"
-                    onPress={handleConfirmPrimaryAction}
-                  >
-                    <Text className="text-sm text-white" style={{ fontFamily: fonts.displayBold }}>
-                      {canManageSeries ? "追加する" : nextEpisode ? "進む" : "閉じる"}
-                    </Text>
-                  </Pressable>
-                </View>
-              )}
-            </View>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 };

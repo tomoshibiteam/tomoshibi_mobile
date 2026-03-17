@@ -13,6 +13,7 @@ import {
   seriesGenerationRequestSchema,
   seriesIdentityPackSchema,
   seriesInterviewSchema,
+  seriesRecentGenerationContextSchema,
   seriesPreferenceSheetSchema,
   seriesTextJudgeScoreSchema,
   userSeriesRubricSchema,
@@ -323,8 +324,8 @@ const buildWorldCoverEvalInstruction = (input: {
 }) =>
   [
     "あなたはシリーズのカバー画像監査者です。",
-    "このカバーは世界観ポスター用途です。人物・キャラクター・人型シルエットを出してはいけません。",
-    "街・建築・小物・空気感のみで世界観を表現できているかを評価してください。",
+    "このカバーは事件ミステリーのキーアート用途です。人物・キャラクター・人型シルエットを出してはいけません。",
+    "人の痕跡・物証・不在の緊張で事件性を表現できているかを評価してください。",
     `title: ${clean(input.title)}`,
     `genre: ${clean(input.genre)}`,
     `tone: ${clean(input.tone)}`,
@@ -872,6 +873,7 @@ const harmonizeCharacterPortraits = (input: {
   setting: string;
   styleGuide: string;
   characters: WorkflowCharacter[];
+  mysteryProfile?: z.infer<typeof seriesConceptAgentOutputSchema>["mystery_profile"];
 }): WorkflowCharacter[] =>
   enforceDistinctIdentityAnchors(input.characters).map((character, index) => {
     const portraitPrompt = buildCharacterPortraitPrompt({
@@ -883,6 +885,12 @@ const harmonizeCharacterPortraits = (input: {
       personality: character.personality,
       appearance: character.appearance,
       setting: input.setting,
+      caseCore: input.mysteryProfile?.case_core,
+      environmentLayer: input.mysteryProfile?.environment_layer,
+      investigationFunction: character.investigation_function,
+      relationshipTemperature: character.relationship_temperature || character.emotional_temperature,
+      signatureProp: character.signature_prop,
+      environmentResidue: character.environment_residue,
       dominantColor: character.visual_design?.dominant_color || character.identity_anchor_tokens?.dominant_color,
       bodyType: character.visual_design?.body_type,
       distinguishingFeature:
@@ -901,7 +909,6 @@ const harmonizeCharacterPortraits = (input: {
         width: 768,
         height: 1024,
         purpose: "character_portrait",
-        styleReference: input.styleGuide,
       }),
     };
   });
@@ -927,7 +934,6 @@ const ensureUniquePortraitUrls = (input: {
         width: 768,
         height: 1024,
         purpose: "character_portrait",
-        styleReference: input.styleGuide,
       });
     }
 
@@ -941,7 +947,6 @@ const ensureUniquePortraitUrls = (input: {
         width: 768,
         height: 1024,
         purpose: "character_portrait",
-        styleReference: input.styleGuide,
       });
     }
 
@@ -961,6 +966,8 @@ const PORTRAIT_BINARY_DUPLICATE_RETRY_MAX = Math.max(
   0,
   Number.parseInt(clean(process.env.SERIES_PORTRAIT_BINARY_RETRY_MAX) || "1", 10) || 1
 );
+const ENABLE_PORTRAIT_BINARY_DEDUP =
+  clean(process.env.SERIES_PORTRAIT_BINARY_DEDUP).toLowerCase() === "on";
 const PORTRAIT_HASH_FETCH_TIMEOUT_MS = Math.max(
   5_000,
   Number.parseInt(clean(process.env.SERIES_PORTRAIT_HASH_FETCH_TIMEOUT_MS) || "20000", 10) || 20_000
@@ -1044,7 +1051,6 @@ const enforceUniquePortraitBinaryHashes = async (input: {
           width: 768,
           height: 1024,
           purpose: "character_portrait",
-          styleReference: input.styleGuide,
         }),
       };
       next[index] = current;
@@ -1183,7 +1189,6 @@ const enforceDistinctCharacterPortraits = async (input: {
           width: 768,
           height: 1024,
           purpose: "character_portrait",
-          styleReference: input.styleGuide,
         }),
       };
       next[index] = regenerated;
@@ -1248,7 +1253,7 @@ const buildCandidatePrompt = (basePrompt: string, roundIndex: number, slotIndex:
   const parts = [
     basePrompt,
     roundIndex > 1 ? clean(feedback) : "",
-    `variant round ${roundIndex} slot ${slotIndex}`,
+    roundIndex > 1 || slotIndex > 1 ? `variant round ${roundIndex} slot ${slotIndex}` : "",
   ]
     .map((item) => clean(item))
     .filter(Boolean);
@@ -1333,36 +1338,15 @@ const evaluateCoverCandidate = async (input: {
   };
 };
 
-const buildRetryFeedback = (report: CoverCandidateReport) => {
-  const needsNoPeople = report.arcface_avg < clamp01(1 - COVER_MAX_PEOPLE_SCORE);
-  const needsWorld = report.clip_avg < COVER_MIN_WORLD_SIMILARITY;
-  const needsStyle = report.style_similarity < COVER_MIN_STYLE_SIMILARITY;
-  if (!needsNoPeople && !needsWorld && !needsStyle) return "";
-  const issues = [
-    needsNoPeople ? "remove people/characters/human silhouettes from the cover entirely" : "",
-    needsWorld ? "strengthen worldbuilding cues: architecture, street objects, terrain, atmosphere" : "",
-    needsStyle ? "align more strictly with the style bible" : "",
-  ]
-    .map((item) => clean(item))
-    .filter(Boolean);
-  return `retry guidance: ${issues.join("; ")}, world poster only, no humans`;
-};
-
-const resolveBestCandidate = (reports: CoverCandidateReport[]) => {
-  const sorted = reports.slice().sort((a, b) => {
-    const aScore = Number(a.passed) * 100 + a.pass_rate * 10 + a.style_similarity;
-    const bScore = Number(b.passed) * 100 + b.pass_rate * 10 + b.style_similarity;
-    return bScore - aScore;
-  });
-  return sorted[0] || reports[0];
-};
-
 const buildCoverWithConsistency = async (input: {
   title: string;
   genre: string;
   tone: string;
   premise: string;
   setting: string;
+  caseCore?: string;
+  truthNature?: string;
+  environmentLayer?: string;
   styleGuide: string;
   dominantColors: string[];
   recurringMotifs: string[];
@@ -1370,7 +1354,10 @@ const buildCoverWithConsistency = async (input: {
 }) => {
   const worldPosterDirection = dedupeStrings([
     clean(input.additionalDirection),
-    "world concept poster only",
+    "series cover key art",
+    "grounded mystery illustration",
+    "narrative clue composition",
+    "traces of human presence without showing people",
     "no people",
     "no human silhouettes",
     "no character portraits",
@@ -1382,6 +1369,9 @@ const buildCoverWithConsistency = async (input: {
     tone: input.tone,
     premise: input.premise,
     setting: input.setting,
+    caseCore: input.caseCore,
+    truthNature: input.truthNature,
+    environmentLayer: input.environmentLayer,
     styleGuide: input.styleGuide,
     dominantColors: input.dominantColors,
     recurringMotifs: input.recurringMotifs,
@@ -1390,142 +1380,49 @@ const buildCoverWithConsistency = async (input: {
     excludeCharacters: true,
   });
 
-  const candidateReports: CoverCandidateReport[] = [];
-  let retryFeedback = "";
-  const startedAt = Date.now();
-
-  for (let round = 1; round <= COVER_MAX_ROUNDS; round += 1) {
-    if (Date.now() - startedAt > COVER_EVAL_BUDGET_MS) {
-      break;
-    }
-
-    const slots = Array.from({ length: COVER_CANDIDATES_PER_ROUND }, (_, index) => index + 1);
-    const roundReports = await Promise.all(
-      slots.map(async (slot) => {
-        const candidateIndex = (round - 1) * COVER_CANDIDATES_PER_ROUND + slot;
-        const prompt = buildCandidatePrompt(basePrompt, round, slot, retryFeedback);
-        const imageUrl = buildSeriesImageUrl({
-          prompt,
-          seedKey: `${input.title}:cover:r${round}:s${slot}`,
-          width: 1024,
-          height: 1365,
-          purpose: "cover",
-          styleReference: input.styleGuide,
-        });
-
-        return await evaluateCoverCandidate({
-          candidateIndex,
-          roundIndex: round,
-          imageUrl,
-          prompt,
-          title: input.title,
-          genre: input.genre,
-          tone: input.tone,
-          premise: input.premise,
-          setting: input.setting,
-          recurringMotifs: input.recurringMotifs,
-          styleGuide: input.styleGuide,
-        });
-      })
-    );
-    candidateReports.push(...roundReports);
-
-    const passed = roundReports.find((row) => row.passed);
-    if (passed) {
-      const summary = `round ${round} で世界観ポスター条件を通過（pass_rate=${passed.pass_rate.toFixed(2)}, style=${passed.style_similarity.toFixed(2)})`;
-      return {
-        coverImagePrompt: passed.prompt,
-        coverImageUrl: passed.image_url,
-        coverConsistencyReport: {
-          mode: "quality_first",
-          thresholds: {
-            required_axes_per_character: COVER_REQUIRED_AXES,
-            min_average_pass_rate: COVER_MIN_PASS_RATE,
-            min_style_similarity: COVER_MIN_STYLE_SIMILARITY,
-          },
-          validation_rounds: round,
-          selected_candidate_index: passed.candidate_index,
-          selected_cover_image_url: passed.image_url,
-          selected_cover_image_prompt: passed.prompt,
-          selected_provider: clean(passed.provider) || "unknown",
-          passed: true,
-          summary,
-          candidate_reports: candidateReports,
-        } satisfies WorkflowCoverConsistencyReport,
-      };
-    }
-
-    const roundBest = resolveBestCandidate(roundReports);
-    retryFeedback = buildRetryFeedback(roundBest);
-  }
-
-  if (candidateReports.length === 0) {
-    const prompt = buildCandidatePrompt(basePrompt, 1, 1, retryFeedback);
-    const imageUrl = buildSeriesImageUrl({
-      prompt,
-      seedKey: `${input.title}:cover:r1:s1:fallback`,
-      width: 1024,
-      height: 1365,
-      purpose: "cover",
-      styleReference: input.styleGuide,
-    });
-    const fallbackCandidate: CoverCandidateReport = {
-      candidate_index: 1,
-      round_index: 1,
-      image_url: imageUrl,
-      provider: "unknown",
-      prompt,
-      arcface_avg: 1,
-      clip_avg: 0,
-      vision_anchor_avg: 0,
-      style_similarity: 0,
-      pass_rate: 0,
-      passed: false,
-      character_scores: [],
-    };
-    return {
-      coverImagePrompt: prompt,
-      coverImageUrl: imageUrl,
-      coverConsistencyReport: {
-        mode: "quality_first",
-        thresholds: {
-          required_axes_per_character: COVER_REQUIRED_AXES,
-          min_average_pass_rate: COVER_MIN_PASS_RATE,
-          min_style_similarity: COVER_MIN_STYLE_SIMILARITY,
-        },
-        validation_rounds: 1,
-        selected_candidate_index: 1,
-        selected_cover_image_url: imageUrl,
-        selected_cover_image_prompt: prompt,
-        selected_provider: "unknown",
-        passed: false,
-        summary: "カバー評価時間の上限に達したため、最初の候補を採用しました。",
-        candidate_reports: [fallbackCandidate],
-      } satisfies WorkflowCoverConsistencyReport,
-    };
-  }
-
-  const best = resolveBestCandidate(candidateReports);
-  const summary =
-    `全ラウンドで世界観ポスター閾値未達のため最良候補を採用（pass_rate=${best.pass_rate.toFixed(2)}, style=${best.style_similarity.toFixed(2)}）`;
+  const prompt = buildCandidatePrompt(basePrompt, 1, 1);
+  const imageUrl = buildSeriesImageUrl({
+    prompt,
+    seedKey: `${input.title}:cover:single`,
+    width: 1024,
+    height: 1365,
+    purpose: "cover",
+    styleReference: input.styleGuide,
+  });
+  const candidate = await evaluateCoverCandidate({
+    candidateIndex: 1,
+    roundIndex: 1,
+    imageUrl,
+    prompt,
+    title: input.title,
+    genre: input.genre,
+    tone: input.tone,
+    premise: input.premise,
+    setting: input.setting,
+    recurringMotifs: input.recurringMotifs,
+    styleGuide: input.styleGuide,
+  });
+  const summary = candidate.passed
+    ? `単一カバー画像が事件キーアート条件を通過しました（pass_rate=${candidate.pass_rate.toFixed(2)}, style=${candidate.style_similarity.toFixed(2)}）`
+    : `単一カバー画像を採用しました（pass_rate=${candidate.pass_rate.toFixed(2)}, style=${candidate.style_similarity.toFixed(2)}）`;
   return {
-    coverImagePrompt: best.prompt,
-    coverImageUrl: best.image_url,
+    coverImagePrompt: candidate.prompt,
+    coverImageUrl: candidate.image_url,
     coverConsistencyReport: {
-      mode: "quality_first",
+      mode: "single_pass",
       thresholds: {
         required_axes_per_character: COVER_REQUIRED_AXES,
         min_average_pass_rate: COVER_MIN_PASS_RATE,
         min_style_similarity: COVER_MIN_STYLE_SIMILARITY,
       },
-      validation_rounds: Math.max(1, Math.min(COVER_MAX_ROUNDS, Math.ceil(candidateReports.length / COVER_CANDIDATES_PER_ROUND))),
-      selected_candidate_index: best.candidate_index,
-      selected_cover_image_url: best.image_url,
-      selected_cover_image_prompt: best.prompt,
-      selected_provider: clean(best.provider) || "unknown",
-      passed: false,
+      validation_rounds: 1,
+      selected_candidate_index: 1,
+      selected_cover_image_url: candidate.image_url,
+      selected_cover_image_prompt: candidate.prompt,
+      selected_provider: clean(candidate.provider) || "unknown",
+      passed: candidate.passed,
       summary,
-      candidate_reports: candidateReports,
+      candidate_reports: [candidate],
     } satisfies WorkflowCoverConsistencyReport,
   };
 };
@@ -1536,6 +1433,9 @@ const buildProposalCoverFast = (input: {
   tone: string;
   premise: string;
   setting: string;
+  caseCore?: string;
+  truthNature?: string;
+  environmentLayer?: string;
   styleGuide: string;
   dominantColors: string[];
   recurringMotifs: string[];
@@ -1543,7 +1443,10 @@ const buildProposalCoverFast = (input: {
 }) => {
   const worldPosterDirection = dedupeStrings([
     clean(input.additionalDirection),
-    "world concept poster only",
+    "series cover key art",
+    "grounded mystery illustration",
+    "narrative clue composition",
+    "traces of human presence without showing people",
     "no people",
     "no human silhouettes",
     "no character portraits",
@@ -1555,6 +1458,9 @@ const buildProposalCoverFast = (input: {
     tone: input.tone,
     premise: input.premise,
     setting: input.setting,
+    caseCore: input.caseCore,
+    truthNature: input.truthNature,
+    environmentLayer: input.environmentLayer,
     styleGuide: input.styleGuide,
     dominantColors: input.dominantColors,
     recurringMotifs: input.recurringMotifs,
@@ -1588,7 +1494,7 @@ const buildProposalCoverFast = (input: {
     coverImagePrompt: prompt,
     coverImageUrl: imageUrl,
     coverConsistencyReport: {
-      mode: "quality_first",
+      mode: "single_pass",
       thresholds: {
         required_axes_per_character: COVER_REQUIRED_AXES,
         min_average_pass_rate: COVER_MIN_PASS_RATE,
@@ -1615,6 +1521,7 @@ const resolvedSeriesRequestSchema = z.object({
   generation_mode: z.enum(["proposal", "full"]).default("full"),
   existing_identity_pack: seriesIdentityPackSchema.optional(),
   identity_retcon: z.boolean().optional(),
+  recent_generation_context: seriesRecentGenerationContextSchema.optional(),
 });
 
 const sanitizeSeriesRequestInputSchema = z.object({
@@ -1628,6 +1535,7 @@ const sanitizeSeriesRequestInputSchema = z.object({
   generation_mode: z.enum(["proposal", "full"]).optional(),
   existing_identity_pack: z.unknown().optional(),
   identity_retcon: z.boolean().optional(),
+  recent_generation_context: seriesRecentGenerationContextSchema.optional(),
 });
 
 const LOG_PREFIX = "[series-workflow]";
@@ -1650,6 +1558,7 @@ const sanitizeRequestStep = createStep({
         creator_id: inputData.creator_id,
         existing_identity_pack: parsedIdentityPack?.success ? parsedIdentityPack.data : undefined,
         identity_retcon: Boolean(inputData.identity_retcon),
+        recent_generation_context: inputData.recent_generation_context,
         interview: {
           genre_world: clean(inputData.interview.genre_world),
           desired_emotion: clean(inputData.interview.desired_emotion),
@@ -1690,6 +1599,7 @@ const generateConceptStep = createStep({
         prompt: inputData.prompt,
         desiredEpisodeCount: inputData.desired_episode_count,
         language: inputData.language,
+        recent_generation_context: inputData.recent_generation_context,
       });
       console.log(`${LOG_PREFIX} step 2/7: generate-series-concept 完了 (title: ${concept?.title ?? "—"})`);
       return {
@@ -1737,6 +1647,8 @@ const generateCharactersStep = createStep({
           "信頼できる相棒",
         style_guide: styleGuide,
         target_count: targetCount,
+        mystery_profile: inputData.concept.mystery_profile,
+        recent_generation_context: inputData.request.recent_generation_context,
       });
       const count = characterResult?.characters?.length ?? 0;
       console.log(`${LOG_PREFIX} step 3/7: generate-series-characters 完了 (${count}人)`);
@@ -1840,6 +1752,8 @@ const generateEpisodesStep = createStep({
         world: inputData.concept.world,
         characters: inputData.characters,
         desired_episode_count: inputData.request.desired_episode_count,
+        mystery_profile: inputData.concept.mystery_profile,
+        recent_generation_context: inputData.request.recent_generation_context,
       });
       const cpCount = plan?.checkpoints?.length ?? 0;
       console.log(`${LOG_PREFIX} step 5/7: generate-series-checkpoints 完了 (checkpoints: ${cpCount})`);
@@ -1941,6 +1855,7 @@ const assembleSeriesBlueprint = async (input: {
   checkpoints: z.infer<typeof seriesCheckpointSchema>[];
   firstEpisodeSeed: z.infer<typeof seriesEpisodeSeedSchema>;
   seedRouteDryRun: z.infer<typeof seedRouteDryRunSchema>;
+  workflowVersion?: string;
   additionalWarnings?: string[];
   onProgress?: SeriesGenerationProgressReporter;
 }) => {
@@ -1953,6 +1868,8 @@ const assembleSeriesBlueprint = async (input: {
     characters: input.characters,
     checkpoints: input.checkpoints,
     first_episode_seed: input.firstEpisodeSeed,
+    mystery_profile: input.concept.mystery_profile,
+    recent_generation_context: input.request.recent_generation_context,
   });
 
   const aiRulePoints = consistency.ai_rule_points.slice(0, 12);
@@ -1996,9 +1913,10 @@ const assembleSeriesBlueprint = async (input: {
       setting: input.concept.world.setting || input.concept.premise,
       styleGuide: visualStyleGuide,
       characters: input.characters,
+      mysteryProfile: input.concept.mystery_profile,
     }),
   });
-  const binaryUniqueInitial = isProposalMode
+  const binaryUniqueInitial = isProposalMode || !ENABLE_PORTRAIT_BINARY_DEDUP
     ? {
       characters: harmonizedCharacters,
       warnings: [] as string[],
@@ -2030,7 +1948,7 @@ const assembleSeriesBlueprint = async (input: {
     styleGuide: visualStyleGuide,
     characters: distinctPortraitResult.characters,
   });
-  const binaryUniqueFinal = isProposalMode
+  const binaryUniqueFinal = isProposalMode || !ENABLE_PORTRAIT_BINARY_DEDUP
     ? {
       characters: uniquePortraitCharacters,
       warnings: [] as string[],
@@ -2061,7 +1979,7 @@ const assembleSeriesBlueprint = async (input: {
 
   await emitSeriesGenerationProgress(input.onProgress, {
     phase: "generate_series_cover_candidates_start",
-    detail: "カバー候補を複数パターン生成しています",
+    detail: "カバー画像を生成しています",
   });
 
   const coverBundle = isProposalMode
@@ -2071,6 +1989,9 @@ const assembleSeriesBlueprint = async (input: {
       tone: input.concept.tone,
       premise: input.concept.premise,
       setting: input.concept.world.setting,
+      caseCore: input.concept.mystery_profile?.case_core,
+      truthNature: input.concept.mystery_profile?.truth_nature,
+      environmentLayer: input.concept.mystery_profile?.environment_layer,
       styleGuide: visualStyleGuide,
       dominantColors,
       recurringMotifs: input.concept.world.recurring_motifs,
@@ -2081,6 +2002,9 @@ const assembleSeriesBlueprint = async (input: {
       tone: input.concept.tone,
       premise: input.concept.premise,
       setting: input.concept.world.setting,
+      caseCore: input.concept.mystery_profile?.case_core,
+      truthNature: input.concept.mystery_profile?.truth_nature,
+      environmentLayer: input.concept.mystery_profile?.environment_layer,
       styleGuide: visualStyleGuide,
       dominantColors,
       recurringMotifs: input.concept.world.recurring_motifs,
@@ -2088,12 +2012,12 @@ const assembleSeriesBlueprint = async (input: {
 
   await emitSeriesGenerationProgress(input.onProgress, {
     phase: "generate_series_cover_candidates_done",
-    detail: "カバー候補の生成が完了しました",
+    detail: "カバー画像の生成が完了しました",
   });
 
   await emitSeriesGenerationProgress(input.onProgress, {
     phase: "validate_cover_identity_start",
-    detail: "カバーが世界観ポスターとして成立しているかを検証しています",
+    detail: "カバーが事件キーアートとして成立しているかを検証しています",
   });
   await emitSeriesGenerationProgress(input.onProgress, {
     phase: "validate_cover_identity_done",
@@ -2105,7 +2029,8 @@ const assembleSeriesBlueprint = async (input: {
       id: "upper_area",
       title: "上層エリア",
       description:
-        clean(input.concept.world.social_structure) || "光と秩序に包まれた都市中枢。徒歩で巡れる主要動線が整う。",
+        clean(input.concept.world.social_structure) ||
+        "表向きの秩序と生活動線が共存し、現地を巡るほど見え方が変わる。",
       atmosphere: clean(input.concept.tone) || "高密度で緊張感のある空気",
     },
     {
@@ -2114,7 +2039,7 @@ const assembleSeriesBlueprint = async (input: {
       description:
         clean(input.concept.world.core_conflict) ||
         clean(consistency.continuity.global_mystery) ||
-        "生活圏と秘密が交差する街路。歩くほど手がかりが増える。",
+        "生活圏と秘密が交差し、地点ごとの観察で認識が更新される。",
       atmosphere: clean(consistency.continuity.mid_season_twist) || "少し不穏な余韻",
     },
   ] as const;
@@ -2171,6 +2096,7 @@ const assembleSeriesBlueprint = async (input: {
         cover_consistency_report: coverBundle.coverConsistencyReport,
         checkpoints: input.checkpoints,
         first_episode_seed: input.firstEpisodeSeed,
+        mystery_profile: input.concept.mystery_profile,
         progress_state: {
           last_completed_episode_no: 0,
           unresolved_threads: [consistency.continuity.global_mystery].filter((item) => clean(item).length > 0),
@@ -2188,7 +2114,7 @@ const assembleSeriesBlueprint = async (input: {
       meta: {
         desired_episode_count: input.request.desired_episode_count,
         generated_checkpoint_count: input.checkpoints.length,
-        workflow_version: "series-workflow-v8-quality-pipeline",
+        workflow_version: clean(input.workflowVersion) || "series-workflow-v9-single-path",
         warnings,
         first_episode_seed_dry_run: input.seedRouteDryRun,
       },
@@ -2212,6 +2138,7 @@ const finalizeSeriesStep = createStep({
         checkpoints: inputData.checkpoints,
         firstEpisodeSeed: inputData.first_episode_seed,
         seedRouteDryRun: inputData.seed_route_dry_run,
+        workflowVersion: "series-workflow-v9-single-path",
       });
       console.log(`${LOG_PREFIX} step 7/7: finalize-series-blueprint 完了`);
       return result.output;
@@ -2303,8 +2230,11 @@ const QUALITY_EXPAND_TARGET = Math.max(
   2,
   Math.min(3, Number.parseInt(clean(process.env.SERIES_CONCEPT_EXPAND_TARGET) || "3", 10) || 3)
 );
+const FORCE_SINGLE_PATH_SERIES_GENERATION = true;
 
 const isQualityWorkflowEnabled = () => {
+  // Multi-candidate exploration is disabled for cost control; series generation stays single-path.
+  if (FORCE_SINGLE_PATH_SERIES_GENERATION) return false;
   if (QUALITY_MODE === "off" || QUALITY_MODE === "legacy") return false;
   return true;
 };
@@ -2347,7 +2277,10 @@ const runSeedRouteDryRunForSeed = async (params: {
 }): Promise<z.infer<typeof seedRouteDryRunSchema>> => {
   try {
     const dryRun = await dryRunFirstEpisodeSeedRoute({
-      stage_location: clean(params.concept.world.setting) || clean(params.request.interview.genre_world) || "街",
+      stage_location:
+        clean(params.concept.world.setting) ||
+        clean(params.request.interview.genre_world) ||
+        "現実の外出先",
       world_setting: clean(params.concept.world.setting),
       purpose: "シリーズ第1話導線の成立性検証",
       expected_duration_minutes: params.firstEpisodeSeed.expected_duration_minutes,
@@ -2382,32 +2315,65 @@ const runSeedRouteDryRunForSeed = async (params: {
 const buildFallbackConceptFromSeed = (params: {
   seed: WorkflowConceptSeed;
   request: z.infer<typeof resolvedSeriesRequestSchema>;
-}): z.infer<typeof seriesConceptAgentOutputSchema> => ({
-  title: clean(params.seed.title) || "新しいシリーズ",
-  genre: clean(params.request.interview.genre_world) || "現代都市街歩き連続劇",
-  tone: clean(params.seed.emotional_core) || clean(params.request.interview.desired_emotion) || "余韻と高揚",
-  premise:
-    clean(params.seed.premise) ||
-    `地上の街区を歩きながら、${clean(params.seed.return_reason) || "次話へのフック"}を追う。`,
-  overview: clean(params.seed.one_line_hook) || clean(params.seed.premise),
-  season_goal: clean(params.seed.return_reason) || clean(params.request.interview.continuation_trigger) || "主要対立を収束させる",
-  cover_image_prompt: "",
-  world: {
-    era: "現代",
-    setting: clean(params.seed.worldview_core) || "現代日本の徒歩街区",
-    social_structure: "表の秩序と裏の情報網が併存する",
-    core_conflict: "継続する問いに対して異なる解を持つ人々が衝突する",
-    taboo_rules: ["証拠なしで断定しない", "同意なく他者の秘密を公開しない"],
-    recurring_motifs: dedupeStrings(params.seed.fingerprint.motif_cluster).slice(0, 4),
-    visual_assets: [],
-  },
-  ai_rule_points: dedupeStrings([
-    "各話で前話のcarry_overを1つ以上参照する。",
-    "固定キャラクターの話し方と価値観の急変を禁止する。",
-    "徒歩で2〜4スポットを巡る導線を維持する。",
-    "伏線は3話以内に中間回収し、最終話で主回収する。",
-  ]).slice(0, 8),
-});
+}) => {
+  const tone =
+    clean(params.seed.emotional_core) || clean(params.request.interview.desired_emotion) || "余韻と高揚";
+  const truthNature = "現実因果で説明可能な人間サイズの真相";
+  const duoDynamic = clean(params.seed.central_relationship_dynamic) || "観察役と補助役の協働";
+  const caseCore = "局所事件から大謎へ接続する手掛かり追跡";
+  const genre = /(記録|改ざん|履歴|台帳)/.test(`${params.seed.worldview_core} ${params.seed.one_line_hook}`)
+    ? "記録反転ミステリー"
+    : /(証言|矛盾|食い違い)/.test(`${params.seed.worldview_core} ${params.seed.one_line_hook}`)
+      ? "証言対立ミステリー"
+      : "連作ミステリー";
+  const premise =
+    `${duoDynamic}の関係にある二人が、${caseCore}に見える出来事を追ううちに、${truthNature}へとつながる連鎖に巻き込まれていく。`;
+  const overview =
+    "一見すると個別の案件に見える出来事の背後には、同じ種類の歪みが潜んでいる。残された痕跡と人々の記憶のずれを辿るうちに、物語はより大きな真相へ近づいていく。";
+  const seasonGoal =
+    clean(params.seed.return_reason) || "積み重なる食い違いの先にあるシリーズ大謎の正体を突き止める";
+
+  return {
+    title: clean(params.seed.title) || "新しいシリーズ",
+    genre,
+    tone,
+    premise,
+    overview,
+    season_goal: seasonGoal,
+    cover_image_prompt: "",
+    world: {
+      era: "現代",
+      setting: "人々が信じる説明と、残された痕跡が静かに食い違う現代の生活圏",
+      social_structure: "公的な説明と私的な記憶が静かにずれ、人間関係と記録の読み違いが事件性を生む",
+      core_conflict: "公開された見え方と、現地で辿れる事実のズレが衝突する",
+      taboo_rules: ["証拠なしで断定しない", "同意なく他者の秘密を公開しない"],
+      recurring_motifs: dedupeStrings(params.seed.fingerprint.motif_cluster).slice(0, 4),
+      visual_assets: [],
+    },
+    ai_rule_points: dedupeStrings([
+      "各話で前話のcarry_overを1つ以上参照する。",
+      "固定キャラクターの話し方と価値観の急変を禁止する。",
+      "局所事件とシリーズ大謎の接続を毎話1段階進める。",
+      "伏線は3話以内に中間回収し、最終話で主回収する。",
+    ]).slice(0, 8),
+    mystery_profile: {
+      case_core: caseCore,
+      investigation_style: "観察と記録照合を軸に認識を更新する",
+      emotional_tone: tone,
+      duo_dynamic: duoDynamic,
+      truth_nature: truthNature,
+      visual_language:
+        dedupeStrings(params.seed.fingerprint.motif_cluster)[0] || "土地の空気感を帯びた現実寄りミステリー",
+      environment_layer: clean(params.seed.worldview_core) || "現実の外出先",
+      differentiation_axes: dedupeStrings([
+        clean(params.seed.worldview_core),
+        clean(params.seed.central_relationship_dynamic),
+        clean(params.seed.ending_flavor),
+      ]).slice(0, 4),
+      banned_templates_avoided: [],
+    },
+  };
+};
 
 const buildDetailedConceptFromSeed = async (params: {
   seed: WorkflowConceptSeed;
@@ -2420,7 +2386,7 @@ const buildDetailedConceptFromSeed = async (params: {
     genre_world:
       clean(params.seed.worldview_core) ||
       clean(params.request.interview.genre_world) ||
-      "現代日本の徒歩街区",
+      "現代日本の現実的な外出先",
     desired_emotion:
       dedupeStrings([
         params.seed.emotional_core,
@@ -2467,6 +2433,7 @@ const buildDetailedConceptFromSeed = async (params: {
       prompt,
       desiredEpisodeCount: params.request.desired_episode_count,
       language: params.request.language,
+      recent_generation_context: params.request.recent_generation_context,
     });
     return {
       ...generated,
@@ -2600,6 +2567,7 @@ const runQualityWorkflowWithProgress = async (
     creator_id: rawInput.creator_id,
     existing_identity_pack: parsedIdentityPack?.success ? parsedIdentityPack.data : undefined,
     identity_retcon: Boolean(rawInput.identity_retcon),
+    recent_generation_context: rawInput.recent_generation_context,
     interview: {
       genre_world: clean(rawInput.interview.genre_world),
       desired_emotion: clean(rawInput.interview.desired_emotion),
@@ -3031,6 +2999,7 @@ const runQualityWorkflowWithProgress = async (
     checkpoints: selectedRanked.candidate.checkpoints,
     firstEpisodeSeed: selectedRanked.candidate.firstEpisodeSeed,
     seedRouteDryRun: selectedRanked.candidate.seedRouteDryRun,
+    workflowVersion: "series-workflow-v8-quality-pipeline",
     additionalWarnings,
     onProgress,
   });
@@ -3079,6 +3048,7 @@ export const generateSeriesWorkflowWithProgress = async (
     creator_id: rawInput.creator_id,
     existing_identity_pack: parsedIdentityPack?.success ? parsedIdentityPack.data : undefined,
     identity_retcon: Boolean(rawInput.identity_retcon),
+    recent_generation_context: rawInput.recent_generation_context,
     interview: {
       genre_world: clean(rawInput.interview.genre_world),
       desired_emotion: clean(rawInput.interview.desired_emotion),
@@ -3107,6 +3077,7 @@ export const generateSeriesWorkflowWithProgress = async (
     prompt: request.prompt,
     desiredEpisodeCount: request.desired_episode_count,
     language: request.language,
+    recent_generation_context: request.recent_generation_context,
   });
   await emitSeriesGenerationProgress(onProgress, {
     phase: "generate_series_concept_done",
@@ -3140,6 +3111,8 @@ export const generateSeriesWorkflowWithProgress = async (
       "信頼できる相棒",
     style_guide: styleGuideForCharacters,
     target_count: targetCount,
+    mystery_profile: concept.mystery_profile,
+    recent_generation_context: request.recent_generation_context,
   });
   const characters = characterResult.characters;
   await emitSeriesGenerationProgress(onProgress, {
@@ -3187,6 +3160,8 @@ export const generateSeriesWorkflowWithProgress = async (
     world: concept.world,
     characters: identity.characters,
     desired_episode_count: request.desired_episode_count,
+    mystery_profile: concept.mystery_profile,
+    recent_generation_context: request.recent_generation_context,
   });
   const checkpoints = plan.checkpoints;
   const firstEpisodeSeed = plan.first_episode_seed;
@@ -3202,7 +3177,8 @@ export const generateSeriesWorkflowWithProgress = async (
   let seedRouteDryRun: z.infer<typeof seedRouteDryRunSchema>;
   try {
     const dryRun = await dryRunFirstEpisodeSeedRoute({
-      stage_location: clean(concept.world.setting) || clean(request.interview.genre_world) || "街",
+      stage_location:
+        clean(concept.world.setting) || clean(request.interview.genre_world) || "現実の外出先",
       world_setting: clean(concept.world.setting),
       purpose: "シリーズ第1話導線の成立性検証",
       expected_duration_minutes: firstEpisodeSeed.expected_duration_minutes,
@@ -3270,6 +3246,7 @@ export const generateSeriesWorkflowWithProgress = async (
     checkpoints,
     firstEpisodeSeed,
     seedRouteDryRun,
+    workflowVersion: "series-workflow-v9-single-path",
     onProgress,
   });
 
