@@ -6,6 +6,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import type { RootStackParamList } from "@/navigation/types";
 import { TopBar } from "@/components/common/TopBar";
 import { fonts } from "@/theme/fonts";
+import { formatProfileHandle } from "@/lib/profileHandle";
 import { useSessionUserId } from "@/hooks/useSessionUser";
 import { useFriendshipsRealtime } from "@/hooks/useFriendshipsRealtime";
 import {
@@ -40,16 +41,6 @@ const FALLBACK_ACHIEVEMENTS = [
   { id: "story", name: "ストーリーテラー", tone: "normal" as const },
   { id: "reader", name: "読書家", tone: "normal" as const },
 ];
-
-const createHandle = (name: string | null, userId: string) => {
-  const base = (name || "traveler")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "_")
-    .replace(/[^a-z0-9_\-.ぁ-んァ-ヶ一-龠]/g, "");
-  if (base.length > 0) return `@${base}`;
-  return `@user_${userId.slice(0, 6)}`;
-};
 
 const formatCompactNumber = (value: number) => {
   if (value >= 10000) return `${Math.round(value / 1000)}k`;
@@ -125,7 +116,10 @@ export const UserProfileScreen = ({ navigation, route }: Props) => {
 
   const displayName = profile?.name || "旅人";
   const displayBio = profile?.bio || "物語を紡ぎながら、新しい景色を探しています。";
-  const handle = useMemo(() => createHandle(profile?.name || null, targetUserId), [profile?.name, targetUserId]);
+  const handle = useMemo(
+    () => formatProfileHandle(profile?.handle || null, profile?.name || null, targetUserId),
+    [profile?.handle, profile?.name, targetUserId]
+  );
   const badgeItems = useMemo(() => {
     if (achievements.length > 0) {
       return achievements.map((item, index) => ({

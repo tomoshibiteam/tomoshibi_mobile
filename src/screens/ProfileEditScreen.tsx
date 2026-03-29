@@ -16,32 +16,25 @@ import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { RootStackParamList } from "@/navigation/types";
+import { normalizeProfileHandle } from "@/lib/profileHandle";
 import { fonts } from "@/theme/fonts";
 import { ProfileAvatar } from "@/components/common/ProfileAvatar";
 import { useSessionUserId } from "@/hooks/useSessionUser";
-import { fetchUserProfile, updateUserProfile } from "@/services/social";
+import { fetchUserProfile, isProfileHandleTaken, updateUserProfile } from "@/services/social";
 import { isSupabaseConfigured } from "@/lib/supabase";
 
 const BIO_MAX = 160;
 const EXTRA_PROFILE_KEY = "tomoshibi.profileEditExtras";
 
-type TitleBadge = "historian" | "traveler" | "collector";
-
 type ExtraProfile = {
   websiteUrl?: string;
   xId?: string;
   instagramId?: string;
-  selectedTitleBadge?: TitleBadge;
 };
-
-const titleBadges: Array<{ id: TitleBadge; label: string; icon: keyof typeof Ionicons.glyphMap }> = [
-  { id: "historian", label: "歴史の語り部", icon: "library-outline" },
-  { id: "traveler", label: "国境の旅人", icon: "compass-outline" },
-  { id: "collector", label: "物語の収集家", icon: "create-outline" },
-];
 
 type FormErrors = {
   name?: string;
+  handle?: string;
   bio?: string;
   websiteUrl?: string;
   xId?: string;
@@ -54,16 +47,11 @@ const parseExtraProfile = (raw: string | null): ExtraProfile => {
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
     const row = parsed as ExtraProfile;
-    const selectedTitleBadge =
-      row.selectedTitleBadge === "historian" || row.selectedTitleBadge === "traveler" || row.selectedTitleBadge === "collector"
-        ? row.selectedTitleBadge
-        : undefined;
 
     return {
       websiteUrl: typeof row.websiteUrl === "string" ? row.websiteUrl : undefined,
       xId: typeof row.xId === "string" ? row.xId : undefined,
       instagramId: typeof row.instagramId === "string" ? row.instagramId : undefined,
-      selectedTitleBadge,
     };
   } catch {
     return {};
@@ -72,6 +60,7 @@ const parseExtraProfile = (raw: string | null): ExtraProfile => {
 
 const validate = (params: {
   name: string;
+  handle: string;
   bio: string;
   websiteUrl: string;
   xId: string;
@@ -84,6 +73,13 @@ const validate = (params: {
     errors.name = "ユーザー名を入力してください";
   } else if (trimmedName.length > 50) {
     errors.name = "ユーザー名は50文字以内で入力してください";
+  }
+
+  const normalizedHandle = normalizeProfileHandle(params.handle);
+  if (!normalizedHandle) {
+    errors.handle = "プロフィールIDを入力してください";
+  } else if (normalizedHandle.length > 30) {
+    errors.handle = "プロフィールIDは30文字以内で入力してください";
   }
 
   if (params.bio.length > BIO_MAX) {
@@ -113,12 +109,12 @@ export const ProfileEditScreen = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState("");
+  const [handle, setHandle] = useState("");
   const [bio, setBio] = useState("");
   const [profileImageUrl, setProfileImageUrl] = useState("");
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [xId, setXId] = useState("");
   const [instagramId, setInstagramId] = useState("");
-  const [selectedTitleBadge, setSelectedTitleBadge] = useState<TitleBadge>("historian");
   const [errors, setErrors] = useState<FormErrors>({});
 
   const loadProfile = useCallback(async () => {
@@ -133,12 +129,12 @@ export const ProfileEditScreen = () => {
       const extra = parseExtraProfile(rawExtra);
 
       setName(profile?.name || "");
+      setHandle(profile?.handle || "");
       setBio(profile?.bio || "");
       setProfileImageUrl(profile?.profile_picture_url || "");
       setWebsiteUrl(extra.websiteUrl || "");
       setXId(extra.xId || "");
       setInstagramId(extra.instagramId || "");
-      setSelectedTitleBadge(extra.selectedTitleBadge || "historian");
       setErrors({});
     } catch (error) {
       console.error("ProfileEditScreen: failed to load", error);
@@ -164,6 +160,7 @@ export const ProfileEditScreen = () => {
 
     const validation = validate({
       name,
+      handle,
       bio,
       websiteUrl,
       xId,
@@ -175,8 +172,18 @@ export const ProfileEditScreen = () => {
 
     setSaving(true);
     try {
+      const normalizedHandle = normalizeProfileHandle(handle);
+      if (await isProfileHandleTaken(normalizedHandle, userId)) {
+        setErrors((current) => ({
+          ...current,
+          handle: `@${normalizedHandle} は既に使用されています`,
+        }));
+        return;
+      }
+
       await updateUserProfile(userId, {
         name: name.trim(),
+        handle: normalizedHandle,
         bio: bio.trim() || null,
         profile_picture_url: profileImageUrl.trim() || null,
       });
@@ -187,7 +194,6 @@ export const ProfileEditScreen = () => {
           websiteUrl: websiteUrl.trim(),
           xId: xId.trim(),
           instagramId: instagramId.trim(),
-          selectedTitleBadge,
         } satisfies ExtraProfile)
       );
 
@@ -299,6 +305,27 @@ export const ProfileEditScreen = () => {
                   {errors.name ? (
                     <Text className="mt-1 text-xs text-[#D83A2E]" style={{ fontFamily: fonts.bodyRegular }}>
                       {errors.name}
+                    </Text>
+                  ) : null}
+                </View>
+
+                <View>
+                  <Text className="text-sm text-slate-600 mb-1.5" style={{ fontFamily: fonts.bodyMedium }}>
+                    プロフィールID
+                  </Text>
+                  <TextInput
+                    value={handle}
+                    onChangeText={setHandle}
+                    placeholder="@traveler"
+                    placeholderTextColor="#9CA3AF"
+                    autoCapitalize="none"
+                    maxLength={30}
+                    className="rounded-lg bg-white border border-slate-200 py-3 px-4 text-[#1F2937]"
+                    style={{ fontFamily: fonts.bodyRegular }}
+                  />
+                  {errors.handle ? (
+                    <Text className="mt-1 text-xs text-[#D83A2E]" style={{ fontFamily: fonts.bodyRegular }}>
+                      {errors.handle}
                     </Text>
                   ) : null}
                 </View>
@@ -417,52 +444,6 @@ export const ProfileEditScreen = () => {
               </View>
             </View>
 
-            <View className="px-4 mb-2">
-              <View className="flex-row items-center justify-between mb-4">
-                <View className="flex-row items-center">
-                  <View className="w-1 h-5 rounded-full bg-[#EE8C2B] mr-2" />
-                  <Text className="text-lg text-[#111827]" style={{ fontFamily: fonts.displayBold }}>
-                    獲得称号
-                  </Text>
-                </View>
-                <Text className="text-xs text-[#EE8C2B]" style={{ fontFamily: fonts.bodyMedium }}>
-                  すべて見る
-                </Text>
-              </View>
-
-              <Text className="text-xs text-slate-500 mb-3" style={{ fontFamily: fonts.bodyRegular }}>
-                プロフィールに表示するメインの称号を選択してください。
-              </Text>
-
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingBottom: 8 }}>
-                {titleBadges.map((badge) => {
-                  const checked = selectedTitleBadge === badge.id;
-                  return (
-                    <Pressable
-                      key={badge.id}
-                      onPress={() => setSelectedTitleBadge(badge.id)}
-                      className={`w-32 h-24 rounded-xl border items-center justify-center ${
-                        checked ? "border-[#EE8C2B] bg-[#EE8C2B]/5" : "border-slate-200 bg-white"
-                      }`}
-                    >
-                      <Ionicons name={badge.icon} size={24} color={checked ? "#EE8C2B" : "#9CA3AF"} />
-                      <Text
-                        className={`text-xs mt-2 ${checked ? "text-[#EE8C2B]" : "text-slate-500"}`}
-                        style={{ fontFamily: fonts.displayBold }}
-                      >
-                        {badge.label}
-                      </Text>
-
-                      {checked ? (
-                        <View className="absolute top-2 right-2 w-5 h-5 rounded-full bg-[#EE8C2B] items-center justify-center">
-                          <Ionicons name="checkmark" size={12} color="#FFFFFF" />
-                        </View>
-                      ) : null}
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-            </View>
           </ScrollView>
 
           <SafeAreaView edges={["bottom"]} className="absolute left-0 right-0 bottom-0 bg-[#F8F7F6]/95 border-t border-slate-200">

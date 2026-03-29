@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Platform, Pressable, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -9,7 +9,10 @@ import * as Google from "expo-auth-session/providers/google";
 import * as WebBrowser from "expo-web-browser";
 import type { RootStackParamList } from "@/navigation/types";
 import { fonts } from "@/theme/fonts";
+import { shouldShowOnboarding } from "@/lib/authOnboarding";
+import { normalizeProfileHandle } from "@/lib/profileHandle";
 import { getSupabaseOrThrow, isSupabaseConfigured } from "@/lib/supabase";
+import { isProfileHandleTaken, syncProfileBasicsFromAuth } from "@/services/social";
 import { useSessionUserId } from "@/hooks/useSessionUser";
 
 WebBrowser.maybeCompleteAuthSession();
@@ -29,6 +32,27 @@ type GoogleSignInAttemptResult =
   | { status: "cancelled" }
   | { status: "skipped"; reason: string }
   | { status: "failed"; reason: string };
+
+type ProfileHandleAvailability = "idle" | "checking" | "available" | "taken" | "error";
+
+const getSignUpErrorMessage = (error: unknown) => {
+  if (!error || typeof error !== "object") {
+    return "新規登録に失敗しました。";
+  }
+
+  const status = "status" in error ? error.status : undefined;
+  const message = "message" in error && typeof error.message === "string" ? error.message : "";
+
+  if (status === 429) {
+    return [
+      "新規登録が一時的に制限されています。",
+      "Supabase Auth の確認メール送信レート制限に到達した可能性が高いです。",
+      "少し時間を空けて再試行するか、開発用では Auth のメール確認を無効化するか、独自 SMTP を設定してください。",
+    ].join("\n");
+  }
+
+  return message || "新規登録に失敗しました。";
+};
 
 const parseOAuthSessionUrl = (url: string) => {
   const [baseWithQuery, hash = ""] = url.split("#");
@@ -50,13 +74,18 @@ const parseOAuthSessionUrl = (url: string) => {
 
 export const AuthScreen = ({ navigation }: Props) => {
   const { userId } = useSessionUserId();
+  const routedDestinationKeyRef = useRef<string | null>(null);
+  const handleCheckRequestIdRef = useRef(0);
 
   const [isSignUp, setIsSignUp] = useState(false);
   const [name, setName] = useState("");
+  const [profileHandle, setProfileHandle] = useState("");
+  const [profileHandleAvailability, setProfileHandleAvailability] = useState<ProfileHandleAvailability>("idle");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loadingMode, setLoadingMode] = useState<"email" | "google" | null>(null);
   const loading = loadingMode !== null;
+  const normalizedProfileHandle = normalizeProfileHandle(profileHandle);
   const appScheme = typeof Constants.expoConfig?.scheme === "string" ? Constants.expoConfig.scheme : GOOGLE_REDIRECT_SCHEME;
   const isNativeBuild =
     Constants.executionEnvironment === ExecutionEnvironment.Bare ||
@@ -83,11 +112,86 @@ export const AuthScreen = ({ navigation }: Props) => {
     }
   );
 
-  useEffect(() => {
-    if (userId) {
-      navigation.replace("MainTabs", { screen: "Profile" });
+  const routeAuthenticatedUser = useCallback(async () => {
+    if (!isSupabaseConfigured) return false;
+
+    const supabase = getSupabaseOrThrow();
+    const { data, error } = await supabase.auth.getUser();
+    if (error) {
+      console.warn("AuthScreen: failed to read authenticated user", error);
+      return false;
     }
-  }, [navigation, userId]);
+    if (!data.user) return false;
+
+    try {
+      const metadata = (data.user.user_metadata || {}) as Record<string, unknown>;
+      await syncProfileBasicsFromAuth({
+        userId: data.user.id,
+        name: typeof metadata.name === "string" ? metadata.name : null,
+        handle: typeof metadata.handle === "string" ? metadata.handle : null,
+      });
+    } catch (syncError) {
+      console.warn("AuthScreen: failed to sync profile basics", syncError);
+    }
+
+    const needsOnboarding = shouldShowOnboarding(data.user);
+    const destinationKey = `${data.user.id}:${needsOnboarding ? "onboarding" : "home"}`;
+    if (routedDestinationKeyRef.current === destinationKey) {
+      return true;
+    }
+
+    routedDestinationKeyRef.current = destinationKey;
+    if (needsOnboarding) {
+      navigation.replace("OnboardingSurvey");
+      return true;
+    }
+
+    navigation.replace("MainTabs", { screen: "Home" });
+    return true;
+  }, [navigation]);
+
+  useEffect(() => {
+    if (!userId) {
+      routedDestinationKeyRef.current = null;
+      return;
+    }
+
+    void routeAuthenticatedUser();
+  }, [routeAuthenticatedUser, userId]);
+
+  useEffect(() => {
+    if (!isSignUp) {
+      setProfileHandleAvailability("idle");
+      return;
+    }
+
+    if (!profileHandle.trim() || !normalizedProfileHandle) {
+      setProfileHandleAvailability("idle");
+      return;
+    }
+
+    const requestId = handleCheckRequestIdRef.current + 1;
+    handleCheckRequestIdRef.current = requestId;
+    setProfileHandleAvailability("checking");
+
+    const timeoutId = setTimeout(() => {
+      void (async () => {
+        try {
+          const taken = await isProfileHandleTaken(normalizedProfileHandle);
+          if (handleCheckRequestIdRef.current !== requestId) return;
+          setProfileHandleAvailability(taken ? "taken" : "available");
+        } catch (error) {
+          if (handleCheckRequestIdRef.current !== requestId) return;
+          console.warn("AuthScreen: failed to precheck profile handle", error);
+          setProfileHandleAvailability("error");
+        }
+      })();
+    }, 350);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [isSignUp, normalizedProfileHandle, profileHandle]);
 
   const validate = () => {
     if (!email.trim() || !password.trim()) {
@@ -99,7 +203,15 @@ export const AuthScreen = ({ navigation }: Props) => {
       return false;
     }
     if (isSignUp && !name.trim()) {
-      Alert.alert("入力エラー", "名前を入力してください。");
+      Alert.alert("入力エラー", "ユーザー名を入力してください。");
+      return false;
+    }
+    if (isSignUp && !normalizeProfileHandle(profileHandle)) {
+      Alert.alert("入力エラー", "プロフィールIDを入力してください。");
+      return false;
+    }
+    if (isSignUp && profileHandleAvailability === "taken") {
+      Alert.alert("入力エラー", `@${normalizedProfileHandle} は既に使用されています。別のIDを入力してください。`);
       return false;
     }
     return true;
@@ -117,22 +229,42 @@ export const AuthScreen = ({ navigation }: Props) => {
       const supabase = getSupabaseOrThrow();
 
       if (isSignUp) {
-        const { error } = await supabase.auth.signUp({
+        const trimmedName = name.trim();
+        const normalizedHandle = normalizeProfileHandle(profileHandle);
+
+        if (await isProfileHandleTaken(normalizedHandle)) {
+          Alert.alert("プロフィールIDが重複しています", `@${normalizedHandle} は既に使用されています。別のIDを入力してください。`);
+          return;
+        }
+
+        const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
           options: {
             data: {
-              name: name.trim(),
+              name: trimmedName,
+              handle: normalizedHandle,
+              onboarding_required: true,
             },
           },
         });
 
         if (error) {
-          Alert.alert("登録エラー", error.message || "新規登録に失敗しました。");
+          Alert.alert("登録エラー", getSignUpErrorMessage(error));
           return;
         }
 
-        Alert.alert("登録完了", "確認メールをご確認ください。");
+        if (data.session?.user) {
+          await syncProfileBasicsFromAuth({
+            userId: data.session.user.id,
+            name: trimmedName,
+            handle: normalizedHandle,
+          });
+          await routeAuthenticatedUser();
+          return;
+        }
+
+        Alert.alert("登録完了", "確認メールをご確認ください。確認後の初回ログイン時に好みの設定を行います。");
         return;
       }
 
@@ -142,7 +274,7 @@ export const AuthScreen = ({ navigation }: Props) => {
         return;
       }
 
-      navigation.replace("MainTabs", { screen: "Profile" });
+      await routeAuthenticatedUser();
     } catch (error) {
       console.error("AuthScreen: submit failed", error);
       Alert.alert("エラー", "通信に失敗しました。時間をおいて再度お試しください。");
@@ -150,6 +282,17 @@ export const AuthScreen = ({ navigation }: Props) => {
       setLoadingMode(null);
     }
   };
+
+  const profileHandleHelperText =
+    profileHandleAvailability === "checking"
+      ? "プロフィールIDを確認中です"
+      : profileHandleAvailability === "taken"
+        ? `@${normalizedProfileHandle} は既に使用されています`
+        : profileHandleAvailability === "available"
+          ? `@${normalizedProfileHandle} は使用できます`
+          : profileHandleAvailability === "error"
+            ? "プロフィールIDの確認に失敗しました"
+            : null;
 
   const handleGoogleSignIn = async () => {
     if (!isSupabaseConfigured) {
@@ -294,7 +437,7 @@ export const AuthScreen = ({ navigation }: Props) => {
 
       const fallbackResult = await trySupabaseOAuthFallback();
       if (fallbackResult.status === "success") {
-        navigation.replace("MainTabs", { screen: "Profile" });
+        await routeAuthenticatedUser();
         return;
       }
       if (fallbackResult.status === "cancelled") {
@@ -303,7 +446,7 @@ export const AuthScreen = ({ navigation }: Props) => {
 
       const googleConsoleResult = await tryGoogleConsoleOAuth();
       if (googleConsoleResult.status === "success") {
-        navigation.replace("MainTabs", { screen: "Profile" });
+        await routeAuthenticatedUser();
         return;
       }
       if (googleConsoleResult.status === "cancelled") {
@@ -339,16 +482,53 @@ export const AuthScreen = ({ navigation }: Props) => {
             {isSignUp && (
               <View>
                 <Text className="text-xs text-[#6C5647] mb-1" style={{ fontFamily: fonts.bodyMedium }}>
-                  名前
+                  ユーザー名
                 </Text>
                 <TextInput
                   value={name}
                   onChangeText={setName}
-                  placeholder="氏名"
+                  placeholder="表示する名前"
                   placeholderTextColor="#A39A90"
                   className="h-11 rounded-xl border border-[#E5DDD3] bg-[#F1ECE6] px-3 text-sm text-[#221910]"
                   style={{ fontFamily: fonts.bodyRegular }}
                 />
+              </View>
+            )}
+
+            {isSignUp && (
+              <View>
+                <Text className="text-xs text-[#6C5647] mb-1" style={{ fontFamily: fonts.bodyMedium }}>
+                  プロフィールID
+                </Text>
+                <TextInput
+                  value={profileHandle}
+                  onChangeText={setProfileHandle}
+                  autoCapitalize="none"
+                  placeholder="@traveler"
+                  placeholderTextColor="#A39A90"
+                  className="h-11 rounded-xl border border-[#E5DDD3] bg-[#F1ECE6] px-3 text-sm text-[#221910]"
+                  style={[
+                    { fontFamily: fonts.bodyRegular },
+                    profileHandleAvailability === "taken" ? { borderColor: "#D83A2E" } : null,
+                    profileHandleAvailability === "available" ? { borderColor: "#2F855A" } : null,
+                  ]}
+                />
+                {profileHandleHelperText ? (
+                  <Text
+                    className="mt-1 text-xs"
+                    style={{
+                      fontFamily: fonts.bodyRegular,
+                      color:
+                        profileHandleAvailability === "taken"
+                          ? "#D83A2E"
+                          : profileHandleAvailability === "available"
+                            ? "#2F855A"
+                            : "#6C5647",
+                    }}
+                  >
+                    {profileHandleHelperText}
+                  </Text>
+                ) : null}
               </View>
             )}
 

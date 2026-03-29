@@ -15,12 +15,11 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { fonts } from "@/theme/fonts";
 import type { RootStackParamList } from "@/navigation/types";
 import { useSessionUserId } from "@/hooks/useSessionUser";
-import { fetchFollowCounts, fetchUserAchievements, fetchUserProfile } from "@/services/social";
-import type { AchievementRow } from "@/types/social";
+import { fetchFollowCounts, fetchUserProfile } from "@/services/social";
 import { getSupabaseOrThrow, isSupabaseConfigured } from "@/lib/supabase";
 import { ProfileAvatar } from "@/components/common/ProfileAvatar";
 
-type AchievementTab = "summary" | "badges" | "friends" | "history";
+type AchievementTab = "summary" | "friends" | "history";
 
 type SummaryStats = {
   totalPlayCount: number;
@@ -59,14 +58,6 @@ type LeaderboardRow = {
   isMe: boolean;
 };
 
-type BadgeTone = "primary" | "gold" | "sunset";
-type BadgeCard = {
-  id: string;
-  name: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  tone: BadgeTone;
-};
-
 type FriendRelation = {
   requester_id: string;
   receiver_id: string;
@@ -84,18 +75,9 @@ type SessionRow = {
 
 const ACHIEVEMENT_TABS: Array<{ key: AchievementTab; label: string }> = [
   { key: "summary", label: "サマリー" },
-  { key: "badges", label: "バッジ" },
   { key: "friends", label: "フレンド" },
   { key: "history", label: "履歴" },
 ];
-
-const FALLBACK_BADGES: BadgeCard[] = [
-  { id: "traveler-debut", name: "旅人デビュー", icon: "compass", tone: "primary" },
-  { id: "journey-master", name: "長旅マスター", icon: "sparkles", tone: "gold" },
-  { id: "no-hint-clear", name: "ノーヒントクリア", icon: "flash", tone: "sunset" },
-];
-
-const TOTAL_BADGE_COUNT = 30;
 
 const createDateKey = (value: Date) => {
   const year = value.getFullYear();
@@ -181,48 +163,6 @@ const formatHistoryDateTime = (value: string | null) => {
   return `${datePart} | ${timePart}`;
 };
 
-const resolveBadgeTone = (index: number): BadgeTone => {
-  if (index % 3 === 1) return "gold";
-  if (index % 3 === 2) return "sunset";
-  return "primary";
-};
-
-const resolveAchievementIcon = (raw: string | null | undefined, index: number): keyof typeof Ionicons.glyphMap => {
-  const icon = (raw || "").trim().toLowerCase();
-  if (icon.includes("star")) return "sparkles";
-  if (icon.includes("flash") || icon.includes("bolt")) return "flash";
-  if (icon.includes("compass") || icon.includes("explore")) return "compass";
-  if (icon.includes("map")) return "map";
-  if (icon.includes("people") || icon.includes("friend")) return "people";
-  if (icon.includes("heart")) return "heart";
-  if (icon.includes("share")) return "share-social";
-  if (icon.includes("trophy")) return "trophy";
-  if (icon.includes("medal")) return "medal";
-  return FALLBACK_BADGES[index % FALLBACK_BADGES.length]?.icon || "trophy";
-};
-
-const toneStyle = (tone: BadgeTone) => {
-  if (tone === "gold") {
-    return {
-      background: "#FDEFC8",
-      border: "#EAB308",
-      icon: "#CA8A04",
-    };
-  }
-  if (tone === "sunset") {
-    return {
-      background: "#FFE3D4",
-      border: "#EA580C",
-      icon: "#C2410C",
-    };
-  }
-  return {
-    background: "#FDEBD6",
-    border: "#EE8C2B",
-    icon: "#EE8C2B",
-  };
-};
-
 const rankColor = (rank: number) => {
   if (rank === 1) return "#EAB308";
   if (rank === 2) return "#94A3B8";
@@ -254,7 +194,6 @@ export const NotificationsScreen = () => {
     coopPlayCount: 0,
     reviewCount: 0,
   });
-  const [achievementRows, setAchievementRows] = useState<AchievementRow[]>([]);
   const [historyRows, setHistoryRows] = useState<HistoryRow[]>([]);
   const [leaderboardRows, setLeaderboardRows] = useState<LeaderboardRow[]>([]);
 
@@ -283,7 +222,6 @@ export const NotificationsScreen = () => {
           coopPlayCount: 0,
           reviewCount: 0,
         });
-        setAchievementRows([]);
         setHistoryRows([]);
         setLeaderboardRows([]);
         setLoading(false);
@@ -303,7 +241,6 @@ export const NotificationsScreen = () => {
         const [
           profileRow,
           followCounts,
-          userAchievements,
           sessions,
           friendships,
           sharedPostCount,
@@ -311,7 +248,6 @@ export const NotificationsScreen = () => {
         ] = await Promise.all([
           fetchUserProfile(userId),
           fetchFollowCounts(userId),
-          fetchUserAchievements(userId, 60),
           (async () => {
             try {
               const { data, error } = await supabase
@@ -372,7 +308,6 @@ export const NotificationsScreen = () => {
         const profileDisplayName = profileRow?.name || "My User";
         setDisplayName(profileDisplayName);
         setProfileAvatarUrl(profileRow?.profile_picture_url || null);
-        setAchievementRows(userAchievements);
 
         const questIds = Array.from(
           new Set(sessions.map((row) => row.quest_id).filter((questId): questId is string => Boolean(questId)))
@@ -562,36 +497,6 @@ export const NotificationsScreen = () => {
       void refresh();
     }, [refresh])
   );
-
-  const badgeCards = useMemo(() => {
-    const cards =
-      achievementRows.length > 0
-        ? achievementRows.map((row, index) => ({
-            id: row.id,
-            name: row.name || `バッジ ${index + 1}`,
-            icon: resolveAchievementIcon(row.icon, index),
-            tone: resolveBadgeTone(index),
-          }))
-        : FALLBACK_BADGES;
-
-    const unlockedCount = achievementRows.length > 0 ? achievementRows.length : FALLBACK_BADGES.length;
-    const displayCards = cards.slice(0, 6);
-    const lockedCount = Math.max(0, 6 - displayCards.length);
-
-    return {
-      unlockedCount,
-      cards: [
-        ...displayCards.map((card) => ({ ...card, locked: false })),
-        ...Array.from({ length: lockedCount }, (_, index) => ({
-          id: `locked-${index}`,
-          name: "???",
-          icon: "lock-closed" as const,
-          tone: "primary" as const,
-          locked: true,
-        })),
-      ],
-    };
-  }, [achievementRows]);
 
   const myRank = useMemo(() => leaderboardRows.find((row) => row.isMe) || null, [leaderboardRows]);
   const friendRankRows = useMemo(
@@ -825,65 +730,6 @@ export const NotificationsScreen = () => {
                     {socialStats.reviewCount} 件
                   </Text>
                 </View>
-              </View>
-            </View>
-          </View>
-        ) : null}
-
-        {activeTab === "badges" ? (
-          <View className="p-4">
-            <View className="bg-white rounded-2xl p-5 border border-[#EFE6DD]">
-              <View className="flex-row items-center justify-between mb-3">
-                <Text className="text-base text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
-                  アチーブメントメダル
-                </Text>
-                <Text className="text-sm text-[#EE8C2B]" style={{ fontFamily: fonts.displayBold }}>
-                  {badgeCards.unlockedCount} / {TOTAL_BADGE_COUNT}
-                </Text>
-              </View>
-
-              <View className="w-full h-2 rounded-full bg-[#EFE6DD] overflow-hidden mb-6">
-                <View
-                  className="h-full rounded-full bg-[#EE8C2B]"
-                  style={{
-                    width: `${Math.max(
-                      0,
-                      Math.min(100, Math.round((badgeCards.unlockedCount / TOTAL_BADGE_COUNT) * 100))
-                    )}%`,
-                  }}
-                />
-              </View>
-
-              <View className="flex-row flex-wrap justify-between">
-                {badgeCards.cards.map((badge) => {
-                  const style = toneStyle(badge.tone);
-                  return (
-                    <View
-                      key={badge.id}
-                      className={`w-[31%] items-center mb-6 ${badge.locked ? "opacity-45" : ""}`}
-                    >
-                      <View
-                        className="w-16 h-16 rounded-full items-center justify-center border-2"
-                        style={{
-                          backgroundColor: badge.locked ? "#E2E8F0" : style.background,
-                          borderColor: badge.locked ? "#CBD5E1" : style.border,
-                        }}
-                      >
-                        <Ionicons
-                          name={badge.icon}
-                          size={26}
-                          color={badge.locked ? "#64748B" : style.icon}
-                        />
-                      </View>
-                      <Text
-                        className={`text-[10px] mt-2 text-center ${badge.locked ? "text-[#62584E]" : "text-[#221910]"}`}
-                        style={{ fontFamily: badge.locked ? fonts.bodyMedium : fonts.displayBold }}
-                      >
-                        {badge.name}
-                      </Text>
-                    </View>
-                  );
-                })}
               </View>
             </View>
           </View>

@@ -7,6 +7,7 @@ import { fonts } from "@/theme/fonts";
 import type { MainTabParamList, RootStackParamList } from "@/navigation/types";
 import { useSessionUserId } from "@/hooks/useSessionUser";
 import { fetchUserProfile } from "@/services/social";
+import { subscribeOpenCreateSheet } from "@/lib/createSheetBus";
 
 type NavItem = {
   route: keyof MainTabParamList;
@@ -31,7 +32,7 @@ export const MainBottomBar = ({ state, navigation }: BottomTabBarProps) => {
   const { userId } = useSessionUserId();
 
   const [profileImageUrl, setProfileImageUrl] = useState<string | null>(null);
-  const [profileInitial, setProfileInitial] = useState<string>("U");
+  const [profileInitial, setProfileInitial] = useState<string>("G");
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const createSheetTranslateY = useMemo(() => new Animated.Value(420), []);
 
@@ -54,13 +55,20 @@ export const MainBottomBar = ({ state, navigation }: BottomTabBarProps) => {
   }, [createModalOpen, createSheetTranslateY]);
 
   useEffect(() => {
+    const unsubscribe = subscribeOpenCreateSheet(() => {
+      setCreateModalOpen(true);
+    });
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
     let mounted = true;
 
     const loadProfile = async () => {
       if (!userId) {
         if (!mounted) return;
         setProfileImageUrl(null);
-        setProfileInitial("U");
+        setProfileInitial("G");
         return;
       }
 
@@ -68,11 +76,11 @@ export const MainBottomBar = ({ state, navigation }: BottomTabBarProps) => {
         const profile = await fetchUserProfile(userId);
         if (!mounted) return;
         setProfileImageUrl(profile?.profile_picture_url || null);
-        setProfileInitial((profile?.name || "U").slice(0, 1).toUpperCase());
+        setProfileInitial((profile?.name || "G").slice(0, 1).toUpperCase());
       } catch {
         if (!mounted) return;
         setProfileImageUrl(null);
-        setProfileInitial("U");
+        setProfileInitial("G");
       }
     };
 
@@ -128,7 +136,7 @@ export const MainBottomBar = ({ state, navigation }: BottomTabBarProps) => {
           {rightItems.map((item) => {
             const active = currentRoute === item.route;
 
-            if (item.route === "Profile" && userId) {
+            if (item.route === "Profile") {
               return (
                 <Pressable
                   key={item.route}

@@ -1,4 +1,5 @@
 import { getSupabaseOrThrow } from "@/lib/supabase";
+import { normalizeProfileHandle } from "@/lib/profileHandle";
 import type {
   AchievementRow,
   FriendshipRow,
@@ -9,6 +10,7 @@ import type {
 
 const SEARCH_PAGE_SIZE = 100;
 const SEARCH_MAX_PAGES = 100;
+const PROFILE_SELECT = "id, name, handle, bio, profile_picture_url";
 
 const normalizeSearchKeyword = (keyword: string) =>
   keyword
@@ -20,7 +22,7 @@ export const fetchUserProfile = async (userId: string) => {
   const supabase = getSupabaseOrThrow();
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, name, bio, profile_picture_url")
+    .select(PROFILE_SELECT)
     .eq("id", userId)
     .maybeSingle();
 
@@ -28,22 +30,77 @@ export const fetchUserProfile = async (userId: string) => {
   return (data as ProfileRow | null) ?? null;
 };
 
-export const updateUserProfile = async (userId: string, payload: {
-  name: string;
-  bio: string | null;
-  profile_picture_url: string | null;
-}) => {
+export const updateUserProfile = async (
+  userId: string,
+  payload: {
+    name: string;
+    handle?: string | null;
+    bio: string | null;
+    profile_picture_url: string | null;
+  },
+) => {
   const supabase = getSupabaseOrThrow();
+  const normalizedHandle =
+    typeof payload.handle === "string" ? normalizeProfileHandle(payload.handle) || null : payload.handle ?? undefined;
   const { error } = await supabase
     .from("profiles")
     .update({
       name: payload.name,
+      ...(normalizedHandle !== undefined ? { handle: normalizedHandle } : {}),
       bio: payload.bio,
       profile_picture_url: payload.profile_picture_url,
     })
     .eq("id", userId);
 
   if (error) throw error;
+};
+
+export const isProfileHandleTaken = async (handle: string, excludeUserId?: string | null) => {
+  const normalizedHandle = normalizeProfileHandle(handle);
+  if (!normalizedHandle) return false;
+
+  const supabase = getSupabaseOrThrow();
+  let query = supabase.from("profiles").select("id").eq("handle", normalizedHandle).limit(1);
+  if (excludeUserId) {
+    query = query.neq("id", excludeUserId);
+  }
+
+  const { data, error } = await query.maybeSingle();
+  if (error) throw error;
+  return Boolean(data?.id);
+};
+
+export const syncProfileBasicsFromAuth = async (params: {
+  userId: string;
+  name?: string | null;
+  handle?: string | null;
+}) => {
+  const normalizedName = params.name?.trim() || null;
+  const normalizedHandle = normalizeProfileHandle(params.handle);
+  const current = await fetchUserProfile(params.userId);
+
+  const nextName = current?.name || normalizedName;
+  const nextHandle = current?.handle || normalizedHandle || null;
+  if (current?.name === nextName && current?.handle === nextHandle) {
+    return current;
+  }
+
+  const supabase = getSupabaseOrThrow();
+  const { data, error } = await supabase
+    .from("profiles")
+    .upsert(
+      {
+        id: params.userId,
+        ...(nextName ? { name: nextName } : {}),
+        ...(nextHandle ? { handle: nextHandle } : {}),
+      },
+      { onConflict: "id" },
+    )
+    .select(PROFILE_SELECT)
+    .maybeSingle();
+
+  if (error) throw error;
+  return (data as ProfileRow | null) ?? null;
 };
 
 export const fetchUsersByKeyword = async (keyword: string, excludeUserId?: string | null) => {
@@ -53,13 +110,13 @@ export const fetchUsersByKeyword = async (keyword: string, excludeUserId?: strin
   const fetchPage = async (from: number, to: number) => {
     let query = supabase
       .from("profiles")
-      .select("id, name, bio, profile_picture_url")
+      .select(PROFILE_SELECT)
       .order("created_at", { ascending: false })
       .range(from, to);
 
     if (normalizedKeyword.length > 0) {
       const pattern = `%${normalizedKeyword}%`;
-      query = query.or(`name.ilike.${pattern},bio.ilike.${pattern}`);
+      query = query.or(`name.ilike.${pattern},handle.ilike.${pattern},bio.ilike.${pattern}`);
     }
 
     if (excludeUserId) {
@@ -171,7 +228,7 @@ export const fetchConnections = async (targetUserId: string) => {
   if (relatedIds.length > 0) {
     const { data: profileData, error: profileError } = await supabase
       .from("profiles")
-      .select("id, name, bio, profile_picture_url")
+      .select(PROFILE_SELECT)
       .in("id", relatedIds);
 
     if (profileError) throw profileError;
@@ -182,6 +239,7 @@ export const fetchConnections = async (targetUserId: string) => {
     profilesMap.get(id) || {
       id,
       name: "旅人",
+      handle: null,
       bio: null,
       profile_picture_url: null,
     };

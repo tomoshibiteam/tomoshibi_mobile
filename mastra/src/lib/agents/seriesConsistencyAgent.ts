@@ -16,8 +16,8 @@ export const seriesConsistencyAgentInputSchema = z.object({
   premise: z.string(),
   season_goal: z.string(),
   ai_rule_points: z.array(z.string()).min(3).max(12),
-  characters: z.array(seriesCharacterSchema).min(3).max(8),
-  checkpoints: z.array(seriesCheckpointSchema).min(4).max(8),
+  characters: z.array(seriesCharacterSchema).min(2).max(8),
+  checkpoints: z.array(seriesCheckpointSchema).length(3),
   first_episode_seed: seriesEpisodeSeedSchema,
   mystery_profile: seriesMysteryProfileSchema.optional(),
   recent_generation_context: seriesRecentGenerationContextSchema.optional(),
@@ -28,6 +28,21 @@ export const seriesConsistencyAgentOutputSchema = z.object({
   ai_rule_points: z.array(z.string()).min(4).max(12),
   continuity: seriesContinuitySchema,
   warnings: z.array(z.string()).max(10).optional(),
+});
+
+const lightSeriesContinuitySchema = z.object({
+  global_mystery: z.string().optional(),
+  mid_season_twist: z.string().optional(),
+  finale_payoff: z.string().optional(),
+  invariant_rules: z.array(z.string()).optional(),
+  episode_link_policy: z.array(z.string()).optional(),
+});
+
+const lightSeriesConsistencyAgentOutputSchema = z.object({
+  overview_refined: z.string().optional(),
+  ai_rule_points: z.array(z.string()).optional(),
+  continuity: lightSeriesContinuitySchema.optional(),
+  warnings: z.array(z.string()).optional(),
 });
 
 export type SeriesConsistencyAgentInput = z.infer<typeof seriesConsistencyAgentInputSchema>;
@@ -79,7 +94,6 @@ const hasModelApiKey = () =>
       process.env.OPENAI_API_KEY ||
       process.env.ANTHROPIC_API_KEY
   );
-const SERIES_AGENT_FALLBACK_ENABLED = false;
 
 const dedupe = (values: string[]) => {
   const seen = new Set<string>();
@@ -143,52 +157,74 @@ const shouldReplaceSeriesText = (value?: string) => {
   return SERIES_META_OUTPUT_PATTERN.test(normalized) || LOCATION_LOCK_OUTPUT_PATTERN.test(normalized);
 };
 
-const buildPortableOverviewRefined = (input: SeriesConsistencyAgentInput) =>
-  `一見すると個別の案件に見える出来事が、回を追うごとに同じ歪みへつながっていく。固定キャラクターたちは見えていた説明のほころびを辿りながら、やがて${input.season_goal}へ収束していく。`;
+const cleanBounded = (value: string | undefined, maxChars: number) => {
+  const normalized = clean(value);
+  if (!normalized) return "";
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars).trimEnd()}…`;
+};
 
-const buildPortableAiRulePoints = (input: SeriesConsistencyAgentInput) =>
-  withMandatory(
-    [
-      ...input.ai_rule_points.filter((rule) => !shouldReplaceSeriesText(rule)),
-      "主要人物の感情変化は行動と選択で示す。",
-      "エピソード末尾には次に確かめるべき疑問か対象を残す。",
-      "局所事件の解像度とシリーズ全体の真相解像度を混同しない。",
-    ],
-    MANDATORY_SERIES_AI_RULES,
-    12
-  );
-
-const buildFallbackContinuity = (input: SeriesConsistencyAgentInput) => {
-  const lastCheckpoint = input.checkpoints[input.checkpoints.length - 1];
-  const midCheckpoint = input.checkpoints[Math.floor((input.checkpoints.length - 1) / 2)];
-  const lead = input.characters[0];
-  return {
-    global_mystery: `${input.season_goal}を阻む真因は何か。`,
-    mid_season_twist: midCheckpoint
-      ? `${midCheckpoint.title}で、前提が覆る新事実を提示する。`
-      : "中盤で同盟関係が崩れる。",
-    finale_payoff: lastCheckpoint
-      ? `${lastCheckpoint.title}で主要伏線を回収し、${lead?.name || "主人公"}の選択を結論にする。`
-      : "最終話で主要伏線を回収する。",
-    invariant_rules: [
-      "各話の冒頭で前話の結果を最低1つ継承する。",
-      "キャラクターの口調と価値観の急変は理由付きでのみ許可する。",
-      "伏線は未回収のまま3話以上放置しない。",
-    ],
-    episode_link_policy: [
-      "carry_over の要素を次回エピソード冒頭で明示的に参照する。",
-      "チェックポイントで示した目的の達成条件を各回で1つずつ更新する。",
-      "最終チェックポイントへ向けて対立軸を段階的に絞り込む。",
-    ],
-  };
+const pickFirstSafeText = (...candidates: Array<string | undefined>) => {
+  for (const candidate of candidates) {
+    const normalized = clean(candidate);
+    if (!normalized) continue;
+    if (shouldReplaceSeriesText(normalized)) continue;
+    return normalized;
+  }
+  return "";
 };
 
 const buildFallbackOutput = (input: SeriesConsistencyAgentInput): SeriesConsistencyAgentOutput => {
-  const continuity = buildFallbackContinuity(input);
+  const phase2 = input.checkpoints.find((checkpoint) => checkpoint.checkpoint_no === 2);
+  const phase3 = input.checkpoints.find((checkpoint) => checkpoint.checkpoint_no === 3);
+
+  const globalMystery = pickFirstSafeText(
+    input.mystery_profile?.case_core,
+    phase2?.remaining_unknown,
+    input.season_goal,
+    input.premise
+  );
+  const midSeasonTwist = pickFirstSafeText(
+    phase2?.knowledge_gain,
+    phase2?.carry_over,
+    input.mystery_profile?.truth_nature,
+    input.overview
+  );
+  const finalePayoff = pickFirstSafeText(
+    phase3?.purpose,
+    phase3?.unlock_hint,
+    input.season_goal,
+    input.first_episode_seed.carry_over_hint
+  );
+
+  const fallbackOverviewBase = pickFirstSafeText(input.overview, input.premise);
+  const fallbackGoal = pickFirstSafeText(input.season_goal);
+  const overviewRefined = cleanBounded(
+    [
+      fallbackOverviewBase || "断片的な事件の再検証を重ねるほど、最初の説明が崩れていく構造を保つ。",
+      fallbackGoal
+        ? `終盤では「${fallbackGoal}」へ自然に収束する導線を明示する。`
+        : "終盤では未解決要素の因果を一本化し、納得感のある収束を作る。",
+    ].join(" "),
+    320
+  );
+
   return {
-    overview_refined: buildPortableOverviewRefined(input),
-    ai_rule_points: buildPortableAiRulePoints(input),
-    continuity,
+    overview_refined: overviewRefined,
+    ai_rule_points: withMandatory(
+      (input.ai_rule_points || []).filter((rule) => !shouldReplaceSeriesText(rule)),
+      MANDATORY_SERIES_AI_RULES,
+      12
+    ),
+    continuity: {
+      global_mystery: cleanBounded(globalMystery, 220) || "複数の出来事を同時に説明できる単一因果を追跡する。",
+      mid_season_twist:
+        cleanBounded(midSeasonTwist, 220) || "中盤で主要仮説を反転させる証拠を提示し、再解釈を強制する。",
+      finale_payoff:
+        cleanBounded(finalePayoff, 220) || "結末で主要矛盾を回収し、シリーズ目標の到達条件を満たす。",
+      invariant_rules: withMandatory([], MANDATORY_REALWORLD_INVARIANT_RULES, 12),
+      episode_link_policy: withMandatory([], MANDATORY_REALWORLD_EPISODE_LINK_POLICY, 12),
+    },
     warnings: [],
   };
 };
@@ -197,34 +233,67 @@ const normalizeOutput = (
   input: SeriesConsistencyAgentInput,
   raw: unknown
 ): SeriesConsistencyAgentOutput | null => {
-  const parsed = seriesConsistencyAgentOutputSchema.safeParse(raw);
-  if (!parsed.success) return null;
   const fallback = buildFallbackOutput(input);
-  const output = parsed.data;
+  const parsed = lightSeriesConsistencyAgentOutputSchema.safeParse(raw);
+  const output = parsed.success ? parsed.data : {};
+  const continuity = output.continuity || {};
+  const fallbackWarnings: string[] = [];
+  if (!parsed.success) fallbackWarnings.push("series_consistency_light_parse_failed");
+  if (parsed.success && (!output.continuity || !output.ai_rule_points || !output.overview_refined)) {
+    fallbackWarnings.push("series_consistency_partial_output_fallback_applied");
+  }
 
   const aiRulePoints = withMandatory(
     (output.ai_rule_points || []).filter((rule) => !shouldReplaceSeriesText(rule)),
     MANDATORY_SERIES_AI_RULES,
     12
   );
-  const invariantRules = withMandatory(output.continuity.invariant_rules || [], MANDATORY_REALWORLD_INVARIANT_RULES, 12);
+  const invariantRules = withMandatory(
+    (continuity.invariant_rules || []).filter((rule) => !shouldReplaceSeriesText(rule)),
+    MANDATORY_REALWORLD_INVARIANT_RULES,
+    12
+  );
   const episodeLinkPolicy = withMandatory(
-    output.continuity.episode_link_policy || [],
+    (continuity.episode_link_policy || []).filter((rule) => !shouldReplaceSeriesText(rule)),
     MANDATORY_REALWORLD_EPISODE_LINK_POLICY,
     12
   );
-  const warnings = dedupe(output.warnings || []);
+
+  const overviewRefinedCandidate = cleanBounded(output.overview_refined, 320);
+  const overviewRefined =
+    overviewRefinedCandidate && !shouldReplaceSeriesText(overviewRefinedCandidate)
+      ? overviewRefinedCandidate
+      : fallback.overview_refined;
+
+  const globalMysteryCandidate = cleanBounded(continuity.global_mystery, 220);
+  const globalMystery =
+    globalMysteryCandidate && !shouldReplaceSeriesText(globalMysteryCandidate)
+      ? globalMysteryCandidate
+      : fallback.continuity.global_mystery;
+
+  const midSeasonTwistCandidate = cleanBounded(continuity.mid_season_twist, 220);
+  const midSeasonTwist =
+    midSeasonTwistCandidate && !shouldReplaceSeriesText(midSeasonTwistCandidate)
+      ? midSeasonTwistCandidate
+      : fallback.continuity.mid_season_twist;
+
+  const finalePayoffCandidate = cleanBounded(continuity.finale_payoff, 220);
+  const finalePayoff =
+    finalePayoffCandidate && !shouldReplaceSeriesText(finalePayoffCandidate)
+      ? finalePayoffCandidate
+      : fallback.continuity.finale_payoff;
+
+  const warnings = dedupe([...(output.warnings || []), ...fallbackWarnings]).slice(0, 10);
 
   return {
-    overview_refined: shouldReplaceSeriesText(output.overview_refined)
-      ? fallback.overview_refined
-      : clean(output.overview_refined) || fallback.overview_refined,
+    overview_refined: overviewRefined,
     ai_rule_points: aiRulePoints.length > 0 ? aiRulePoints : fallback.ai_rule_points,
     continuity: {
-      global_mystery: clean(output.continuity.global_mystery) || fallback.continuity.global_mystery,
-      mid_season_twist: clean(output.continuity.mid_season_twist) || fallback.continuity.mid_season_twist,
-      finale_payoff: clean(output.continuity.finale_payoff) || fallback.continuity.finale_payoff,
-      invariant_rules: invariantRules.length > 0 ? invariantRules : fallback.continuity.invariant_rules,
+      global_mystery: globalMystery,
+      mid_season_twist: midSeasonTwist,
+      finale_payoff: finalePayoff,
+      invariant_rules:
+        invariantRules.length > 0 ? invariantRules : fallback.continuity.invariant_rules,
       episode_link_policy:
         episodeLinkPolicy.length > 0 ? episodeLinkPolicy : fallback.continuity.episode_link_policy,
     },
@@ -236,10 +305,6 @@ export const generateSeriesConsistency = async (
   input: SeriesConsistencyAgentInput
 ): Promise<SeriesConsistencyAgentOutput> => {
   if (!hasModelApiKey()) {
-    if (SERIES_AGENT_FALLBACK_ENABLED) {
-      console.warn("[series-consistency-agent] API key not found, fallback consistency used");
-      return buildFallbackOutput(input);
-    }
     throw new Error("整合性チェックに失敗しました。利用可能なAIモデルがありません。");
   }
 
@@ -308,40 +373,72 @@ ${input.checkpoints
 - overview_refined / ai_rule_points に、現実拡張型、外出周遊、周遊ミステリー、スポット数、2〜4、移動手段、徒歩、公共交通、その土地、各島などの語を出してはいけない。
 - overview_refined はシリーズ紹介として読める抽象度を保ち、特定地形や導線に固定しない。
 
+## 出力フォーマット（必須）
+- 可能なら次の3キーを返す:
+  - overview_refined
+  - ai_rule_points
+  - continuity
+- continuity は次の3キーを優先して返す:
+  - global_mystery
+  - mid_season_twist
+  - finale_payoff
+- 余力があれば continuity.invariant_rules / continuity.episode_link_policy / warnings を追加してよい。
+- 各文字列は短文1つで、同文反復や過剰な列挙を禁止する。
+
 seriesConsistencyAgentOutputSchema を満たす JSON を返してください。
 `;
 
-  const maxAttempts = Math.max(
-    1,
-    Math.min(3, Number.parseInt(clean(process.env.SERIES_CONSISTENCY_MAX_ATTEMPTS) || "1", 10) || 1)
-  );
+  const maxAttempts = 1;
   const timeoutMs = Math.max(
-    30_000,
-    Number.parseInt(clean(process.env.SERIES_CONSISTENCY_TIMEOUT_MS) || "60000", 10) || 60_000
+    120_000,
+    Number.parseInt(clean(process.env.SERIES_CONSISTENCY_TIMEOUT_MS) || "120000", 10) || 120_000
+  );
+  const timeoutGrowth = Math.max(
+    1,
+    Number.parseFloat(clean(process.env.SERIES_CONSISTENCY_TIMEOUT_GROWTH) || "1.15") || 1.15
+  );
+  const maxTokens = Math.max(
+    700,
+    Math.min(1800, Number.parseInt(clean(process.env.SERIES_CONSISTENCY_MAX_TOKENS) || "1100", 10) || 1100)
   );
   const logPrefix = "[series-consistency-agent]";
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const abortController = new AbortController();
+    let activeTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    const attemptTimeoutMs = Math.round(timeoutMs * Math.pow(timeoutGrowth, Math.max(0, attempt - 1)));
     try {
-      console.log(`${logPrefix} attempt ${attempt}/${maxAttempts} — LLM呼び出し中`);
-      const result = await Promise.race([
-        seriesConsistencyAgent.generate(prompt, {
-          structuredOutput: { schema: seriesConsistencyAgentOutputSchema },
-        }),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`${timeoutMs / 1000}秒タイムアウト`)), timeoutMs)),
-      ]);
+      activeTimeoutHandle = setTimeout(() => abortController.abort("series_consistency_timeout"), attemptTimeoutMs);
+      console.log(
+        `${logPrefix} attempt ${attempt}/${maxAttempts} — LLM呼び出し中 (${Math.round(
+          attemptTimeoutMs / 1000
+        )}秒でタイムアウト)`
+      );
+      const result = await seriesConsistencyAgent.generate(prompt, {
+        structuredOutput: { schema: lightSeriesConsistencyAgentOutputSchema },
+        modelSettings: {
+          maxRetries: 0,
+          maxOutputTokens: maxTokens,
+        },
+        abortSignal: abortController.signal,
+      });
       console.log(`${logPrefix} attempt ${attempt} — LLM応答受信`);
       const normalized = normalizeOutput(input, result.object);
       if (normalized) return normalized;
       console.warn(`${logPrefix} attempt ${attempt} — パース失敗`);
     } catch (error: any) {
+      if (abortController.signal.aborted) {
+        console.warn(
+          `${logPrefix} attempt ${attempt} 失敗: 整合性チェックがタイムアウトしました（${attemptTimeoutMs}ms）`
+        );
+        console.warn(`${logPrefix} タイムアウト後の追加課金を避けるため、追加リトライしません`);
+        break;
+      }
       console.warn(`${logPrefix} attempt ${attempt} 失敗:`, error?.message ?? error);
+    } finally {
+      if (activeTimeoutHandle) clearTimeout(activeTimeoutHandle);
     }
   }
 
   console.error(`${logPrefix} 全試行失敗`);
-  if (SERIES_AGENT_FALLBACK_ENABLED) {
-    console.warn(`${logPrefix} fallback consistency を使用`);
-    return buildFallbackOutput(input);
-  }
-  throw new Error("整合性チェックに失敗しました。AIモデルからの応答が得られませんでした。再度お試しください。");
+  throw new Error("整合性チェックに失敗しました。外部AIの生成結果を取得できませんでした。");
 };

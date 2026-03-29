@@ -16,6 +16,12 @@ export type MainTabParamList = {
 export type RootStackParamList = {
   MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
   Auth: undefined;
+  OnboardingSurvey: undefined;
+  FeaturedCampaign:
+    | {
+        campaignId?: string;
+      }
+    | undefined;
   ProfileEdit: undefined;
   Settings: undefined;
   CreateSeries:

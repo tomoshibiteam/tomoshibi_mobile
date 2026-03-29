@@ -12,7 +12,6 @@ export const richCharacterSheetSchema = z.object({
   id: z.string(),
   name: z.string(),
   role: z.string(),
-  tier: z.enum(["primary", "secondary"]),
   must_appear: z.boolean(),
   goal: z.string(),
   arc_start: z.string(),
@@ -29,8 +28,16 @@ export const richCharacterSheetSchema = z.object({
   place_reaction_style: z.string(),
   must_never_break: z.array(z.string()).min(1).max(6),
   may_evolve: z.array(z.string()).min(1).max(6),
-  secrets: z.array(z.string()).min(1).max(4),
-  relationship_hooks: z.array(z.string()).min(1).max(4),
+  relationship_hooks: z
+    .array(
+      z.object({
+        target_id: z.string().optional().default(""),
+        target_name: z.string().optional().default(""),
+        relation: z.string(),
+      })
+    )
+    .min(1)
+    .max(4),
 });
 
 export const seriesRichCharacterAgentInputSchema = z.object({
@@ -42,13 +49,13 @@ export const seriesRichCharacterAgentInputSchema = z.object({
   protagonist_position: z.string(),
   partner_description: z.string(),
   style_guide: z.string().optional(),
-  target_count: z.number().int().min(3).max(8).default(4),
+  target_count: z.number().int().min(2).max(8).default(2),
   concept_seed: seriesConceptSeedSchema,
   preference_sheet: seriesPreferenceSheetSchema,
 });
 
 export const seriesRichCharacterAgentOutputSchema = z.object({
-  rich_characters: z.array(richCharacterSheetSchema).min(3).max(8),
+  rich_characters: z.array(richCharacterSheetSchema).min(2).max(8),
 });
 
 export type SeriesRichCharacterAgentInput = z.infer<typeof seriesRichCharacterAgentInputSchema>;
@@ -59,7 +66,7 @@ const SERIES_RICH_CHARACTER_AGENT_INSTRUCTIONS = `
 キャラクターを便利な案内役にせず、シリーズ固有の魅力の中核として設計してください。
 
 ## 必須
-- primary/secondary の役割差を明確にする
+- must_appear=true/false の役割差を明確にする
 - 主要キャラは関係性の推進力を持つ
 - dialogue_style/worldview/desire/fear/hidden_need を具体化する
 - must_never_break と may_evolve を必ず書く
@@ -86,6 +93,41 @@ const dedupe = (values: Array<string | undefined | null>) => {
       seen.add(key);
       return true;
     });
+};
+
+const normalizeRelationHooks = (
+  hooks: Array<
+    | {
+        target_id?: string | null;
+        target_name?: string | null;
+        relation?: string | null;
+      }
+    | undefined
+    | null
+  >
+) => {
+  const seen = new Set<string>();
+  return hooks
+    .map((hook) => {
+      if (!hook || typeof hook !== "object") return null;
+      const targetId = clean(hook.target_id || "");
+      const targetName = clean(hook.target_name || "");
+      const relation = clean(hook.relation || "");
+      if (!targetName || !relation) return null;
+      return {
+        target_id: targetId,
+        target_name: targetName,
+        relation,
+      };
+    })
+    .filter((hook): hook is { target_id: string; target_name: string; relation: string } => Boolean(hook))
+    .filter((hook) => {
+      const key = `${hook.target_name.toLowerCase()}::${hook.relation.toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 4);
 };
 
 const hasModelApiKey = () =>
@@ -178,7 +220,7 @@ const pickName = (seedHash: number, index: number, primary: boolean, used: Set<s
 
 const fallbackRichCharacters = (input: SeriesRichCharacterAgentInput): RichCharacterSheet[] => {
   const relation = input.preference_sheet.desired_relationship_dynamics[0] || "相棒との信頼形成";
-  const count = Math.max(3, Math.min(5, input.target_count));
+  const count = Math.max(2, Math.min(5, input.target_count));
   const continuationNeed = input.preference_sheet.continuation_needs[0] || "次話への未回収フック";
   const themeSummary = [
     input.title,
@@ -227,7 +269,6 @@ const fallbackRichCharacters = (input: SeriesRichCharacterAgentInput): RichChara
       id: `char_${no}`,
       name,
       role,
-      tier: primary ? "primary" : "secondary",
       must_appear: primary,
       goal:
         no === 1
@@ -268,15 +309,36 @@ const fallbackRichCharacters = (input: SeriesRichCharacterAgentInput): RichChara
         "信頼度に応じた発話温度",
         "役割境界の踏み越え方",
       ]).slice(0, 6),
-      secrets: dedupe([
-        primary
-          ? `${input.concept_seed.return_reason}に直結する未公開情報を握る`
-          : `${input.concept_seed.ending_flavor}を左右する過去の選択を隠している`,
-      ]).slice(0, 4),
-      relationship_hooks: dedupe([
-        `${continuationNeed}に繋がる未回収会話を毎話1つ残す`,
-        `${dynamic}の解釈が分かれる台詞を配置する`,
-      ]).slice(0, 4),
+      relationship_hooks: normalizeRelationHooks(
+        no === 1
+          ? [
+              {
+                target_id: "char_2",
+                target_name: "相棒",
+                relation: `${dynamic}を軸に共同で仮説を更新する。`,
+              },
+            ]
+          : no === 2
+            ? [
+                {
+                  target_id: "char_1",
+                  target_name: "主人公",
+                  relation: `${continuationNeed}へ繋がる観察補助を担う。`,
+                },
+              ]
+            : [
+                {
+                  target_id: "char_1",
+                  target_name: "主人公",
+                  relation: `${dynamic}の解釈を揺らし、再検証を促す。`,
+                },
+                {
+                  target_id: "char_2",
+                  target_name: "相棒",
+                  relation: "役割分担を通じて捜査の視点を補完する。",
+                },
+              ]
+      ),
     };
   });
 };
@@ -292,11 +354,12 @@ const normalizeRichCharacters = (
   const seenNames = new Set<string>();
 
   return parsed.data.rich_characters
-    .slice(0, Math.max(3, Math.min(5, input.target_count)))
+    .slice(0, Math.max(2, Math.min(5, input.target_count)))
     .map((character, index) => {
       const fallbackRow = fallback[Math.min(index, fallback.length - 1)];
       const mustNeverBreak = dedupe(character.must_never_break).slice(0, 6);
       const mayEvolve = dedupe(character.may_evolve).slice(0, 6);
+      const relationHooks = normalizeRelationHooks(character.relationship_hooks);
       let name = clean(character.name) || fallbackRow.name;
       if (seenNames.has(name.toLowerCase())) {
         name = `${name}${index + 1}`;
@@ -307,8 +370,7 @@ const normalizeRichCharacters = (
         id: `char_${index + 1}`,
         name,
         role: clean(character.role) || fallbackRow.role,
-        tier: character.tier,
-        must_appear: character.tier === "primary" ? true : Boolean(character.must_appear),
+        must_appear: Boolean(character.must_appear),
         goal: clean(character.goal) || fallbackRow.goal,
         arc_start: clean(character.arc_start) || fallbackRow.arc_start,
         arc_end: clean(character.arc_end) || fallbackRow.arc_end,
@@ -325,8 +387,7 @@ const normalizeRichCharacters = (
           clean(character.place_reaction_style) || fallbackRow.place_reaction_style,
         must_never_break: mustNeverBreak.length > 0 ? mustNeverBreak : fallbackRow.must_never_break,
         may_evolve: mayEvolve.length > 0 ? mayEvolve : fallbackRow.may_evolve,
-        secrets: dedupe(character.secrets).slice(0, 4),
-        relationship_hooks: dedupe(character.relationship_hooks).slice(0, 4),
+        relationship_hooks: relationHooks.length > 0 ? relationHooks : fallbackRow.relationship_hooks,
       };
     });
 };
@@ -352,7 +413,6 @@ const toSeriesCharacter = (
     id: row.id,
     name: row.name,
     role: row.role,
-    tier: row.tier,
     must_appear: row.must_appear,
     goal: row.goal,
     arc_start: row.arc_start,
@@ -368,8 +428,11 @@ const toSeriesCharacter = (
       purpose: "character_portrait",
       styleReference: input.style_guide,
     }),
-    secrets: row.secrets,
-    relationship_hooks: row.relationship_hooks,
+    relationship_hooks: row.relationship_hooks.map((relation) => ({
+      target_id: clean(relation.target_id),
+      target_name: clean(relation.target_name),
+      relation: clean(relation.relation),
+    })),
     drive: row.desire,
     dilemma: row.hidden_need,
     arc_trigger: row.relation_arc,
@@ -382,18 +445,12 @@ const toSeriesCharacter = (
 };
 
 export const generateSeriesRichCharacters = async (input: SeriesRichCharacterAgentInput) => {
-  const fallback = fallbackRichCharacters(input);
-
   if (!hasModelApiKey()) {
-    console.warn("[series-rich-character-agent] API key not found, fallback rich characters used");
-    return {
-      rich_characters: fallback,
-      characters: fallback.map((row, index) => toSeriesCharacter(input, row, index)),
-    };
+    throw new Error("キャラクター詳細化に失敗しました。利用可能なAIモデルがありません。");
   }
 
   const prompt = `
-シリーズ「${input.title}」の固定キャラクターを ${Math.max(3, Math.min(5, input.target_count))} 人設計してください。
+シリーズ「${input.title}」の固定キャラクターを ${Math.max(2, Math.min(5, input.target_count))} 人設計してください。
 
 ## シリーズ文脈
 - generation_angle: ${input.concept_seed.generation_angle}
@@ -408,9 +465,10 @@ export const generateSeriesRichCharacters = async (input: SeriesRichCharacterAge
 - continuation_needs: ${input.preference_sheet.continuation_needs.join(" / ")}
 
 ## 必須
-- primary 1〜2、secondary 最大3
+- must_appear=true の核キャラと補助キャラの役割差を明確にする
 - 役割重複を避ける
 - must_never_break / may_evolve を具体化
+- relationship_hooks は { target_id, target_name, relation } 形式で返す
 
 seriesRichCharacterAgentOutputSchema を満たす JSON のみ返してください。
 `;
@@ -430,7 +488,7 @@ seriesRichCharacterAgentOutputSchema を満たす JSON のみ返してくださ�
       ]);
 
       const normalized = normalizeRichCharacters(input, result.object);
-      if (normalized && normalized.length >= 3) {
+      if (normalized && normalized.length >= Math.max(2, Math.min(5, input.target_count))) {
         return {
           rich_characters: normalized,
           characters: normalized.map((row, index) => toSeriesCharacter(input, row, index)),
@@ -441,9 +499,6 @@ seriesRichCharacterAgentOutputSchema を満たす JSON のみ返してくださ�
     }
   }
 
-  console.warn("[series-rich-character-agent] 全試行失敗 — fallback rich characters使用");
-  return {
-    rich_characters: fallback,
-    characters: fallback.map((row, index) => toSeriesCharacter(input, row, index)),
-  };
+  console.error("[series-rich-character-agent] 全試行失敗");
+  throw new Error("キャラクター詳細化に失敗しました。外部AIの生成結果を取得できませんでした。");
 };

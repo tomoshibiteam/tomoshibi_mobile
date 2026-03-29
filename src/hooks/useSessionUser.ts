@@ -3,11 +3,13 @@ import { getSupabaseOrThrow, isSupabaseConfigured } from "@/lib/supabase";
 
 export const useSessionUserId = () => {
   const [userId, setUserId] = useState<string | null>(null);
+  const [userName, setUserName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
       setUserId(null);
+      setUserName(null);
       setLoading(false);
       return;
     }
@@ -16,6 +18,22 @@ export const useSessionUserId = () => {
 
     let isMounted = true;
 
+    const resolveUserName = (session: { user?: { user_metadata?: Record<string, unknown> } } | null | undefined) => {
+      const metadata = session?.user?.user_metadata || {};
+      const candidates = [
+        metadata.name,
+        metadata.full_name,
+        metadata.preferred_username,
+        metadata.nickname,
+      ];
+      for (const candidate of candidates) {
+        if (typeof candidate !== "string") continue;
+        const normalized = candidate.trim();
+        if (normalized) return normalized;
+      }
+      return null;
+    };
+
     const hydrate = async () => {
       const { data, error } = await supabase.auth.getSession();
       if (!isMounted) return;
@@ -23,6 +41,7 @@ export const useSessionUserId = () => {
         console.warn("useSessionUserId: failed to get session", error);
       }
       setUserId(data.session?.user.id ?? null);
+      setUserName(resolveUserName(data.session));
       setLoading(false);
     };
 
@@ -31,6 +50,7 @@ export const useSessionUserId = () => {
     const { data: subscription } = supabase.auth.onAuthStateChange((_, session) => {
       if (!isMounted) return;
       setUserId(session?.user.id ?? null);
+      setUserName(resolveUserName(session));
     });
 
     return () => {
@@ -39,5 +59,5 @@ export const useSessionUserId = () => {
     };
   }, []);
 
-  return { userId, loading };
+  return { userId, userName, loading };
 };

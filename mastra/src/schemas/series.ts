@@ -40,16 +40,33 @@ export const seriesMysteryProfileSchema = z.object({
   banned_templates_avoided: z.array(z.string()).max(8).default([]),
 });
 
-export const seriesGenerationRequestSchema = z.object({
-  interview: seriesInterviewSchema,
-  desired_episode_count: z.number().int().min(3).max(24).optional(),
-  prompt: z.string().optional(),
-  creator_id: z.string().uuid().optional(),
-  language: z.string().optional(),
-  generation_mode: z.enum(["proposal", "full"]).optional(),
-  existing_identity_pack: z.unknown().optional(),
-  identity_retcon: z.boolean().optional(),
-  recent_generation_context: seriesRecentGenerationContextSchema.optional(),
+export const seriesDeviceServiceDesignBriefSchema = z.object({
+  brief_version: z.literal("device-service-design-brief-v1"),
+  experience_objective: z.string(),
+  service_value_hypothesis: z.string(),
+  target_user_context: z.string(),
+  usage_scene: z.string(),
+  emotional_outcome: z.string(),
+  tone_guardrail: z.string(),
+  role_design_direction: z.string(),
+  spatial_behavior_policy: z.string(),
+  ux_guidance_style: z.string(),
+});
+
+export const seriesConceptGroundingItemSchema = z.object({
+  anchor: z.string(),
+  detail: z.string(),
+  tags: z.array(z.string()).max(6).default([]),
+  source_ref: z.string().optional(),
+  relevance_reason: z.string().optional(),
+});
+
+export const seriesConceptGroundingContextSchema = z.object({
+  source_type: z.literal("spreadsheet"),
+  source_url: z.string().url(),
+  source_label: z.string().optional(),
+  retrieval_note: z.string().optional(),
+  matched_items: z.array(seriesConceptGroundingItemSchema).max(8).default([]),
 });
 
 export const seriesPreferenceSheetSchema = z.object({
@@ -207,12 +224,19 @@ export const seriesCharacterIdentityAnchorTokensSchema = z.object({
   distinguishing_feature: z.string().default(""),
 });
 
+export const seriesCharacterRelationshipHookSchema = z.object({
+  target_id: z.string(),
+  target_name: z.string(),
+  relation: z.string(),
+});
+
 export const seriesCharacterSchema = z.object({
   id: z.string(),
   name: z.string(),
   role: z.string(),
-  tier: z.enum(["primary", "secondary"]).default("secondary"),
   must_appear: z.boolean().default(false),
+  is_protagonist: z.boolean().optional(),
+  is_partner: z.boolean().optional(),
   goal: z.string(),
   arc_start: z.string(),
   arc_end: z.string(),
@@ -220,8 +244,7 @@ export const seriesCharacterSchema = z.object({
   appearance: z.string(),
   portrait_prompt: z.string(),
   portrait_image_url: z.string(),
-  secrets: z.array(z.string()),
-  relationship_hooks: z.array(z.string()),
+  relationship_hooks: z.array(seriesCharacterRelationshipHookSchema).default([]),
   investigation_function: z.string().optional(),
   emotional_temperature: z.string().optional(),
   relationship_temperature: z.string().optional(),
@@ -348,7 +371,7 @@ export const seriesIdentityPackSchema = z.object({
   source: z.enum(["generated", "reused"]),
   style_bible: z.string(),
   key_person_character_ids: z.array(z.string()).min(1).max(3),
-  characters: z.array(seriesIdentityPackCharacterSchema).min(3).max(8),
+  characters: z.array(seriesIdentityPackCharacterSchema).min(2).max(8),
   locked_at: z.string(),
 });
 
@@ -408,11 +431,11 @@ export const seriesOutputSchema = z.object({
   cover_image_prompt: z.string(),
   cover_image_url: z.string(),
   world: seriesWorldSchema,
-  characters: z.array(seriesCharacterSchema).min(3).max(8),
+  characters: z.array(seriesCharacterSchema).min(2).max(8),
   cover_focus_characters: z.array(seriesCoverFocusCharacterSchema).min(1).max(3),
   identity_pack: seriesIdentityPackSchema,
   cover_consistency_report: seriesCoverConsistencyReportSchema,
-  checkpoints: z.array(seriesCheckpointSchema).min(4).max(8),
+  checkpoints: z.array(seriesCheckpointSchema).length(3),
   first_episode_seed: seriesEpisodeSeedSchema,
   mystery_profile: seriesMysteryProfileSchema,
   progress_state: seriesProgressStateSchema,
@@ -421,39 +444,7 @@ export const seriesOutputSchema = z.object({
   continuity: seriesContinuitySchema,
 });
 
-const seriesSeedRouteDryRunMetricsSchema = z.object({
-  optimizer: z.string(),
-  total_estimated_walk_minutes: z.number().int().min(0),
-  transfer_minutes: z.number().int().min(0),
-  max_leg_minutes: z.number().int().min(0),
-  max_total_walk_minutes: z.number().int().min(0),
-  feasible: z.boolean(),
-  failure_reasons: z.array(z.string()).max(20),
-  optimized_order_indices: z.array(z.number().int().min(0)).max(6),
-  optimized_order_spot_names: z.array(z.string()).max(6),
-});
-
-const seriesSeedRouteDryRunSchema = z.object({
-  feasible: z.boolean(),
-  selected_spots: z.array(z.string()).max(4),
-  failure_reasons: z.array(z.string()).max(20),
-  route_metrics: seriesSeedRouteDryRunMetricsSchema,
-  route_score: z.number().min(0).max(1),
-  continuity_score: z.number().min(0).max(1),
-});
-
-export const seriesWorkflowOutputSchema = z.object({
-  series: seriesOutputSchema,
-  meta: z.object({
-    desired_episode_count: z.number().int().min(3).max(24),
-    generated_checkpoint_count: z.number().int().min(4).max(8),
-    workflow_version: z.string(),
-    warnings: z.array(z.string()),
-    first_episode_seed_dry_run: seriesSeedRouteDryRunSchema.optional(),
-  }),
-});
-
-export type SeriesGenerationRequest = z.infer<typeof seriesGenerationRequestSchema>;
+export type SeriesDeviceServiceDesignBrief = z.infer<typeof seriesDeviceServiceDesignBriefSchema>;
 export type SeriesPreferenceSheet = z.infer<typeof seriesPreferenceSheetSchema>;
 export type SeriesAntiBrief = z.infer<typeof seriesAntiBriefSchema>;
 export type UserSeriesRubric = z.infer<typeof userSeriesRubricSchema>;

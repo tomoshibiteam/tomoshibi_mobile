@@ -19,6 +19,7 @@
     "@ai-sdk/google": "^3.0.34",
     "@mastra/core": "^1.0.0-beta.21",
     "@mastra/hono": "^1.1.0",
+    "@supabase/supabase-js": "^2.57.4",
     "dotenv": "^16.4.5",
     "hono": "^4.5.0",
     "rembg-node": "^2.0.2",

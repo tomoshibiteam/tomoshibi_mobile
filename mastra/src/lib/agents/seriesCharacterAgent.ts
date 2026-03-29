@@ -3,6 +3,7 @@ import { z } from "zod";
 import { MASTRA_SERIES_CHARACTER_MODEL } from "../modelConfig";
 import {
   seriesCharacterSchema,
+  seriesDeviceServiceDesignBriefSchema,
   seriesMysteryProfileSchema,
   seriesRecentGenerationContextSchema,
 } from "../../schemas/series";
@@ -13,11 +14,14 @@ export const seriesCharacterAgentInputSchema = z.object({
   genre: z.string(),
   tone: z.string(),
   premise: z.string(),
+  world_setting: z.string().optional(),
   season_goal: z.string(),
+  design_brief: seriesDeviceServiceDesignBriefSchema.optional(),
+  protagonist_name: z.string().optional(),
   protagonist_position: z.string(),
   partner_description: z.string(),
   style_guide: z.string().optional(),
-  target_count: z.number().int().min(3).max(8).default(4),
+  target_count: z.number().int().min(2).max(8).default(2),
   mystery_profile: seriesMysteryProfileSchema.optional(),
   recent_generation_context: seriesRecentGenerationContextSchema.optional(),
 });
@@ -27,31 +31,30 @@ export const seriesCharacterAgentOutputSchema = z.object({
 });
 
 /** LLM に渡す軽量スキーマ（必須フィールドのみ） */
+const lightRelationshipHookSchema = z.object({
+  target_id: z.string().optional().default(""),
+  target_name: z.string().optional().default(""),
+  relation: z.string().optional().default(""),
+});
+
 const lightCharacterSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  role: z.string(),
-  tier: z.enum(["primary", "secondary"]).optional(),
+  id: z.string().optional().default(""),
+  name: z.string().optional().default(""),
+  role: z.string().optional().default(""),
   must_appear: z.boolean().optional(),
-  goal: z.string(),
-  arc_start: z.string(),
-  arc_end: z.string(),
-  personality: z.string(),
-  appearance: z.string(),
-  secrets: z.array(z.string()),
-  relationship_hooks: z.array(z.string()),
+  is_protagonist: z.boolean().optional(),
+  is_partner: z.boolean().optional(),
+  goal: z.string().optional().default(""),
+  arc_start: z.string().optional().default(""),
+  arc_end: z.string().optional().default(""),
+  personality: z.string().optional().default(""),
+  appearance: z.string().optional().default(""),
+  relationship_hooks: z.array(lightRelationshipHookSchema).optional().default([]),
   investigation_function: z.string().optional(),
-  emotional_temperature: z.string().optional(),
-  relationship_temperature: z.string().optional(),
-  signature_prop: z.string().optional(),
-  environment_residue: z.string().optional(),
-  posture_grammar: z.string().optional(),
-  truth_proximity: z.string().optional(),
-  hypothesis_pressure: z.string().optional(),
 });
 
 const lightOutputSchema = z.object({
-  characters: z.array(lightCharacterSchema).min(3).max(8),
+  characters: z.array(lightCharacterSchema).min(1),
 });
 
 export type SeriesCharacterAgentInput = z.infer<typeof seriesCharacterAgentInputSchema>;
@@ -63,13 +66,21 @@ const SERIES_CHARACTER_AGENT_INSTRUCTIONS = `
 
 ## 出力ルール（厳守）
 - 指定されたスキーマの型とフィールド名をそのまま使うこと。
+- 各文字列は簡潔にし、同じ語句の反復で文字数を稼がないこと。
 - personality は**文字列1つ**（性格の一文要約）。オブジェクトは出さない。
 - 各キャラクター: id(char_1〜), name, role, goal, arc_start, arc_end, personality, appearance は必須。
-- tier は primary/secondary。
-- must_appear は primary のみ true を許可。
+- role / goal / arc_start / arc_end は、事件・舞台・立場に結びつけた具体文にする（一般論の定型文は禁止）。
+- must_appear は常時登場が必要なキャラのみ true。
+- is_protagonist は主人公本人のみ true（原則1人）にする。
+- is_partner は相棒本人のみ true（原則1人）にする。
 - portrait_prompt: 画像生成用の短い英語説明（1文）。portrait_image_url: 空文字 "" でよい。
-- secrets, relationship_hooks は文字列の配列（空配列可）。
-- 拡張フィールドは必要最小限に限定し、特に investigation_function / emotional_temperature / relationship_temperature / signature_prop / environment_residue / posture_grammar / truth_proximity / hypothesis_pressure を優先する。
+- relationship_hooks は配列で、各要素は { target_id, target_name, relation } とする。
+- relationship_hooks.relation には必ず以下4要素を含めること:
+  - 関係性タイプ
+  - 距離感（0〜10）
+  - 感情（相手に抱いている感情）
+  - 補足（物語上の具体的な関係説明）
+- 拡張フィールドは必要最小限に限定し、冗長な背景説明を避ける。
 
 ## ジャンル契約
 - 本シリーズは「現実拡張型・外出周遊ミステリー」である。
@@ -81,11 +92,19 @@ const SERIES_CHARACTER_AGENT_INSTRUCTIONS = `
 - 少なくとも1人は「ユーザーの仮説を揺らす立場」にする。
 - 各キャラは signature_prop と environment_residue を持ち、事件世界の住人として視覚的に識別できるようにする。
 
+## 固定キャラ配置契約（重要）
+- target_count は「固定キャラ数（主人公を除く）」として扱う。
+- 出力には主人公を明示的に含める（is_protagonist=true のキャラを必ず1人）。
+- 主人公以外として「相棒」と「主要キャラ（相棒ではない）」を必ず含める。
+- 3者（主人公・相棒・主要キャラ）は同じグループ/文脈に属するように設計する（孤立キャラを作らない）。
+- relationship_hooks には、各キャラごとに「主人公との関係」と「もう一人の固定キャラとの関係」を最低1つずつ含める。
+- protagonist_name が与えられた場合、主人公の name は必ず protagonist_name を採用する。
+- Step2（world_setting / season_goal / case_core）を最優先に反映し、Step1は補助ガードレールとして使う。
+
 ## 差別化
-- キャラ数は3〜5。名前・口癖・dominant_colorは互いに被らせない。
-- primary は1〜2人を必須。secondary は最大3人。
-- name に「あなた」「アナタ」「プレイヤー」「主人公」「You」など自己参照語を使わない。全員を固有名詞で命名する。
-- primary/secondary を問わず、少なくとも以下3点で差分を作る。
+- キャラ総数は3〜6（主人公1 + 固定キャラ2〜5）。名前・口癖・dominant_colorは互いに被らせない。
+- name は原則固有名詞で命名する。is_protagonist=true の場合のみ「あなた」等の自己参照名を許容する。
+- must_appear の有無を問わず、少なくとも以下3点で差分を作る。
   - duo_dynamic
   - investigation_function
   - emotional_temperature
@@ -99,7 +118,34 @@ export const seriesCharacterAgent = new Agent({
   instructions: SERIES_CHARACTER_AGENT_INSTRUCTIONS,
 });
 
-const clean = (value?: string) => (value || "").replace(/\s+/g, " ").trim();
+const clean = (value?: string) =>
+  (value || "")
+    .replace(/(?:\\n|\/n)+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+const cleanBounded = (value: string | undefined, maxChars: number) => {
+  const normalized = clean(value);
+  if (!normalized) return "";
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars).trimEnd()}…`;
+};
+const resolveFixedCharacterCount = (input: SeriesCharacterAgentInput) =>
+  Math.max(2, Math.min(5, input.target_count));
+const resolveTotalCharacterCount = (input: SeriesCharacterAgentInput) =>
+  Math.max(3, Math.min(8, resolveFixedCharacterCount(input) + 1));
+const isProtagonistRoleText = (role: string) =>
+  /(主人公|主役|視点|プレイヤー|語り手|lead|user|ユーザー本人|あなた)/i.test(clean(role));
+const isPartnerRoleText = (role: string) =>
+  /(相棒|パートナー|バディ|助手|補佐|同行|partner)/i.test(clean(role));
+const hasProtagonistIdentity = (
+  character: Partial<SeriesCharacterAgentOutput["characters"][number]>
+) => {
+  if (character.is_protagonist === true) return true;
+  const name = clean(character.name);
+  if (isSelfReferenceName(name) || /(あなた|ユーザー本人|プレイヤー)/i.test(name)) return true;
+  const role = clean(character.role);
+  return /^(?:主人公|主役|プレイヤー|ユーザー本人|新入生のあなた)/i.test(role);
+};
 
 const formatRecentContext = (
   recent?: z.infer<typeof seriesRecentGenerationContextSchema>
@@ -127,7 +173,6 @@ const hasModelApiKey = () =>
       process.env.OPENAI_API_KEY ||
       process.env.ANTHROPIC_API_KEY
   );
-const SERIES_AGENT_FALLBACK_ENABLED = false;
 
 // ─── Visual design helpers ─────────────────────────────────────────────
 const DOMINANT_COLORS = ["深紅", "群青", "翡翠", "金", "銀灰", "紫紺", "珊瑚", "墨黒"];
@@ -143,248 +188,6 @@ const FEATURES = [
   "額にかかる長い前髪",
   "左耳に3つ並んだピアス",
 ];
-
-const ARCHETYPE_POOL = [
-  "Hero", "Innocent", "Everyman", "Caregiver",
-  "Explorer", "Rebel", "Lover", "Creator",
-  "Jester", "Sage", "Magician", "Ruler",
-];
-
-const ENNEAGRAM_FEARS: Record<number, string> = {
-  1: "不完全であること",
-  2: "必要とされないこと",
-  3: "価値がないと思われること",
-  4: "平凡で個性がないこと",
-  5: "無能で無力であること",
-  6: "支えを失い孤立すること",
-  7: "苦痛に囚われること",
-  8: "他者に支配されること",
-  9: "衝突と断絶",
-};
-
-const ENNEAGRAM_DESIRES: Record<number, string> = {
-  1: "正しくあること",
-  2: "愛されること",
-  3: "価値ある存在であること",
-  4: "自分だけの意味を見出すこと",
-  5: "有能で理解すること",
-  6: "安全と確実さ",
-  7: "満たされ自由であること",
-  8: "自分の運命を握ること",
-  9: "内なる平穏",
-};
-
-const withVisuals = (
-  input: SeriesCharacterAgentInput,
-  character: {
-    id: string;
-    name: string;
-    role: string;
-    tier?: "primary" | "secondary";
-    must_appear?: boolean;
-    goal: string;
-    arc_start: string;
-    arc_end: string;
-    personality: string;
-    appearance: string;
-    secrets: string[];
-    relationship_hooks: string[];
-    visual_design?: {
-      dominant_color?: string;
-      body_type?: string;
-      silhouette_keyword?: string;
-      distinguishing_feature?: string;
-      [key: string]: unknown;
-    };
-    [key: string]: unknown;
-  },
-  index: number
-) => {
-  const vd = character.visual_design;
-
-  const portraitPrompt = buildCharacterPortraitPrompt({
-    seriesTitle: input.title,
-    genre: input.genre,
-    tone: input.tone,
-    name: character.name,
-    role: character.role,
-    personality: character.personality,
-    appearance: character.appearance,
-    setting: input.premise,
-    dominantColor: vd?.dominant_color,
-    bodyType: vd?.body_type,
-    distinguishingFeature: vd?.distinguishing_feature,
-    styleGuide: input.style_guide,
-  });
-
-  return {
-    ...character,
-    portrait_prompt: portraitPrompt,
-    portrait_image_url: buildSeriesImageUrl({
-      prompt: portraitPrompt,
-      seedKey: `${input.title}:char:${index + 1}:${character.name}`,
-      width: 768,
-      height: 1024,
-    }),
-  };
-};
-
-// ─── Rich fallback characters ──────────────────────────────────────────
-const fallbackCharacters = (input: SeriesCharacterAgentInput): SeriesCharacterAgentOutput["characters"] => {
-  const base = [
-    {
-      id: "char_1",
-      name: "主人公",
-      role: input.protagonist_position || "物語の視点人物",
-      tier: "primary" as const,
-      must_appear: true,
-      archetype: "Hero",
-      goal: input.season_goal || "真相へ到達する",
-      drive: "知りたいという衝動と、見て見ぬふりできない性分",
-      dilemma: "真実を追うほど大切な人を危険に晒す矛盾",
-      arc_start: "断片的な情報に振り回される。",
-      arc_midpoint: "信頼していた前提が崩れ、自分の判断基準を問い直す。",
-      arc_end: "不確実性を受け入れつつ判断できる。",
-      arc_trigger: "相棒が隠していた事実が発覚する場面",
-      backstory: "かつて重要な選択を誤り、その後悔が行動の根底にある。安定した日常を捨てて真実を追い始めたのは、あの日の償いでもある。",
-      personality: "観察力は高いが、抱え込みやすい。",
-      big_five: { openness: 75, conscientiousness: 60, extraversion: 45, agreeableness: 55, neuroticism: 65 },
-      enneagram_type: 5,
-      core_fear: ENNEAGRAM_FEARS[5],
-      core_desire: ENNEAGRAM_DESIRES[5],
-      speech_pattern: "丁寧語ベースだが、核心に触れると急にタメ口になる",
-      catchphrase: "……これ、偶然じゃないよな。",
-      quirks: ["考え込むと左手で首の後ろを触る", "重要なことほど小声になる"],
-      appearance: "落ち着いたダークグリーンのジャケット、鋭い目線。中肉中背だが姿勢がよく、常に周囲を観察している。",
-      visual_design: {
-        dominant_color: "翡翠",
-        body_type: "中肉中背で姿勢の良い",
-        silhouette_keyword: "鋭角的",
-        distinguishing_feature: "右目の下に古い傷痕",
-      },
-      secrets: ["過去の選択に未解決の後悔がある。"],
-      relationship_hooks: ["相棒への依存と自立の揺れを抱える。"],
-      relationships: [
-        { target_id: "char_2", type: "trust" as const, description: "最も信頼する存在だが、依存と自立の間で揺れている", tension_level: 45 },
-        { target_id: "char_3", type: "debt" as const, description: "過去に助けられた恩義があり、頭が上がらない", tension_level: 30 },
-      ],
-    },
-    {
-      id: "char_2",
-      name: "相棒",
-      role: input.partner_description || "主人公を支える実務家",
-      tier: "primary" as const,
-      must_appear: true,
-      archetype: "Caregiver",
-      goal: "主人公の目的達成を補助しつつ自分の信念を守る。",
-      drive: "守りたいものを守る。そのためなら手を汚す覚悟もある",
-      dilemma: "効率と情のどちらを優先すべきか、答えが出ない",
-      arc_start: "感情より効率を優先する。",
-      arc_midpoint: "効率だけでは守れないと悟り、感情に向き合う。",
-      arc_end: "信頼を優先し、危機時には踏み込む。",
-      arc_trigger: "主人公が危険に陥り、合理的判断だけでは救えない場面",
-      backstory: "かつて組織に属していた時期があり、その頃の人脈と経験が今の実務能力の源。しかし組織を離れた理由は本人しか知らない。",
-      personality: "冷静で機転が利く。",
-      big_five: { openness: 40, conscientiousness: 85, extraversion: 55, agreeableness: 50, neuroticism: 30 },
-      enneagram_type: 6,
-      core_fear: ENNEAGRAM_FEARS[6],
-      core_desire: ENNEAGRAM_DESIRES[6],
-      speech_pattern: "簡潔で断定的。専門用語を自然に混ぜる",
-      catchphrase: "事実だけ見ろ。感情は後だ。",
-      quirks: ["考え事をするとき腕時計を回す", "甘いものに目がない（本人は認めない）"],
-      appearance: "機能的な服装で、整った姿勢を崩さない。暗い紺色のコート。",
-      visual_design: {
-        dominant_color: "群青",
-        body_type: "長身で引き締まった",
-        silhouette_keyword: "流線型",
-        distinguishing_feature: "常に手袋を外さない（左手に秘密がある）",
-      },
-      secrets: ["敵側と接点を持っていた時期がある。"],
-      relationship_hooks: ["主人公と衝突しながら協働の型を作る。"],
-      relationships: [
-        { target_id: "char_1", type: "trust" as const, description: "主人公を守る使命感と、対等でいたい葛藤", tension_level: 40 },
-        { target_id: "char_4", type: "secret" as const, description: "過去の組織時代に面識があり、その事実を隠している", tension_level: 75 },
-      ],
-    },
-    {
-      id: "char_3",
-      name: "調停者",
-      role: "対立陣営の橋渡し役",
-      tier: "secondary" as const,
-      must_appear: false,
-      archetype: "Sage",
-      goal: "大きな衝突を避けつつ均衡を保つ。",
-      drive: "争いが生む痛みを誰にも味わわせたくない",
-      dilemma: "中立を守ることで、結果的に悪を見逃しているのではないか",
-      arc_start: "中立を守ることだけを重視する。",
-      arc_midpoint: "中立のままでは守れないものがあると気づく。",
-      arc_end: "中立では守れないもののため選択する。",
-      arc_trigger: "自分の中立姿勢が原因で誰かが傷つく場面",
-      backstory: "両親が対立する陣営に属していた過去があり、幼少期から板挟みの世界で育った。争いの無意味さを骨身に知っている。",
-      personality: "穏やかだが計算高い。",
-      big_five: { openness: 60, conscientiousness: 70, extraversion: 65, agreeableness: 80, neuroticism: 40 },
-      enneagram_type: 9,
-      core_fear: ENNEAGRAM_FEARS[9],
-      core_desire: ENNEAGRAM_DESIRES[9],
-      speech_pattern: "柔らかい口調。疑問形で相手に考えさせる話法",
-      catchphrase: "それは本当に、あなたが望んでいることですか？",
-      quirks: ["紅茶を淹れる所作が異様に丁寧", "嘘を見抜く直感が鋭い"],
-      appearance: "柔らかな笑顔だが、目の奥に緊張感がある。アイボリーと金の装い。",
-      visual_design: {
-        dominant_color: "金",
-        body_type: "華奢ながら芯のある",
-        silhouette_keyword: "柔らかく丸みのある",
-        distinguishing_feature: "左手首に古い革の腕輪（両親の形見）",
-      },
-      secrets: ["序盤の事件に直接関与している。"],
-      relationship_hooks: ["主人公陣営の信頼を試す立場にある。"],
-      relationships: [
-        { target_id: "char_1", type: "mentor" as const, description: "主人公に助言を与えるが、全てを打ち明けてはいない", tension_level: 35 },
-        { target_id: "char_4", type: "rivalry" as const, description: "対抗者の目的を理解しつつも容認できない", tension_level: 60 },
-      ],
-    },
-    {
-      id: "char_4",
-      name: "対抗者",
-      role: "同じ目的を別手段で追うライバル",
-      tier: "secondary" as const,
-      must_appear: false,
-      archetype: "Rebel",
-      goal: "主人公より先に核心を掴み主導権を握る。",
-      drive: "正義は行動で示すもの。待っていても世界は変わらない",
-      dilemma: "目的のために手段を選ばない自分と、かつて信じた理想とのズレ",
-      arc_start: "結果のためなら手段を選ばない。",
-      arc_midpoint: "同じ手段で得た結果が、予想外の犠牲を生む。",
-      arc_end: "代償を知り、共闘の余地を見出す。",
-      arc_trigger: "自分の行動が無関係な人間を巻き込んだと知る場面",
-      backstory: "かつて主人公と同じ側にいたが、方法論の違いから決別した。その後独自のネットワークを築き、同じ真相を別ルートで追っている。",
-      personality: "大胆で挑発的。",
-      big_five: { openness: 80, conscientiousness: 45, extraversion: 75, agreeableness: 25, neuroticism: 50 },
-      enneagram_type: 8,
-      core_fear: ENNEAGRAM_FEARS[8],
-      core_desire: ENNEAGRAM_DESIRES[8],
-      speech_pattern: "挑発的で断定的。相手の反応を楽しむ余裕がある",
-      catchphrase: "待つだけの正義に、価値なんてあるか？",
-      quirks: ["常にコインを指で弾く", "危険を前にすると笑う"],
-      appearance: "印象的な深紅のアクセントカラー。攻めた装い。鋭い目つきと自信に満ちた姿勢。",
-      visual_design: {
-        dominant_color: "深紅",
-        body_type: "がっしりとした",
-        silhouette_keyword: "角ばった",
-        distinguishing_feature: "右手の甲に小さな刺青（かつての組織の印）",
-      },
-      secrets: ["主人公と同じ手がかりを密かに保有する。"],
-      relationship_hooks: ["競合しつつ、終盤で限定的に共闘する。"],
-      relationships: [
-        { target_id: "char_1", type: "rivalry" as const, description: "同じ目的を追う好敵手。互いの能力は認めている", tension_level: 70 },
-        { target_id: "char_2", type: "secret" as const, description: "過去に同じ組織に所属していた事実を互いに隠している", tension_level: 80 },
-      ],
-    },
-  ];
-
-  return base.map((character, index) => withVisuals(input, character, index)) as SeriesCharacterAgentOutput["characters"];
-};
-
 const dedupeCharacters = (characters: SeriesCharacterAgentOutput["characters"]) => {
   const seen = new Set<string>();
   return characters.filter((character) => {
@@ -397,27 +200,25 @@ const dedupeCharacters = (characters: SeriesCharacterAgentOutput["characters"]) 
 };
 
 const SELF_REFERENCE_NAME_PATTERN = /^(?:あなた|アナタ|you|君|きみ|プレイヤー|player|主人公|protagonist|ユーザー|self)$/i;
-const FALLBACK_CHARACTER_NAMES = [
-  "九条サク",
-  "神代レン",
-  "霧島ユイ",
-  "黒崎アオ",
-  "白峰ナギ",
-  "天城リオ",
-  "桐生ミナ",
-  "真壁トウマ",
-];
 
 const isSelfReferenceName = (name?: string | null) => SELF_REFERENCE_NAME_PATTERN.test(clean(name ?? undefined));
+const hasSelfReferenceToken = (name?: string | null) =>
+  /(あなた|アナタ|you|プレイヤー|player|主人公|protagonist|ユーザー|self)/i.test(clean(name ?? undefined));
 
 const enforceCharacterNamePolicy = (characters: SeriesCharacterAgentOutput["characters"]) => {
   const used = new Set<string>();
 
   return characters.map((character, index) => {
     let name = clean(character.name);
-    if (!name || isSelfReferenceName(name) || used.has(name.toLowerCase())) {
-      const candidateFromPool = FALLBACK_CHARACTER_NAMES.find((candidate) => !used.has(candidate.toLowerCase()));
-      name = candidateFromPool || `キャラクター${index + 1}`;
+    const allowSelfReference = hasProtagonistIdentity(character);
+    if (!name) {
+      throw new Error(`character_name_missing:${index + 1}`);
+    }
+    if (!allowSelfReference && (isSelfReferenceName(name) || hasSelfReferenceToken(name))) {
+      throw new Error(`character_name_invalid_self_reference:${name}`);
+    }
+    if (used.has(name.toLowerCase())) {
+      throw new Error(`character_name_duplicate:${name}`);
     }
     used.add(name.toLowerCase());
     return {
@@ -428,122 +229,406 @@ const enforceCharacterNamePolicy = (characters: SeriesCharacterAgentOutput["char
   });
 };
 
+const applyProtagonistNamePolicy = (
+  input: SeriesCharacterAgentInput,
+  characters: SeriesCharacterAgentOutput["characters"]
+) => {
+  const protagonistName = cleanBounded(input.protagonist_name, 64);
+  if (!protagonistName) {
+    return characters.map((character) => {
+      if (!character.is_protagonist) return character;
+      const normalizedName = clean(character.name);
+      if (
+        isSelfReferenceName(normalizedName) ||
+        /(新入生のあなた|あなた|ユーザー本人|プレイヤー本人)/i.test(normalizedName)
+      ) {
+        return {
+          ...character,
+          name: "主人公",
+        };
+      }
+      return character;
+    });
+  }
+  return characters.map((character) =>
+    character.is_protagonist
+      ? {
+          ...character,
+          name: protagonistName,
+        }
+      : character
+  );
+};
+
 const normalizeCharacter = (
-  raw: SeriesCharacterAgentOutput["characters"][number],
-  fallback: SeriesCharacterAgentOutput["characters"][number],
+  input: SeriesCharacterAgentInput,
+  raw: Partial<SeriesCharacterAgentOutput["characters"][number]> & Record<string, any>,
   index: number
 ): SeriesCharacterAgentOutput["characters"][number] => {
-  const secrets = Array.isArray(raw.secrets)
-    ? raw.secrets.map((item) => clean(item)).filter(Boolean)
-    : [];
   const relationshipHooks = Array.isArray(raw.relationship_hooks)
-    ? raw.relationship_hooks.map((item) => clean(item)).filter(Boolean)
+    ? raw.relationship_hooks
+        .map((item: any) => {
+          if (!item || typeof item !== "object") return null;
+          const targetId = cleanBounded(item.target_id, 64);
+          const targetName = cleanBounded(item.target_name, 64);
+          const relation = cleanBounded(item.relation, 180);
+          if (!targetId && !targetName) return null;
+          if (!relation) return null;
+          return {
+            target_id: targetId || "",
+            target_name: targetName || "",
+            relation,
+          };
+        })
+        .filter((item): item is { target_id: string; target_name: string; relation: string } => Boolean(item))
     : [];
+
+  const baseCase =
+    cleanBounded(input.mystery_profile?.case_core, 160) ||
+    cleanBounded(input.premise, 160) ||
+    "事件の真相";
+  const baseSetting =
+    cleanBounded(input.world_setting, 160) ||
+    cleanBounded(input.design_brief?.target_user_context, 160) ||
+    "現地";
+  const name = cleanBounded(raw.name, 64) || `キャラクター${index + 1}`;
+  const roleRaw = cleanBounded(raw.role, 180);
+  const goalRaw = cleanBounded(raw.goal, 180);
+  const arcStartRaw = cleanBounded(raw.arc_start, 180);
+  const arcEndRaw = cleanBounded(raw.arc_end, 180);
+  const personalityRaw = cleanBounded(raw.personality, 180);
+  const appearanceRaw = cleanBounded(raw.appearance, 260);
+  const isThinRole = !roleRaw || /(同行者|参加者|サポート役|メンバー)$/i.test(roleRaw);
+  const isThinGoal = !goalRaw || /(物語の目的に向かって行動する|真相に迫る|事件を解決する)$/i.test(goalRaw);
+  const isThinArcStart = !arcStartRaw || /(導入段階にある|まだ不明な点が多い|状況を把握していない)$/i.test(arcStartRaw);
+  const isThinArcEnd = !arcEndRaw || /(最終盤で理解を深める|成長する|問題を解決する)$/i.test(arcEndRaw);
+  const isThinPersonality = !personalityRaw || /(観察力が高く、状況判断に優れる|冷静で論理的|誠実で努力家)$/i.test(personalityRaw);
+  const isThinAppearance = !appearanceRaw || /(印象に残る佇まい|落ち着いた装い|実務的な服装)$/i.test(appearanceRaw);
+  const role = isThinRole ? `${baseSetting}で${baseCase}の解明に関わる調査チームの一員` : roleRaw;
+  const goal = isThinGoal ? `${baseCase}に関する事実を集め、次の判断材料を確保する。` : goalRaw;
+  const arcStart = isThinArcStart ? `${baseSetting}の事情を把握しきれず、判断に迷いがある。` : arcStartRaw;
+  const arcEnd = isThinArcEnd ? `${baseCase}の因果を説明できる状態になり、自分で行動を選択できる。` : arcEndRaw;
+  const personality = isThinPersonality
+    ? "観察で得た事実を優先しつつ、対話で仮説を更新する実践型。"
+    : personalityRaw;
+  const appearance = isThinAppearance ? `${baseSetting}での移動・調査に適した、役割が伝わる装い。` : appearanceRaw;
+  const selfId = `char_${index + 1}`;
+  const sanitizedRelationshipHooks = relationshipHooks.filter((hook) => {
+    const sameTargetId = clean(hook.target_id).toLowerCase() === selfId.toLowerCase();
+    const sameTargetName = clean(hook.target_name).toLowerCase() === clean(name).toLowerCase();
+    return !(sameTargetId || sameTargetName);
+  });
+  const investigationFunction = cleanBounded(raw.investigation_function, 140);
+  const emotionalTemperature = cleanBounded(raw.emotional_temperature, 120);
+  const relationshipTemperature = cleanBounded(raw.relationship_temperature, 120);
+  const signatureProp = cleanBounded(raw.signature_prop, 160);
+  const environmentResidue = cleanBounded(raw.environment_residue, 180);
+  const postureGrammar = cleanBounded(raw.posture_grammar, 180);
+  const truthProximity = cleanBounded(raw.truth_proximity, 200);
+  const hypothesisPressure = cleanBounded(raw.hypothesis_pressure, 200);
+  const drive = cleanBounded(raw.drive, 220);
+  const dilemma = cleanBounded(raw.dilemma, 220);
+  const arcMidpoint = cleanBounded(raw.arc_midpoint, 220);
+  const arcTrigger = cleanBounded(raw.arc_trigger, 220);
+  const backstory = cleanBounded(raw.backstory, 500);
+  const coreFear = cleanBounded(raw.core_fear, 120);
+  const coreDesire = cleanBounded(raw.core_desire, 120);
+  const speechPattern = cleanBounded(raw.speech_pattern, 140);
+  const catchphrase = cleanBounded(raw.catchphrase, 100);
+  const archetype = cleanBounded(raw.archetype, 64);
+  const quirks =
+    Array.isArray(raw.quirks) && raw.quirks.length > 0
+      ? raw.quirks.map((q) => cleanBounded(q, 100)).filter(Boolean).slice(0, 4)
+      : undefined;
+  const visualDesign = raw.visual_design || {
+    dominant_color: DOMINANT_COLORS[index % DOMINANT_COLORS.length],
+    body_type: BODY_TYPES[index % BODY_TYPES.length],
+    silhouette_keyword: SILHOUETTES[index % SILHOUETTES.length],
+    distinguishing_feature: FEATURES[index % FEATURES.length],
+  };
 
   return {
     id: `char_${index + 1}`,
-    name: clean(raw.name) || fallback.name,
-    role: clean(raw.role) || fallback.role,
-    tier:
-      raw.tier === "primary" || raw.tier === "secondary"
-        ? raw.tier
-        : fallback.tier === "primary" || fallback.tier === "secondary"
-          ? fallback.tier
-          : "secondary",
-    must_appear:
-      typeof raw.must_appear === "boolean"
-        ? raw.must_appear
-        : typeof fallback.must_appear === "boolean"
-          ? fallback.must_appear
-          : false,
-    archetype: clean(raw.archetype) || fallback.archetype || ARCHETYPE_POOL[index % ARCHETYPE_POOL.length],
-    goal: clean(raw.goal) || fallback.goal,
-    drive: clean(raw.drive) || fallback.drive,
-    dilemma: clean(raw.dilemma) || fallback.dilemma,
-    arc_start: clean(raw.arc_start) || fallback.arc_start,
-    arc_midpoint: clean(raw.arc_midpoint) || fallback.arc_midpoint,
-    arc_end: clean(raw.arc_end) || fallback.arc_end,
-    arc_trigger: clean(raw.arc_trigger) || fallback.arc_trigger,
-    backstory: clean(raw.backstory) || fallback.backstory,
-    personality: clean(raw.personality) || fallback.personality,
-    big_five: raw.big_five || fallback.big_five,
-    enneagram_type: raw.enneagram_type || fallback.enneagram_type,
-    core_fear: clean(raw.core_fear) || fallback.core_fear,
-    core_desire: clean(raw.core_desire) || fallback.core_desire,
-    speech_pattern: clean(raw.speech_pattern) || fallback.speech_pattern,
-    catchphrase: clean(raw.catchphrase) || fallback.catchphrase,
-    quirks: Array.isArray(raw.quirks) && raw.quirks.length > 0
-      ? raw.quirks.map((q) => clean(q)).filter(Boolean)
-      : fallback.quirks,
-    appearance: clean(raw.appearance) || fallback.appearance,
-    investigation_function:
-      clean(raw.investigation_function) ||
-      clean(fallback.investigation_function) ||
-      ["観察と仮説構築", "聞き込みと現地判断", "記録照合と背景整理", "対立構造の揺さぶり"][index % 4],
-    emotional_temperature:
-      clean(raw.emotional_temperature) ||
-      clean(fallback.emotional_temperature) ||
-      ["静かな緊張", "乾いた実務感", "穏やかな含み", "挑発的な熱量"][index % 4],
-    relationship_temperature:
-      clean(raw.relationship_temperature) ||
-      clean(fallback.relationship_temperature) ||
-      clean(raw.emotional_temperature) ||
-      clean(fallback.emotional_temperature) ||
-      ["慎重な協働", "実務的な連帯", "牽制を含む信頼", "熱を帯びた緊張"][index % 4],
-    signature_prop:
-      clean(raw.signature_prop) ||
-      clean(fallback.signature_prop) ||
-      (index % 4 === 0
-        ? "注釈だらけのフィールドノート"
-        : index % 4 === 1
-          ? "折り目の残る地図と時刻メモ"
-          : index % 4 === 2
-            ? "記録照合用のファイル束"
-            : "矛盾箇所に印を付けたタイムライン表"),
-    environment_residue:
-      clean(raw.environment_residue) ||
-      clean(fallback.environment_residue) ||
-      "現地素材の摩耗痕や湿度・風の影響が衣服や小物に残っている",
-    posture_grammar:
-      clean(raw.posture_grammar) ||
-      clean(fallback.posture_grammar) ||
-      (index % 2 === 0 ? "前傾で観察する姿勢" : "余白を保って全体を俯瞰する姿勢"),
-    truth_proximity:
-      clean(raw.truth_proximity) ||
-      clean(fallback.truth_proximity) ||
-      (index === 0 ? "断片的に真相へ触れる" : index === 1 ? "真相に近いが全貌は知らない" : "外縁から真相をずらして見せる"),
-    hypothesis_pressure:
-      clean(raw.hypothesis_pressure) ||
-      clean(fallback.hypothesis_pressure) ||
-      (index === 0 ? "ユーザーの初期仮説を組み立てる" : index === 1 ? "ユーザーの仮説を補強と攪乱の両方で揺らす" : "別解釈を差し込んで認識反転を促す"),
-    visual_design: raw.visual_design || fallback.visual_design || {
-      dominant_color: DOMINANT_COLORS[index % DOMINANT_COLORS.length],
-      body_type: BODY_TYPES[index % BODY_TYPES.length],
-      silhouette_keyword: SILHOUETTES[index % SILHOUETTES.length],
-      distinguishing_feature: FEATURES[index % FEATURES.length],
-    },
-    portrait_prompt: clean(raw.portrait_prompt) || fallback.portrait_prompt,
-    portrait_image_url: fallback.portrait_image_url,
-    secrets: secrets.length > 0 ? secrets : fallback.secrets,
-    relationship_hooks: relationshipHooks.length > 0 ? relationshipHooks : fallback.relationship_hooks,
-    relationships: raw.relationships || fallback.relationships,
+    name,
+    role,
+    must_appear: Boolean(raw.must_appear),
+    is_protagonist:
+      typeof raw.is_protagonist === "boolean"
+        ? raw.is_protagonist
+        : isProtagonistRoleText(role),
+    is_partner:
+      typeof raw.is_partner === "boolean"
+        ? raw.is_partner
+        : isPartnerRoleText(role),
+    goal,
+    arc_start: arcStart,
+    arc_end: arcEnd,
+    personality,
+    appearance,
+    portrait_prompt: clean(raw.portrait_prompt),
+    portrait_image_url: clean(raw.portrait_image_url),
+    relationship_hooks: sanitizedRelationshipHooks,
+    ...(investigationFunction ? { investigation_function: investigationFunction } : {}),
+    ...(emotionalTemperature ? { emotional_temperature: emotionalTemperature } : {}),
+    ...(relationshipTemperature ? { relationship_temperature: relationshipTemperature } : {}),
+    ...(signatureProp ? { signature_prop: signatureProp } : {}),
+    ...(environmentResidue ? { environment_residue: environmentResidue } : {}),
+    ...(postureGrammar ? { posture_grammar: postureGrammar } : {}),
+    ...(truthProximity ? { truth_proximity: truthProximity } : {}),
+    ...(hypothesisPressure ? { hypothesis_pressure: hypothesisPressure } : {}),
+    ...(archetype ? { archetype } : {}),
+    ...(drive ? { drive } : {}),
+    ...(dilemma ? { dilemma } : {}),
+    ...(arcMidpoint ? { arc_midpoint: arcMidpoint } : {}),
+    ...(arcTrigger ? { arc_trigger: arcTrigger } : {}),
+    ...(backstory ? { backstory } : {}),
+    ...(raw.big_five ? { big_five: raw.big_five } : {}),
+    ...(raw.enneagram_type ? { enneagram_type: raw.enneagram_type } : {}),
+    ...(coreFear ? { core_fear: coreFear } : {}),
+    ...(coreDesire ? { core_desire: coreDesire } : {}),
+    ...(speechPattern ? { speech_pattern: speechPattern } : {}),
+    ...(catchphrase ? { catchphrase } : {}),
+    ...(quirks && quirks.length > 0 ? { quirks } : {}),
+    ...(Array.isArray(raw.relationships) ? { relationships: raw.relationships } : {}),
+    ...(visualDesign ? { visual_design: visualDesign } : {}),
   };
 };
 
-const applyTierPolicy = (
+const applyMustAppearPolicy = (
   characters: SeriesCharacterAgentOutput["characters"]
 ): SeriesCharacterAgentOutput["characters"] => {
   if (characters.length === 0) return characters;
-  const requestedPrimary = characters.filter((character) => character.tier === "primary").length;
-  const primaryTarget = requestedPrimary >= 2 ? 2 : 1;
-  const capped = characters.slice(0, 5);
+  const capped = characters.slice(0, 8);
+  const protagonistIndex = capped.findIndex((character) => hasProtagonistIdentity(character));
+  const resolvedProtagonistIndex = protagonistIndex >= 0 ? protagonistIndex : 0;
+  const partnerIndex = capped.findIndex(
+    (character, index) =>
+      index !== resolvedProtagonistIndex &&
+      (character.is_partner === true || isPartnerRoleText(character.role))
+  );
+  const resolvedPartnerIndex = partnerIndex >= 0 ? partnerIndex : Math.min(1, capped.length - 1);
 
-  return capped.map((character, index) => {
-    const isPrimary = index < primaryTarget;
+  return capped.map((character, index) => ({
+    ...character,
+    must_appear: index === resolvedProtagonistIndex || index === resolvedPartnerIndex,
+    is_protagonist: index === resolvedProtagonistIndex,
+  }));
+};
+
+const applyPartnerFlagPolicy = (
+  characters: SeriesCharacterAgentOutput["characters"]
+): SeriesCharacterAgentOutput["characters"] => {
+  if (characters.length === 0) return characters;
+
+  const protagonistIndex = characters.findIndex((character) => hasProtagonistIdentity(character));
+  const resolvedProtagonistIndex = protagonistIndex >= 0 ? protagonistIndex : 0;
+
+  let partnerIndex = characters.findIndex(
+    (character, index) => index !== resolvedProtagonistIndex && character.is_partner === true
+  );
+  if (partnerIndex < 0) {
+    partnerIndex = characters.findIndex(
+      (character, index) => index !== resolvedProtagonistIndex && isPartnerRoleText(character.role)
+    );
+  }
+  if (partnerIndex < 0) {
+    partnerIndex = characters.findIndex(
+      (character, index) => index !== resolvedProtagonistIndex && character.must_appear
+    );
+  }
+  if (partnerIndex < 0) {
+    partnerIndex = characters.length > 1 ? (resolvedProtagonistIndex === 0 ? 1 : 0) : 0;
+  }
+
+  return characters.map((character, index) => ({
+    ...character,
+    is_protagonist: index === resolvedProtagonistIndex,
+    is_partner: index === partnerIndex && index !== resolvedProtagonistIndex,
+  }));
+};
+
+type RelationshipHookRow = SeriesCharacterAgentOutput["characters"][number]["relationship_hooks"][number];
+
+const hasRelationForTarget = (hooks: RelationshipHookRow[] | undefined, targetName: string) => {
+  if (!Array.isArray(hooks)) return false;
+  const normalizedTarget = clean(targetName).toLowerCase();
+  return hooks.some((hook) => clean(hook.target_name).toLowerCase() === normalizedTarget);
+};
+
+const buildRelationSentence = ({
+  relationType,
+  distance,
+  emotion,
+  detail,
+}: {
+  relationType: string;
+  distance: number;
+  emotion: string;
+  detail: string;
+}) =>
+  cleanBounded(
+    `関係性: ${relationType} / 距離感: ${Math.max(0, Math.min(10, distance))}/10 / 感情: ${emotion} / 補足: ${detail}`,
+    180
+  );
+
+const pushRelationIfMissing = (
+  hooks: RelationshipHookRow[] | undefined,
+  target: { id: string; name: string },
+  relation: string
+) => {
+  const base = Array.isArray(hooks)
+    ? hooks
+        .map((row) => ({
+          target_id: cleanBounded(row.target_id, 64),
+          target_name: cleanBounded(row.target_name, 64),
+          relation: cleanBounded(row.relation, 180),
+        }))
+        .filter((row) => row.target_name && row.relation)
+    : [];
+  if (!hasRelationForTarget(base, target.name)) {
+    base.push({
+      target_id: cleanBounded(target.id, 64),
+      target_name: cleanBounded(target.name, 64),
+      relation: cleanBounded(relation, 180),
+    });
+  }
+  return base.slice(0, 4);
+};
+
+const appendRoleIfMissing = (role: string, suffix: string, pattern: RegExp) => {
+  const normalizedRole = (cleanBounded(role, 180) || "同行者").replace(/[。.!?]+$/g, "");
+  if (pattern.test(normalizedRole)) return normalizedRole;
+  return cleanBounded(`${normalizedRole}。${suffix}`, 180);
+};
+
+const enforceCoreCastCohesion = (
+  input: SeriesCharacterAgentInput,
+  characters: SeriesCharacterAgentOutput["characters"]
+): SeriesCharacterAgentOutput["characters"] => {
+  if (characters.length < 2) return characters;
+
+  const protagonistIndex = characters.findIndex((character) => character.is_protagonist);
+  const resolvedProtagonistIndex = protagonistIndex >= 0 ? protagonistIndex : 0;
+  const partnerIndex = characters.findIndex(
+    (character, index) => index !== resolvedProtagonistIndex && character.is_partner
+  );
+  const resolvedPartnerIndex = partnerIndex >= 0 ? partnerIndex : Math.min(1, characters.length - 1);
+  const majorIndex = characters.findIndex(
+    (_, index) => index !== resolvedProtagonistIndex && index !== resolvedPartnerIndex
+  );
+  const resolvedMajorIndex = majorIndex;
+
+  const partner = characters[resolvedPartnerIndex];
+  const protagonist = characters[resolvedProtagonistIndex];
+  const major = resolvedMajorIndex >= 0 ? characters[resolvedMajorIndex] : undefined;
+  const protagonistName = clean(protagonist?.name) || "主人公";
+  const partnerName = clean(partner?.name) || "相棒";
+  const majorName = clean(major?.name) || "主要キャラ";
+  const groupSuffix = "同一調査チームの中核メンバー";
+  const protagonistPosition = "主人公（ユーザー本人）";
+
+  return characters.map((character, index) => {
+    const isProtagonist = index === resolvedProtagonistIndex;
+    const isPartner = index === resolvedPartnerIndex;
+    const otherFixed = isPartner
+      ? {
+          id: major?.id || `char_${resolvedMajorIndex + 1}`,
+          name: majorName,
+        }
+      : {
+          id: partner?.id || `char_${resolvedPartnerIndex + 1}`,
+          name: partnerName,
+        };
+
+    const protagonistHook = isProtagonist
+      ? buildRelationSentence({
+          relationType: "相棒",
+          distance: 8,
+          emotion: "頼もしさが強いが、先走りには少し警戒している",
+          detail: `${partnerName}の行動力を信頼し、観察結果の検証を一緒に進める`,
+        })
+      : isPartner
+        ? buildRelationSentence({
+            relationType: "保護的な相棒",
+            distance: 8,
+            emotion: "主人公の成長を期待しつつ、危うさには不安を感じる",
+            detail: `${protagonistName}の判断を補助し、現地行動の安全と推理精度を支える`,
+          })
+        : buildRelationSentence({
+            relationType: "協力者",
+            distance: 6,
+            emotion: "慎重な信頼と、結果を見極めたい気持ちが混在している",
+            detail: `${protagonistName}の観察を評価しつつ、証拠の裏取りで関係を深める`,
+          });
+    const fixedCastHook = isProtagonist
+      ? resolvedMajorIndex >= 0
+        ? buildRelationSentence({
+            relationType: "情報協力者",
+            distance: 6,
+            emotion: "頼りたいが、まだ完全には信用しきれていない",
+            detail: `${majorName}の証言を仮説更新に使い、矛盾点を一緒に精査する`,
+          })
+        : buildRelationSentence({
+            relationType: "相棒",
+            distance: 8,
+            emotion: "信頼が厚く、判断を預けられる安心感がある",
+            detail: `${partnerName}との対話を通じて次の行動を決める`,
+          })
+      : isPartner
+        ? buildRelationSentence({
+            relationType: "同僚",
+            distance: 5,
+            emotion: "相互に必要性を認めるが、判断の差には緊張もある",
+            detail: `${otherFixed.name}と役割分担し、主人公の仮説検証を多面的に支える`,
+          })
+        : buildRelationSentence({
+            relationType: "実務協力者",
+            distance: 5,
+            emotion: "有能さは認めるが、主導権には牽制もある",
+            detail: `相棒の${partnerName}と情報を突き合わせ、主人公の推理を現実条件に接続する`,
+          });
+
+    const protagonistRelationTarget = isProtagonist
+      ? {
+          id: partner?.id || `char_${resolvedPartnerIndex + 1}`,
+          name: partnerName,
+        }
+      : {
+          id: protagonist?.id || `char_${resolvedProtagonistIndex + 1}`,
+          name: protagonistName,
+        };
+
     return {
       ...character,
-      tier: isPrimary ? "primary" : "secondary",
-      must_appear: isPrimary,
+      role: (() => {
+        const groupAlignedRole = appendRoleIfMissing(
+          character.role,
+          groupSuffix,
+          /(チーム|グループ|同一|所属|委員会|ゼミ|サークル|プロジェクト)/
+        );
+        if (!isProtagonist) return groupAlignedRole;
+        return appendRoleIfMissing(
+          groupAlignedRole,
+          protagonistPosition,
+          /(主人公|ユーザー本人|プレイヤー|視点|あなた)/
+        );
+      })(),
+      is_protagonist: isProtagonist,
+      is_partner: isPartner && !isProtagonist,
+      relationship_hooks: pushRelationIfMissing(
+        pushRelationIfMissing(
+          character.relationship_hooks,
+          protagonistRelationTarget,
+          protagonistHook
+        ),
+        isProtagonist
+          ? {
+              id: major?.id || `char_${resolvedMajorIndex + 1}`,
+              name: resolvedMajorIndex >= 0 ? majorName : partnerName,
+            }
+          : otherFixed,
+        fixedCastHook
+      ),
     };
   });
 };
@@ -552,20 +637,38 @@ const normalizeCharacterOutput = (
   input: SeriesCharacterAgentInput,
   raw: unknown
 ): SeriesCharacterAgentOutput | null => {
-  const parsed = seriesCharacterAgentOutputSchema.safeParse(raw);
+  const parsed = lightOutputSchema.safeParse(raw);
   if (!parsed.success) return null;
-  const fallback = fallbackCharacters(input);
-  const deduped = dedupeCharacters(parsed.data.characters);
+  const deduped = dedupeCharacters(parsed.data.characters as any);
 
-  const targetCount = Math.max(3, Math.min(5, input.target_count));
-  const merged = [...deduped, ...fallback].slice(0, targetCount);
-  const normalizedCharacters = merged
-    .slice(0, targetCount)
-    .map((character, index) => normalizeCharacter(character, fallback[index] || fallback[0], index));
-  const policyAppliedCharacters = applyTierPolicy(enforceCharacterNamePolicy(normalizedCharacters));
+  const targetCount = resolveTotalCharacterCount(input);
+  const sourceCharacters = deduped.slice(0, targetCount);
+  if (sourceCharacters.length !== targetCount) {
+    return null;
+  }
+  const hasIncompleteRequiredField = sourceCharacters.some((character) =>
+    [
+      character.name,
+      character.role,
+      character.goal,
+      character.arc_start,
+      character.arc_end,
+      character.personality,
+      character.appearance,
+    ].some((field) => !cleanBounded(field, 260))
+  );
+  if (hasIncompleteRequiredField) return null;
+  const normalizedCharacters = sourceCharacters
+    .map((character, index) => normalizeCharacter(input, character, index));
+  const namePolicyAppliedCharacters = enforceCharacterNamePolicy(normalizedCharacters);
+  const rolePolicyAppliedCharacters = applyPartnerFlagPolicy(namePolicyAppliedCharacters);
+  const mustAppearPolicyAppliedCharacters = applyMustAppearPolicy(rolePolicyAppliedCharacters);
+  const protagonistNamedCharacters = applyProtagonistNamePolicy(input, mustAppearPolicyAppliedCharacters);
+  const coreCastAlignedCharacters = enforceCoreCastCohesion(input, protagonistNamedCharacters);
+  if (coreCastAlignedCharacters.length !== targetCount) return null;
 
   return {
-    characters: policyAppliedCharacters.map((normalized, index) => {
+    characters: coreCastAlignedCharacters.map((normalized, index) => {
         const portraitPrompt =
           clean(normalized.portrait_prompt) ||
           buildCharacterPortraitPrompt({
@@ -576,7 +679,10 @@ const normalizeCharacterOutput = (
             role: normalized.role,
             personality: normalized.personality,
             appearance: normalized.appearance,
-            setting: clean(input.mystery_profile?.environment_layer) || input.premise,
+            setting:
+              clean(input.world_setting) ||
+              clean(input.mystery_profile?.environment_layer) ||
+              input.premise,
             caseCore: clean(input.mystery_profile?.case_core),
             environmentLayer: clean(input.mystery_profile?.environment_layer),
             investigationFunction: normalized.investigation_function,
@@ -607,13 +713,14 @@ const CHARACTER_GENERATION_TIMEOUT_MS = Math.max(
   45_000,
   Number.parseInt(clean(process.env.SERIES_CHARACTER_GENERATION_TIMEOUT_MS) || "120000", 10) || 120_000
 );
-const CHARACTER_GENERATION_MAX_ATTEMPTS = Math.max(
-  1,
-  Math.min(3, Number.parseInt(clean(process.env.SERIES_CHARACTER_GENERATION_MAX_ATTEMPTS) || "1", 10) || 1)
-);
+const CHARACTER_GENERATION_MAX_ATTEMPTS = 1;
 const CHARACTER_GENERATION_TIMEOUT_GROWTH = Math.max(
   1,
   Number.parseFloat(clean(process.env.SERIES_CHARACTER_GENERATION_TIMEOUT_GROWTH) || "1.15") || 1.15
+);
+const CHARACTER_GENERATION_MAX_TOKENS = Math.max(
+  1000,
+  Math.min(5000, Number.parseInt(clean(process.env.SERIES_CHARACTER_GENERATION_MAX_TOKENS) || "3200", 10) || 3200)
 );
 
 export const generateSeriesCharacters = async (
@@ -621,23 +728,31 @@ export const generateSeriesCharacters = async (
 ): Promise<SeriesCharacterAgentOutput> => {
   const logPrefix = "[series-character-agent]";
   console.log(`${logPrefix} 開始 — title: ${input.title}, target_count: ${input.target_count}`);
-  const fallbackOutput =
-    normalizeCharacterOutput(input, { characters: fallbackCharacters(input) }) || {
-      characters: applyTierPolicy(enforceCharacterNamePolicy(fallbackCharacters(input))),
-    };
 
   if (!hasModelApiKey()) {
-    if (SERIES_AGENT_FALLBACK_ENABLED) {
-      console.warn(`${logPrefix} APIキー未設定 — fallback characters を使用`);
-      return fallbackOutput;
-    }
     throw new Error("キャラクター生成に失敗しました。利用可能なAIモデルがありません。");
   }
 
+  const fixedCharacterCount = resolveFixedCharacterCount(input);
+  const totalCharacterCount = resolveTotalCharacterCount(input);
   const prompt = `
-シリーズ「${input.title}」のキャラクターを ${Math.max(3, Math.min(5, input.target_count))} 人分、JSON で出力してください。
+シリーズ「${input.title}」のキャラクターを ${totalCharacterCount} 人分、JSON で出力してください。
+（内訳: 主人公1人 + 固定キャラ${fixedCharacterCount}人）
 ジャンル: ${input.genre} / トーン: ${input.tone} / 前提: ${input.premise}
+コンセプト世界観（Step2）:
+- world_setting: ${clean(input.world_setting) || "未指定"}
+- season_goal: ${input.season_goal}
+デバイスサービスデザインブリーフ（Step1）:
+- experience_objective: ${clean(input.design_brief?.experience_objective) || "未指定"}
+- target_user_context: ${clean(input.design_brief?.target_user_context) || "未指定"}
+- usage_scene: ${clean(input.design_brief?.usage_scene) || "未指定"}
+- emotional_outcome: ${clean(input.design_brief?.emotional_outcome) || "未指定"}
+- tone_guardrail: ${clean(input.design_brief?.tone_guardrail) || "未指定"}
+- role_design_direction: ${clean(input.design_brief?.role_design_direction) || "未指定"}
+- spatial_behavior_policy: ${clean(input.design_brief?.spatial_behavior_policy) || "未指定"}
+- ux_guidance_style: ${clean(input.design_brief?.ux_guidance_style) || "未指定"}
 主人公: ${input.protagonist_position} / 相棒像: ${input.partner_description} / シーズン目標: ${input.season_goal}
+主人公名（指定がある場合は必ず採用）: ${clean(input.protagonist_name) || "未指定"}
 ミステリープロファイル:
 - case_core: ${clean(input.mystery_profile?.case_core) || "未指定"}
 - investigation_style: ${clean(input.mystery_profile?.investigation_style) || "未指定"}
@@ -647,36 +762,47 @@ export const generateSeriesCharacters = async (
 - visual_language: ${clean(input.mystery_profile?.visual_language) || "未指定"}
 - environment_layer: ${clean(input.mystery_profile?.environment_layer) || "未指定"}
 
+優先順位ルール:
+- Step2（world_setting / season_goal / case_core）を最優先で反映する。
+- Step1（design_brief）は逸脱防止の補助ルールとして使う。
+
+固定キャラ契約:
+- 主人公を明示的に1人出力する（is_protagonist=true）。
+- 固定キャラとして「相棒」と「主要キャラ（相棒ではない）」を必ず含める。
+- 3者（主人公・相棒・主要キャラ）は同じグループ/文脈に属するように設計する。
+
 Variation reference:
 - 直近との差分を最低3点作ること
 ${formatRecentContext(input.recent_generation_context)}
 
-各キャラクターに以下のフィールドを含めてください:
+各キャラクターで「必須フィールド」は必ず埋めてください:
 - id: "char_1" から連番
 - name: キャラ名
 - role: 物語上の役割（1文）
-- tier: "primary" または "secondary"
-- must_appear: boolean（primary のみ true）
+- must_appear: boolean（毎話の継続登場が必要なら true）
+- is_protagonist: boolean（主人公本人のみ true）
+- is_partner: boolean（相棒本人のみ true）
 - goal: 目標（1文）
 - arc_start: シリーズ開始時の状態（1文）
 - arc_end: シリーズ終盤の状態（1文）
 - personality: 性格（1文）
 - appearance: 外見（1〜2文）
-- secrets: 秘密の配列（1〜2個）
-- relationship_hooks: 関係性フック（1〜2個）
+- relationship_hooks: 関係性フックの配列
+  - 各要素は { target_id, target_name, relation } のオブジェクトにする
+  - relation は「誰に対してどういう関係か」がわかる短文にする
+  - 主人公以外は「主人公との関係」1つ + 「もう一人の固定キャラとの関係」1つを必ず含める
+  - 主人公は「相棒との関係」1つ + 「主要キャラとの関係」1つを必ず含める
+
+以下は「任意フィールド」（埋める場合は1文・短文）:
 - investigation_function: 捜査上の担当機能（観察/聞き込み/記録照合/地理把握/矛盾検知など）
-- emotional_temperature: 感情の温度感
-- relationship_temperature: 他者との関係温度（緊張/信頼/牽制など）
-- signature_prop: その人物を象徴する事件関連小道具
-- environment_residue: 場所由来の素材痕跡（潮気/湿度/粉塵など）
-- posture_grammar: 立ち姿・動作の癖（観察/対話時の姿勢）
-- truth_proximity: 真相との距離感
-- hypothesis_pressure: ユーザーの仮説をどう揺らすか
+
+各文字列は簡潔にしてください（同じ語句の反復は禁止）。
+1キャラクターあたりの出力は短く保ち、冗長な背景説明は書かないでください。
 
 名前・性格・外見が互いに被らないようにしてください。
-primary は1〜2人、secondary は最大3人にしてください。
 name には「あなた」「アナタ」「プレイヤー」「主人公」「You」など自己参照語を使わず、全員を固有名詞で命名してください。
-primary 同士で investigation_function を被らせないでください。
+ただし is_protagonist=true のキャラのみ、自己参照語を許容します。
+must_appear=true の固定キャラ同士で investigation_function を被らせないでください。
 少なくとも1人は「真相に近いが全部は知らない立場」にしてください。
 少なくとも1人は「ユーザーの仮説を揺らす立場」にしてください。
 generic な「謎多き美形相棒」へ逃げないでください。
@@ -684,24 +810,25 @@ generic な「謎多き美形相棒」へ逃げないでください。
 
   const maxAttempts = CHARACTER_GENERATION_MAX_ATTEMPTS;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const abortController = new AbortController();
+    let activeTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    const timeoutMs = Math.round(
+      CHARACTER_GENERATION_TIMEOUT_MS *
+        Math.pow(CHARACTER_GENERATION_TIMEOUT_GROWTH, Math.max(0, attempt - 1))
+    );
     try {
-      const timeoutMs = Math.round(
-        CHARACTER_GENERATION_TIMEOUT_MS *
-          Math.pow(CHARACTER_GENERATION_TIMEOUT_GROWTH, Math.max(0, attempt - 1))
-      );
+      activeTimeoutHandle = setTimeout(() => abortController.abort("series_character_timeout"), timeoutMs);
       console.log(
         `${logPrefix} attempt ${attempt}/${maxAttempts} — LLM呼び出し中 (軽量スキーマ, ${Math.round(timeoutMs / 1000)}秒でタイムアウト)`
       );
-      const generatePromise = seriesCharacterAgent.generate(prompt, {
+      const response = await seriesCharacterAgent.generate(prompt, {
         structuredOutput: { schema: lightOutputSchema },
+        modelSettings: {
+          maxRetries: 0,
+          maxOutputTokens: CHARACTER_GENERATION_MAX_TOKENS,
+        },
+        abortSignal: abortController.signal,
       });
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error(`キャラクター生成が${Math.round(timeoutMs / 1000)}秒でタイムアウトしました。`)),
-          timeoutMs
-        )
-      );
-      const response = await Promise.race([generatePromise, timeoutPromise]);
       console.log(`${logPrefix} attempt ${attempt} — LLM応答受信`);
 
       const lightParsed = lightOutputSchema.safeParse(response.object);
@@ -710,7 +837,7 @@ generic な「謎多き美形相棒」へ逃げないでください。
         continue;
       }
 
-      const enriched = lightParsed.data.characters.map((ch, i) => ({
+      const enriched = lightParsed.data.characters.map((ch) => ({
         ...ch,
         portrait_prompt: "",
         portrait_image_url: "",
@@ -722,14 +849,23 @@ generic な「謎多き美形相棒」へ逃げないでください。
       }
       console.warn(`${logPrefix} attempt ${attempt} — normalizeCharacterOutput 失敗`);
     } catch (error: any) {
-      console.warn(`${logPrefix} attempt ${attempt} 失敗:`, error?.message ?? error);
+      if (abortController.signal.aborted) {
+        console.warn(
+          `${logPrefix} attempt ${attempt} 失敗: キャラクター生成がタイムアウトしました（${Math.round(
+            CHARACTER_GENERATION_TIMEOUT_MS *
+              Math.pow(CHARACTER_GENERATION_TIMEOUT_GROWTH, Math.max(0, attempt - 1))
+          )}ms）`
+        );
+        console.warn(`${logPrefix} タイムアウト後の追加課金を避けるため、追加リトライしません`);
+        break;
+      } else {
+        console.warn(`${logPrefix} attempt ${attempt} 失敗:`, error?.message ?? error);
+      }
+    } finally {
+      if (activeTimeoutHandle) clearTimeout(activeTimeoutHandle);
     }
   }
 
   console.error(`${logPrefix} 全試行失敗`);
-  if (SERIES_AGENT_FALLBACK_ENABLED) {
-    console.warn(`${logPrefix} fallback characters を使用`);
-    return fallbackOutput;
-  }
-  throw new Error("キャラクター生成に失敗しました。AIモデルからの応答が得られませんでした。再度お試しください。");
+  throw new Error("キャラクター生成に失敗しました。外部AIの生成結果を取得できませんでした。");
 };

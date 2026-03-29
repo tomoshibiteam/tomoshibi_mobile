@@ -17,15 +17,58 @@ export const seriesEpisodePlannerAgentInputSchema = z.object({
   genre: z.string(),
   tone: z.string(),
   world: seriesWorldSchema,
-  characters: z.array(seriesCharacterSchema).min(3).max(8),
-  desired_episode_count: z.number().int().min(3).max(24),
+  characters: z.array(seriesCharacterSchema).min(2).max(8),
+  desired_episode_count: z.literal(3),
   mystery_profile: seriesMysteryProfileSchema.optional(),
   recent_generation_context: seriesRecentGenerationContextSchema.optional(),
 });
 
 export const seriesEpisodePlannerAgentOutputSchema = z.object({
-  checkpoints: z.array(seriesCheckpointSchema).min(4).max(8),
+  checkpoints: z.array(seriesCheckpointSchema).length(3),
   first_episode_seed: seriesEpisodeSeedSchema,
+});
+
+const lightCheckpointSchema = z.object({
+  checkpoint_no: z.number().int().min(1).max(3).optional(),
+  title: z.string().optional(),
+  purpose: z.string().optional(),
+  unlock_hint: z.string().optional(),
+  expected_emotion: z.string().optional(),
+  carry_over: z.string().optional(),
+  knowledge_gain: z.string().optional(),
+  remaining_unknown: z.string().optional(),
+  next_move_reason: z.string().optional(),
+});
+
+const lightSpotRequirementSchema = z.object({
+  requirement_id: z.string().optional(),
+  scene_role: z.enum(["起", "承", "転", "結"]).optional(),
+  spot_role: z.string().optional(),
+  required_attributes: z.array(z.string()).optional(),
+  visit_constraints: z.array(z.string()).optional(),
+  tourism_value_type: z.string().optional(),
+});
+
+const lightEpisodeSeedSchema = z.object({
+  title: z.string().optional(),
+  objective: z.string().optional(),
+  opening_scene: z.string().optional(),
+  expected_duration_minutes: z.number().int().min(10).max(45).optional(),
+  route_style: z.string().optional(),
+  movement_style: z.string().optional(),
+  completion_condition: z.string().optional(),
+  carry_over_hint: z.string().optional(),
+  inciting_incident: z.string().optional(),
+  first_false_assumption: z.string().optional(),
+  first_reversal: z.string().optional(),
+  unresolved_hook: z.string().optional(),
+  spot_requirements: z.array(lightSpotRequirementSchema).optional(),
+  suggested_spots: z.array(z.string()).optional(),
+});
+
+const lightEpisodePlannerOutputSchema = z.object({
+  checkpoints: z.array(lightCheckpointSchema).min(1).max(3),
+  first_episode_seed: lightEpisodeSeedSchema.optional(),
 });
 
 export type SeriesEpisodePlannerAgentInput = z.infer<typeof seriesEpisodePlannerAgentInputSchema>;
@@ -36,7 +79,7 @@ const SERIES_EPISODE_AGENT_INSTRUCTIONS = `
 シリーズの継続導線を設計しつつ、初回の現実連動型・外出周遊ミステリーエピソードに着地させてください。
 
 ## 必須方針
-- checkpoints は 4〜8 個
+- checkpoints は 3 個固定（導入・展開・結末）
 - checkpoints.checkpoint_no は 1 から連番
 - checkpoints.carry_over は次回に持ち越す未解決情報・疑念・証拠断片・関係変化を記述
 - 各 checkpoint は「事件理解が一段階変わる認識更新点」にする
@@ -68,6 +111,12 @@ export const seriesEpisodePlannerAgent = new Agent({
 });
 
 const clean = (value?: string) => (value || "").replace(/\s+/g, " ").trim();
+const cleanBounded = (value: string | undefined, maxChars: number) => {
+  const normalized = clean(value);
+  if (!normalized) return "";
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars).trimEnd()}…`;
+};
 const TRAVERSAL_PATTERN = /(外出|周遊|巡る|移動|公共交通|自転車|フェリー|ロープウェイ|車)/;
 const INCOMPATIBLE_ROLE_PATTERN =
   /(オフィス内(?:だけ|のみ)?|社内(?:だけ|のみ)?|会議室|閉鎖施設|空中都市|天空都市|浮遊都市|宇宙|海底|塔内(?:だけ|のみ)?)/i;
@@ -122,34 +171,14 @@ const resolveSceneRoleForIndex = (index: number, count: number): SceneRole => {
   return index === 1 ? "承" : "転";
 };
 
-const buildFallbackSpotRequirements = (setting: string) => {
-  const area = clean(setting) || "中心エリア";
-  return [
-    {
-      requirement_id: "req_1",
-      scene_role: "起" as const,
-      spot_role: "初期違和感を観察できる開けた地点",
-      required_attributes: ["公共アクセス可能", `${area}らしさが分かる`, "現地の見え方の差が観察できる"],
-      visit_constraints: ["単独屋内完結にしない", "1回の外出として無理のない導線にする"],
-      tourism_value_type: "初期違和感の提示",
-    },
-    {
-      requirement_id: "req_2",
-      scene_role: "承" as const,
-      spot_role: "証言確認や記録照合がしやすい半公共空間",
-      required_attributes: ["人の出入りがある", "聞き込みや観察が成立する", "記録物や掲示物へ接続できる"],
-      visit_constraints: ["現実的に移動可能な範囲", "公共空間または準公共空間"],
-      tourism_value_type: "証言・記録の照合",
-    },
-    {
-      requirement_id: "req_3",
-      scene_role: "結" as const,
-      spot_role: "認識反転を確かめられる視点差のある地点",
-      required_attributes: ["締めに使える景観や視界差", "次話フックを置きやすい", "安全にアクセス可能"],
-      visit_constraints: ["日中または一般的な営業時間内に成立", "帰路を現実的に確保できる"],
-      tourism_value_type: "認識反転と未解決フック",
-    },
-  ];
+const checkpointArcLabel = (checkpointNo: number, checkpointCount: number) =>
+  checkpointNo === 1 ? "導入" : checkpointNo === checkpointCount ? "結末" : "展開";
+
+const ensureArcPrefixedTitle = (title: string, checkpointNo: number, checkpointCount: number) => {
+  const arc = checkpointArcLabel(checkpointNo, checkpointCount);
+  const normalized = clean(title).replace(/^(導入|展開|結末)\s*[:：\-]\s*/u, "");
+  if (!normalized) return "";
+  return `${arc}: ${normalized}`;
 };
 
 const hasModelApiKey = () =>
@@ -158,7 +187,6 @@ const hasModelApiKey = () =>
       process.env.OPENAI_API_KEY ||
       process.env.ANTHROPIC_API_KEY
   );
-const SERIES_AGENT_FALLBACK_ENABLED = false;
 
 const toPositiveInt = (value: string | undefined, fallback: number) => {
   const parsed = Number.parseInt(String(value ?? ""), 10);
@@ -170,142 +198,132 @@ const toGrowthFactor = (value: string | undefined, fallback: number) => {
   return Number.isFinite(parsed) && parsed >= 1 ? parsed : fallback;
 };
 
-const EPISODE_PLANNER_MAX_ATTEMPTS = toPositiveInt(
-  process.env.SERIES_EPISODE_PLANNER_MAX_ATTEMPTS,
-  1
-);
-const EPISODE_PLANNER_BASE_TIMEOUT_MS = toPositiveInt(
-  process.env.SERIES_EPISODE_PLANNER_TIMEOUT_MS,
-  90_000
+const EPISODE_PLANNER_MAX_ATTEMPTS = 1;
+const EPISODE_PLANNER_BASE_TIMEOUT_MS = Math.max(
+  120_000,
+  toPositiveInt(process.env.SERIES_EPISODE_PLANNER_TIMEOUT_MS, 120_000)
 );
 const EPISODE_PLANNER_TIMEOUT_GROWTH = toGrowthFactor(
   process.env.SERIES_EPISODE_PLANNER_TIMEOUT_GROWTH,
   1.15
 );
+const EPISODE_PLANNER_MAX_TOKENS = Math.max(
+  800,
+  Math.min(2600, Number.parseInt(clean(process.env.SERIES_EPISODE_PLANNER_MAX_TOKENS) || "1400", 10) || 1400)
+);
 
-const resolveCheckpointCount = (desiredEpisodeCount: number) =>
-  Math.max(4, Math.min(8, Math.round(desiredEpisodeCount / 2)));
-
-const buildFallbackCheckpoint = (
-  input: SeriesEpisodePlannerAgentInput,
-  checkpointNo: number,
-  checkpointCount: number
-) => {
-  const pivotCharacter = input.characters[(checkpointNo - 1) % input.characters.length];
-  const phase =
-    checkpointNo === 1
-      ? "導入"
-      : checkpointNo < checkpointCount
-        ? "進展"
-        : "収束";
-
-  return {
-    checkpoint_no: checkpointNo,
-    title: `CP${checkpointNo}: ${phase}`,
-    purpose:
-      checkpointNo === checkpointCount
-        ? "シーズン目標の達成条件を満たし、主要対立を決着へ導く。"
-        : `${pivotCharacter.name}の選択で、次に何を確認しに行くべきかを明確化する。`,
-    unlock_hint:
-      checkpointNo === 1
-        ? "初回エピソードで現地の違和感を提示し、誤認の種を固定する。"
-        : `CP${checkpointNo - 1}で生じた未解決点を、移動先スポットで回収して前進する。`,
-    expected_emotion: checkpointNo === checkpointCount ? "達成と余韻" : "発見と高まり",
-    carry_over: "次回冒頭で参照する未解決情報か証拠断片を1つ明示する。",
-    knowledge_gain: "この地点で得られる新情報を1つ明示する。",
-    remaining_unknown: "まだ説明できない矛盾を1つ残す。",
-    next_move_reason: "次の地点へ移動する因果を1文で示す。",
-  };
-};
-
-const buildFallbackEpisodeSeed = (input: SeriesEpisodePlannerAgentInput) => ({
-  title: "第1話: 旅の始まり",
-  objective: "シリーズの主要目的へ向かう最初の局所事件を追い、次回へ持ち越す疑問を得る。",
-  opening_scene: `${input.world.setting}で、見えている事実と説明が食い違う小さな異変に遭遇し、2〜4スポットを巡る捜査行動を開始する。`,
-  expected_duration_minutes: 30,
-  route_style: "現実的に到達可能な複数スポットを巡る外出周遊",
-  movement_style: "地域に応じた自然な移動手段を含む現実的な周遊",
-  completion_condition: "主要スポットを2つ以上巡り、最初の誤認を崩して未解決の核心を持ち帰る。",
-  carry_over_hint: "最初の仮説は崩れたが、次に確かめるべき相手と場所が残る。",
-  inciting_incident: "現地で見たものと、事前に聞いていた説明が食い違う。",
-  first_false_assumption: "最初は単純な行き違いか偶然だと思う。",
-  first_reversal: "現地確認により、人為的な隠し方か誤認誘導の可能性が浮かぶ。",
-  unresolved_hook: "真相に近い人物や記録は見えたが、まだ決定打が足りない。",
-  spot_requirements: buildFallbackSpotRequirements(input.world.setting),
-});
+const resolveCheckpointCount = () => 3;
 
 const normalizeSpotRequirements = (
-  raw: z.infer<typeof seriesEpisodeSeedSchema>["spot_requirements"] | undefined,
-  fallback: z.infer<typeof seriesEpisodeSeedSchema>["spot_requirements"]
-) => {
+  raw: z.infer<typeof lightEpisodeSeedSchema>["spot_requirements"] | undefined
+): z.infer<typeof seriesEpisodeSeedSchema>["spot_requirements"] | null => {
   const base = Array.isArray(raw) ? raw : [];
   const normalized = base
     .slice(0, 4)
     .map((row, index) => {
-      const fallbackRow = fallback[Math.min(index, fallback.length - 1)];
       const sceneRoleRaw = clean(String(row.scene_role || ""));
-      const sceneRole = isSceneRole(sceneRoleRaw) ? sceneRoleRaw : resolveSceneRoleForIndex(index, Math.max(base.length, 2));
-      const spotRole = clean(row.spot_role) || fallbackRow?.spot_role || "回遊スポット";
+      if (!isSceneRole(sceneRoleRaw)) return null;
+      const sceneRole = sceneRoleRaw;
+      const spotRole = cleanBounded(row.spot_role, 160);
       if (!spotRole || INCOMPATIBLE_ROLE_PATTERN.test(spotRole)) return null;
+      const tourismValueType = cleanBounded(row.tourism_value_type, 120);
+      if (!tourismValueType) return null;
       return {
-        requirement_id: clean(row.requirement_id) || `req_${index + 1}`,
+        requirement_id: cleanBounded(row.requirement_id, 40) || `req_${index + 1}`,
         scene_role: sceneRole,
         spot_role: spotRole,
         required_attributes: dedupeStrings(
-          (Array.isArray(row.required_attributes) ? row.required_attributes : []).map((item) => clean(String(item)))
+          (Array.isArray(row.required_attributes) ? row.required_attributes : [])
+            .map((item) => cleanBounded(String(item), 120))
+            .filter(Boolean)
         ).slice(0, 8),
         visit_constraints: dedupeStrings(
-          (Array.isArray(row.visit_constraints) ? row.visit_constraints : []).map((item) => clean(String(item)))
+          (Array.isArray(row.visit_constraints) ? row.visit_constraints : [])
+            .map((item) => cleanBounded(String(item), 120))
+            .filter(Boolean)
         ).slice(0, 8),
-        tourism_value_type: clean(row.tourism_value_type) || fallbackRow?.tourism_value_type || "地域体験",
+        tourism_value_type: tourismValueType,
       };
     })
     .filter((row): row is NonNullable<typeof row> => Boolean(row));
 
-  if (normalized.length < 2) return fallback;
+  if (normalized.length < 2) return null;
   return normalized;
 };
 
 const normalizeCheckpoint = (
-  raw: z.infer<typeof seriesCheckpointSchema>,
-  fallback: z.infer<typeof seriesCheckpointSchema>,
-  checkpointNo: number
-) => {
+  raw: z.infer<typeof lightCheckpointSchema> | undefined,
+  checkpointNo: number,
+  checkpointCount: number
+): z.infer<typeof seriesCheckpointSchema> | null => {
+  if (!raw) return null;
+  const rawTitle = cleanBounded(raw.title, 120);
+  const purpose = cleanBounded(raw.purpose, 220);
+  const unlockHint = cleanBounded(raw.unlock_hint, 200);
+  if (!rawTitle || !purpose || !unlockHint) return null;
+  const title = ensureArcPrefixedTitle(
+    rawTitle,
+    checkpointNo,
+    checkpointCount
+  );
+  const expectedEmotion = cleanBounded(raw.expected_emotion, 100);
+  const carryOver = cleanBounded(raw.carry_over, 220);
+  const knowledgeGain = cleanBounded(raw.knowledge_gain, 200);
+  const remainingUnknown = cleanBounded(raw.remaining_unknown, 200);
+  const nextMoveReason = cleanBounded(raw.next_move_reason, 200);
+
   return {
     checkpoint_no: checkpointNo,
-    title: clean(raw.title) || fallback.title,
-    purpose: clean(raw.purpose) || fallback.purpose,
-    unlock_hint: clean(raw.unlock_hint) || fallback.unlock_hint,
-    expected_emotion: clean(raw.expected_emotion) || fallback.expected_emotion,
-    carry_over: clean(raw.carry_over) || fallback.carry_over,
-    knowledge_gain: clean(raw.knowledge_gain) || fallback.knowledge_gain,
-    remaining_unknown: clean(raw.remaining_unknown) || fallback.remaining_unknown,
-    next_move_reason: clean(raw.next_move_reason) || fallback.next_move_reason,
+    title,
+    purpose,
+    unlock_hint: unlockHint,
+    expected_emotion: expectedEmotion,
+    carry_over: carryOver,
+    ...(knowledgeGain ? { knowledge_gain: knowledgeGain } : {}),
+    ...(remainingUnknown ? { remaining_unknown: remainingUnknown } : {}),
+    ...(nextMoveReason ? { next_move_reason: nextMoveReason } : {}),
   };
 };
 
 const normalizeEpisodeSeed = (
-  raw: z.infer<typeof seriesEpisodeSeedSchema>,
-  fallback: z.infer<typeof seriesEpisodeSeedSchema>
-) => {
-  const duration = Number.parseInt(String(raw.expected_duration_minutes), 10);
-  const safeDuration = Number.isFinite(duration) ? Math.max(10, Math.min(45, duration)) : fallback.expected_duration_minutes;
+  raw: z.infer<typeof lightEpisodeSeedSchema> | undefined
+): z.infer<typeof seriesEpisodeSeedSchema> | null => {
+  if (!raw) return null;
+  const duration = Number.parseInt(String(raw?.expected_duration_minutes), 10);
+  if (!Number.isFinite(duration)) return null;
+  const safeDuration = Math.max(10, Math.min(45, duration));
+  const title = cleanBounded(raw.title, 120);
+  const objective = cleanBounded(raw.objective, 220);
+  const openingScene = cleanBounded(raw.opening_scene, 240);
+  const routeStyle = cleanBounded(raw.route_style, 120);
+  const completionCondition = cleanBounded(raw.completion_condition, 220);
+  const carryOverHint = cleanBounded(raw.carry_over_hint, 220);
+  const spotRequirements = normalizeSpotRequirements(raw.spot_requirements);
+  if (!title || !objective || !openingScene || !routeStyle || !completionCondition || !carryOverHint || !spotRequirements) {
+    return null;
+  }
 
   return {
-    title: clean(raw.title) || fallback.title,
-    objective: clean(raw.objective) || fallback.objective,
-    opening_scene: clean(raw.opening_scene) || fallback.opening_scene,
+    title,
+    objective,
+    opening_scene: openingScene,
     expected_duration_minutes: safeDuration,
-    route_style: ensureTraversalStyle(raw.route_style || fallback.route_style),
-    movement_style: clean(raw.movement_style) || clean(fallback.movement_style) || ensureTraversalStyle(raw.route_style || fallback.route_style),
-    completion_condition: clean(raw.completion_condition) || fallback.completion_condition,
-    carry_over_hint: clean(raw.carry_over_hint) || fallback.carry_over_hint,
-    inciting_incident: clean(raw.inciting_incident) || fallback.inciting_incident,
-    first_false_assumption: clean(raw.first_false_assumption) || fallback.first_false_assumption,
-    first_reversal: clean(raw.first_reversal) || fallback.first_reversal,
-    unresolved_hook: clean(raw.unresolved_hook) || fallback.unresolved_hook,
-    spot_requirements: normalizeSpotRequirements(raw.spot_requirements, fallback.spot_requirements),
-    suggested_spots: Array.isArray(raw.suggested_spots) && raw.suggested_spots.length > 0 ? raw.suggested_spots : fallback.suggested_spots,
+    route_style: ensureTraversalStyle(routeStyle),
+    movement_style:
+      cleanBounded(raw.movement_style, 120) ||
+      ensureTraversalStyle(routeStyle),
+    completion_condition: completionCondition,
+    carry_over_hint: carryOverHint,
+    ...(cleanBounded(raw.inciting_incident, 200) ? { inciting_incident: cleanBounded(raw.inciting_incident, 200) } : {}),
+    ...(cleanBounded(raw.first_false_assumption, 200) ? { first_false_assumption: cleanBounded(raw.first_false_assumption, 200) } : {}),
+    ...(cleanBounded(raw.first_reversal, 200) ? { first_reversal: cleanBounded(raw.first_reversal, 200) } : {}),
+    ...(cleanBounded(raw.unresolved_hook, 200) ? { unresolved_hook: cleanBounded(raw.unresolved_hook, 200) } : {}),
+    spot_requirements: spotRequirements,
+    suggested_spots: dedupeStrings(
+      (Array.isArray(raw.suggested_spots) ? raw.suggested_spots : [])
+        .map((spot) => cleanBounded(String(spot), 100))
+        .filter(Boolean)
+    ).slice(0, 6),
   };
 };
 
@@ -313,50 +331,29 @@ const normalizeEpisodeOutput = (
   input: SeriesEpisodePlannerAgentInput,
   raw: unknown
 ): SeriesEpisodePlannerAgentOutput | null => {
-  const parsed = seriesEpisodePlannerAgentOutputSchema.safeParse(raw);
+  const parsed = lightEpisodePlannerOutputSchema.safeParse(raw);
   if (!parsed.success) return null;
 
-  const checkpointCount = resolveCheckpointCount(input.desired_episode_count);
-  const byCheckpointNo = new Map<number, z.infer<typeof seriesCheckpointSchema>>();
-  parsed.data.checkpoints.forEach((checkpoint, index) => {
-    const parsedCheckpointNo = Number.parseInt(String(checkpoint.checkpoint_no), 10);
-    const safeNo = Number.isFinite(parsedCheckpointNo) && parsedCheckpointNo > 0 ? parsedCheckpointNo : index + 1;
-    if (!byCheckpointNo.has(safeNo)) {
-      byCheckpointNo.set(safeNo, checkpoint);
-    }
-  });
-
+  const checkpointCount = resolveCheckpointCount();
   const normalizedCheckpoints = Array.from({ length: checkpointCount }, (_, index) => {
-    const checkpointNo = index + 1;
-    const fallback = buildFallbackCheckpoint(input, checkpointNo, checkpointCount);
-    const rawCheckpoint = byCheckpointNo.get(checkpointNo) || fallback;
-    return normalizeCheckpoint(rawCheckpoint, fallback, checkpointNo);
+    const checkpoint = normalizeCheckpoint(parsed.data.checkpoints[index], index + 1, checkpointCount);
+    if (!checkpoint) return null;
+    return checkpoint;
   });
-
-  const fallbackSeed = buildFallbackEpisodeSeed(input);
-  const normalizedSeed = normalizeEpisodeSeed(parsed.data.first_episode_seed, fallbackSeed);
+  if (normalizedCheckpoints.some((checkpoint) => !checkpoint)) return null;
+  const normalizedSeed = normalizeEpisodeSeed(parsed.data.first_episode_seed);
+  if (!normalizedSeed) return null;
 
   return {
-    checkpoints: normalizedCheckpoints,
+    checkpoints: normalizedCheckpoints as z.infer<typeof seriesCheckpointSchema>[],
     first_episode_seed: normalizedSeed,
   };
 };
-
-const buildFallbackPlan = (input: SeriesEpisodePlannerAgentInput): SeriesEpisodePlannerAgentOutput => ({
-  checkpoints: Array.from({ length: resolveCheckpointCount(input.desired_episode_count) }, (_, index) =>
-    buildFallbackCheckpoint(input, index + 1, resolveCheckpointCount(input.desired_episode_count))
-  ),
-  first_episode_seed: buildFallbackEpisodeSeed(input),
-});
 
 export const generateSeriesEpisodePlan = async (
   input: SeriesEpisodePlannerAgentInput
 ): Promise<SeriesEpisodePlannerAgentOutput> => {
   if (!hasModelApiKey()) {
-    if (SERIES_AGENT_FALLBACK_ENABLED) {
-      console.warn("[series-episode-planner-agent] API key not found, fallback episode plan used");
-      return buildFallbackPlan(input);
-    }
     throw new Error("エピソード計画生成に失敗しました。利用可能なAIモデルがありません。");
   }
 
@@ -380,6 +377,7 @@ export const generateSeriesEpisodePlan = async (
 - environment_layer: ${clean(input.mystery_profile?.environment_layer) || "未指定"}
 
 ## TOMOSHIBI 制約（最優先）
+- checkpoints は3個固定（導入→展開→結末）にする。
 - 各 checkpoint は「事件理解が一段階変わる認識更新点」にする。
 - checkpoints は観光イベント列ではなく、捜査と認識更新の列にする。
 - 各 checkpoint に「何が分かるか」「何がまだ分からないか」「なぜ次の地点へ移動するのか」を明示する。
@@ -421,48 +419,68 @@ ${input.characters
   - 掲示物や記録と接続できる半公共空間
   - 導線矛盾を確かめられる分岐点や視点差のある場所
 
+## 出力フォーマット（必須）
+- checkpoints は必ず3件。
+- 各 checkpoint の必須キーは次の4つのみ:
+  - checkpoint_no
+  - title
+  - purpose
+  - unlock_hint
+- 余力があれば expected_emotion / carry_over / knowledge_gain / remaining_unknown / next_move_reason を追加してよい。
+- first_episode_seed の必須キーは次の5つのみ:
+  - title
+  - objective
+  - opening_scene
+  - carry_over_hint
+  - spot_requirements
+- spot_requirements は2〜4件。各要素の必須キーは次の3つのみ:
+  - requirement_id
+  - scene_role
+  - spot_role
+- 余力があれば required_attributes / visit_constraints / tourism_value_type を追加してよい。
+- 各フィールドは短文1つにし、スラッシュ区切りの大量列挙・同文反復を禁止する。
+
 seriesEpisodePlannerAgentOutputSchema を満たす JSON を返してください。
 `;
 
   const maxAttempts = EPISODE_PLANNER_MAX_ATTEMPTS;
   const logPrefix = "[series-episode-planner-agent]";
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const abortController = new AbortController();
+    let activeTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
     const timeoutMs = Math.round(
       EPISODE_PLANNER_BASE_TIMEOUT_MS *
         Math.pow(EPISODE_PLANNER_TIMEOUT_GROWTH, Math.max(0, attempt - 1))
     );
     try {
+      activeTimeoutHandle = setTimeout(() => abortController.abort("series_episode_planner_timeout"), timeoutMs);
       console.log(
         `${logPrefix} attempt ${attempt}/${maxAttempts} — LLM呼び出し中 (${Math.round(timeoutMs / 1000)}秒でタイムアウト)`
       );
-      const result = await Promise.race([
-        seriesEpisodePlannerAgent.generate(prompt, {
-          structuredOutput: { schema: seriesEpisodePlannerAgentOutputSchema },
-        }),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () =>
-              reject(
-                new Error(
-                  `エピソード計画生成が${Math.round(timeoutMs / 1000)}秒でタイムアウトしました。`
-                )
-              ),
-            timeoutMs
-          )
-        ),
-      ]);
+      const result = await seriesEpisodePlannerAgent.generate(prompt, {
+        structuredOutput: { schema: lightEpisodePlannerOutputSchema },
+        modelSettings: {
+          maxRetries: 0,
+          maxOutputTokens: EPISODE_PLANNER_MAX_TOKENS,
+        },
+        abortSignal: abortController.signal,
+      });
       console.log(`${logPrefix} attempt ${attempt} — LLM応答受信`);
       const normalized = normalizeEpisodeOutput(input, result.object);
       if (normalized) return normalized;
       console.warn(`${logPrefix} attempt ${attempt} — パース失敗`);
     } catch (error: any) {
+      if (abortController.signal.aborted) {
+        console.warn(`${logPrefix} attempt ${attempt} 失敗: エピソード計画生成がタイムアウトしました（${timeoutMs}ms）`);
+        console.warn(`${logPrefix} タイムアウト後の追加課金を避けるため、追加リトライしません`);
+        break;
+      }
       console.warn(`${logPrefix} attempt ${attempt} 失敗:`, error?.message ?? error);
+    } finally {
+      if (activeTimeoutHandle) clearTimeout(activeTimeoutHandle);
     }
   }
 
-  console.error(`${logPrefix} 全試行失敗 — fallback plan を使用`);
-  if (SERIES_AGENT_FALLBACK_ENABLED) {
-    return buildFallbackPlan(input);
-  }
-  throw new Error("エピソード計画生成に失敗しました。AIモデルからの応答が得られませんでした。再度お試しください。");
+  console.error(`${logPrefix} 全試行失敗`);
+  throw new Error("エピソード計画生成に失敗しました。外部AIの生成結果を取得できませんでした。");
 };

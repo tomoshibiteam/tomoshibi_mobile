@@ -1,9 +1,24 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
-dotenv.config({ override: true });
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const MASTRA_ROOT = path.resolve(__dirname, "..");
+const REPO_ROOT = path.resolve(MASTRA_ROOT, "..");
+for (const envPath of [
+  path.resolve(REPO_ROOT, ".env"),
+  path.resolve(REPO_ROOT, ".env.local"),
+  path.resolve(MASTRA_ROOT, ".env"),
+  path.resolve(MASTRA_ROOT, ".env.local"),
+]) {
+  if (existsSync(envPath)) {
+    dotenv.config({ path: envPath, override: true });
+  }
+}
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, rename, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
-import path from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
@@ -11,14 +26,7 @@ import { MastraServer, HonoBindings, HonoVariables } from "@mastra/hono";
 import { Rembg } from "rembg-node";
 import sharp from "sharp";
 import { mastra } from "./index";
-import { seriesGenerationRequestSchema } from "./schemas/series";
 import { questWorkflow } from "./workflows/quest-workflow";
-import {
-  generateSeriesWorkflowWithProgress,
-  type SeriesGenerationProgressEvent,
-  type SeriesWorkflowOutput,
-  seriesWorkflow,
-} from "./workflows/series-workflow";
 import { withQuestProgress } from "./lib/questProgress";
 import {
   generateSeriesRuntimeEpisode,
@@ -30,20 +38,23 @@ import {
   rawSeriesGenerationRequestSchema,
   type GenerateEpisodeRuntimeResult,
   type SeriesGenerationResult,
-} from "./schemas/series-runtime-vnext";
+} from "./schemas/series-runtime-v2";
 import {
   generateEpisodeRuntimeVNext,
   generateSeriesGenerationResultVNext,
-} from "./lib/runtime/seriesRuntimeVNext";
+} from "./lib/runtime/seriesRuntimeV2";
 import {
   buildSeriesImageProviderUrl,
   resolveSeriesImageAspectRatio,
   resolveSeriesImageRequest,
   SeriesImageRequest,
 } from "./lib/seriesVisuals";
+import { installMastraAgentIoLogging } from "./lib/agentIoLogging";
 
 const app = new Hono<{ Bindings: HonoBindings; Variables: HonoVariables }>();
 app.use("*", cors({ origin: "*", allowHeaders: ["Content-Type", "Authorization"] }));
+
+installMastraAgentIoLogging();
 
 const server = new MastraServer({ app, mastra });
 await server.init();
@@ -92,30 +103,6 @@ const summarizeVNextSeriesRequest = (input: {
   ]
     .filter(Boolean)
     .join(" | ");
-const summarizeLegacySeriesRequest = (input: {
-  desired_episode_count?: number;
-  prompt?: string;
-  interview: {
-    genre_world?: string;
-    desired_emotion?: string;
-    companion_preference?: string;
-    continuation_trigger?: string;
-    avoidance_preferences?: string;
-  };
-}): string =>
-  [
-    `episodeCount=${Number.isFinite(input.desired_episode_count) ? input.desired_episode_count : "default"}`,
-    truncate(`genre=${input.interview.genre_world || "none"}`, 100),
-    truncate(`emotion=${input.interview.desired_emotion || "none"}`, 80),
-    truncate(`companion=${input.interview.companion_preference || "none"}`, 80),
-    truncate(`hook=${input.interview.continuation_trigger || "none"}`, 80),
-    input.interview.avoidance_preferences
-      ? truncate(`avoid=${input.interview.avoidance_preferences}`, 100)
-      : "",
-    input.prompt ? truncate(`prompt=${input.prompt}`, 120) : "",
-  ]
-    .filter(Boolean)
-    .join(" | ");
 const logSeriesProgressEvent = (
   logPrefix: string,
   params: {
@@ -139,7 +126,7 @@ const logSeriesResultSummary = (
     startedMs: number;
     title?: string;
     characterCount?: number;
-    checkpointCount?: number;
+    continuityAxisCount?: number;
     workflowVersion?: string;
   }
 ) => {
@@ -148,13 +135,18 @@ const logSeriesResultSummary = (
   console.log(
     `${logPrefix} result${idPart} +${elapsedSec}s title=${truncate(params.title || "unknown", 80)} characters=${
       params.characterCount ?? 0
-    } checkpoints=${params.checkpointCount ?? 0} workflow=${clean(params.workflowVersion) || "unknown"}`
+    } continuityAxes=${params.continuityAxisCount ?? 0} workflow=${clean(params.workflowVersion) || "unknown"}`
   );
 };
-const GEMINI_IMAGE_MODEL = clean(process.env.SERIES_IMAGE_GEMINI_MODEL) || "gemini-3-pro-image-preview";
+const GEMINI_IMAGE_MODEL =
+  clean(process.env.SERIES_IMAGE_GEMINI_MODEL) || "gemini-3.1-flash-image-preview";
 const GEMINI_API_KEY =
   clean(process.env.GOOGLE_GENERATIVE_AI_API_KEY) || clean(process.env.GEMINI_API_KEY);
-const GEMINI_POLLINATIONS_FALLBACK = clean(process.env.SERIES_IMAGE_GEMINI_FALLBACK).toLowerCase() !== "off";
+const BILLING_LOG_ENABLED = clean(process.env.MASTRA_BILLING_LOG).toLowerCase() !== "off";
+const BILLING_USDJPY_RATE = Math.max(
+  1,
+  Number.parseFloat(clean(process.env.MASTRA_BILLING_USDJPY) || "158.95") || 158.95
+);
 const SERIES_IMAGE_CUTOUT_ENABLED = clean(process.env.SERIES_IMAGE_CUTOUT_ENABLED).toLowerCase() !== "off";
 const SERIES_IMAGE_VERTEX_ENDPOINT = clean(process.env.SERIES_IMAGE_VERTEX_ENDPOINT);
 const SERIES_IMAGE_DIFFUSERS_ENDPOINT = clean(process.env.SERIES_IMAGE_DIFFUSERS_ENDPOINT);
@@ -192,6 +184,57 @@ const isAbortLikeError = (error: unknown) => {
   const message = clean(error instanceof Error ? error.message : String(error ?? "")).toLowerCase();
   if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) return true;
   return /abort|aborted|timeout|timed out/.test(message);
+};
+
+type TokenUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+};
+
+const asObject = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+
+const asNumber = (value: unknown): number => {
+  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const extractGeminiTokenUsage = (payload: unknown): TokenUsage | null => {
+  const usage = asObject(asObject(payload).usageMetadata);
+  if (!usage || Object.keys(usage).length === 0) return null;
+  const inputTokens = Math.max(0, asNumber(usage.promptTokenCount));
+  const outputTokens = Math.max(0, asNumber(usage.candidatesTokenCount));
+  const totalTokens = Math.max(0, asNumber(usage.totalTokenCount) || inputTokens + outputTokens);
+  if (inputTokens <= 0 && outputTokens <= 0 && totalTokens <= 0) return null;
+  return { inputTokens, outputTokens, totalTokens };
+};
+
+const estimateFlashImageUnitUsd = (width: number, height: number) => {
+  const maxEdge = Math.max(width, height);
+  if (maxEdge <= 512) return 0.045;
+  if (maxEdge <= 1024) return 0.067;
+  if (maxEdge <= 2048) return 0.101;
+  return 0.151;
+};
+
+const estimateGeminiImageUsd = (usage: TokenUsage | null, model: string, request: SeriesImageRequest) => {
+  const normalized = clean(model).toLowerCase();
+  if (!normalized.includes("flash-image")) return null;
+
+  if (usage) {
+    const inputCost = (usage.inputTokens / 1_000_000) * 0.5;
+    const outputCost = (usage.outputTokens / 1_000_000) * 60;
+    return {
+      usd: inputCost + outputCost,
+      mode: "token-based" as const,
+    };
+  }
+
+  return {
+    usd: estimateFlashImageUnitUsd(request.width, request.height),
+    mode: "dimension-fallback" as const,
+  };
 };
 
 type CachedImage = {
@@ -591,6 +634,23 @@ const generateSeriesImageWithGemini = async (
   }
 
   const payload = await response.json();
+  const usage = extractGeminiTokenUsage(payload);
+  if (BILLING_LOG_ENABLED) {
+    const estimated = estimateGeminiImageUsd(usage, GEMINI_IMAGE_MODEL, request);
+    const usagePart = usage
+      ? `input_tokens=${usage.inputTokens} output_tokens=${usage.outputTokens} total_tokens=${usage.totalTokens}`
+      : "usage=unavailable";
+    if (estimated) {
+      const estimatedJpy = estimated.usd * BILLING_USDJPY_RATE;
+      console.log(
+        `[image-billing] provider=gemini model=${GEMINI_IMAGE_MODEL} purpose=${request.purpose} size=${request.width}x${request.height} ${usagePart} estimated_usd=${estimated.usd.toFixed(6)} estimated_jpy=${estimatedJpy.toFixed(3)} usd_jpy=${BILLING_USDJPY_RATE.toFixed(4)} mode=${estimated.mode}`
+      );
+    } else {
+      console.log(
+        `[image-billing] provider=gemini model=${GEMINI_IMAGE_MODEL} purpose=${request.purpose} size=${request.width}x${request.height} ${usagePart} estimated_usd=unavailable`
+      );
+    }
+  }
   const extracted = extractGeminiImages(payload);
   if (extracted.length === 0) {
     throw new Error("gemini_image_missing");
@@ -637,29 +697,19 @@ const isIdentityLockedRequest = (request?: SeriesImageRequest) =>
       Boolean(request.styleReference))
   );
 
-const allowIdentityLockedPollinationsFallback = (request?: SeriesImageRequest) =>
-  Boolean(
-    request &&
-      GEMINI_POLLINATIONS_FALLBACK &&
-      request.purpose === "character_portrait"
-  );
-
 const normalizeHybridProviderOrder = (request?: SeriesImageRequest): HybridImageProvider[] => {
   const identityLocked = isIdentityLockedRequest(request);
-  const allowPollinationsFallback = allowIdentityLockedPollinationsFallback(request);
   const allowed = new Set<HybridImageProvider>(["vertex", "diffusers", "gemini", "pollinations"]);
   let parsed = SERIES_IMAGE_HYBRID_ORDER
     .split(",")
     .map((part) => clean(part).toLowerCase())
     .filter((part): part is HybridImageProvider => allowed.has(part as HybridImageProvider));
-  if (identityLocked && !allowPollinationsFallback) {
+  if (identityLocked) {
     parsed = parsed.filter((provider) => provider !== "pollinations");
   }
   if (parsed.length > 0) return parsed;
   if (identityLocked) {
-    return allowPollinationsFallback
-      ? ["vertex", "diffusers", "gemini", "pollinations"]
-      : ["vertex", "diffusers", "gemini"];
+    return ["vertex", "diffusers", "gemini"];
   }
   return ["vertex", "diffusers", "gemini", "pollinations"];
 };
@@ -795,52 +845,39 @@ const generateSeriesImageWithPollinations = async (
 const generateSeriesImageHybrid = async (
   request: SeriesImageRequest
 ): Promise<HybridImageResult> => {
-  const identityLocked = isIdentityLockedRequest(request);
-  const allowPollinationsFallback = allowIdentityLockedPollinationsFallback(request);
   const order = normalizeHybridProviderOrder(request);
-  const errors: string[] = [];
-
-  for (const provider of order) {
-    try {
-      if (provider === "vertex") {
-        return await generateSeriesImageWithCustomEndpoint(
-          SERIES_IMAGE_VERTEX_ENDPOINT,
-          SERIES_IMAGE_VERTEX_TOKEN,
-          "vertex",
-          request
-        );
-      }
-      if (provider === "diffusers") {
-        return await generateSeriesImageWithCustomEndpoint(
-          SERIES_IMAGE_DIFFUSERS_ENDPOINT,
-          SERIES_IMAGE_DIFFUSERS_TOKEN,
-          "diffusers",
-          request
-        );
-      }
-      if (provider === "gemini") {
-        const generated = await generateSeriesImageWithGemini(request);
-        return {
-          provider: "gemini",
-          contentType: generated.contentType,
-          data: generated.data,
-        };
-      }
-      if (provider === "pollinations") {
-        return await generateSeriesImageWithPollinations(request);
-      }
-    } catch (error: any) {
-      errors.push(`${provider}:${clean(error?.message || String(error))}`.slice(0, 200));
-      if (
-        provider === "gemini" &&
-        ((identityLocked && !allowPollinationsFallback) || !GEMINI_POLLINATIONS_FALLBACK)
-      ) {
-        throw error;
-      }
-    }
+  const provider = order[0];
+  if (!provider) {
+    throw new Error("series_image_provider_missing");
   }
-
-  throw new Error(`hybrid_image_generation_failed:${errors.join("|") || "no_provider_succeeded"}`);
+  if (provider === "vertex") {
+    return generateSeriesImageWithCustomEndpoint(
+      SERIES_IMAGE_VERTEX_ENDPOINT,
+      SERIES_IMAGE_VERTEX_TOKEN,
+      "vertex",
+      request
+    );
+  }
+  if (provider === "diffusers") {
+    return generateSeriesImageWithCustomEndpoint(
+      SERIES_IMAGE_DIFFUSERS_ENDPOINT,
+      SERIES_IMAGE_DIFFUSERS_TOKEN,
+      "diffusers",
+      request
+    );
+  }
+  if (provider === "gemini") {
+    const generated = await generateSeriesImageWithGemini(request);
+    return {
+      provider: "gemini",
+      contentType: generated.contentType,
+      data: generated.data,
+    };
+  }
+  if (provider === "pollinations") {
+    return generateSeriesImageWithPollinations(request);
+  }
+  throw new Error(`hybrid_image_generation_failed:${provider}`);
 };
 
 const unwrapMastraOutput = (value: any): any => {
@@ -954,27 +991,12 @@ const serializeEpisodeJob = (job: EpisodeGenerationJob, cursorRaw?: string | nul
   };
 };
 
-type SeriesJobProgressPhase =
-  | SeriesGenerationProgressEvent["phase"]
-  | "request_received"
-  | "input_validated"
-  | "response_preparing"
-  | "completed";
+type SeriesJobProgressPhase = string;
 
 type SeriesJobProgressEvent = {
   phase: SeriesJobProgressPhase;
   at: string;
   detail?: string;
-};
-
-type SeriesGenerationJob = {
-  id: string;
-  status: "running" | "succeeded" | "failed";
-  created_ms: number;
-  updated_ms: number;
-  events: SeriesJobProgressEvent[];
-  output?: SeriesWorkflowOutput;
-  error?: string;
 };
 
 type SeriesGenerationVNextJob = {
@@ -989,16 +1011,10 @@ type SeriesGenerationVNextJob = {
 
 const SERIES_JOB_TTL_MS = 30 * 60 * 1000;
 const SERIES_JOB_MAX_EVENTS = 160;
-const seriesGenerationJobs = new Map<string, SeriesGenerationJob>();
 const seriesGenerationVNextJobs = new Map<string, SeriesGenerationVNextJob>();
 
 const pruneSeriesGenerationJobs = () => {
   const cutoff = Date.now() - SERIES_JOB_TTL_MS;
-  for (const [id, job] of seriesGenerationJobs.entries()) {
-    if (job.updated_ms < cutoff) {
-      seriesGenerationJobs.delete(id);
-    }
-  }
   for (const [id, job] of seriesGenerationVNextJobs.entries()) {
     if (job.updated_ms < cutoff) {
       seriesGenerationVNextJobs.delete(id);
@@ -1007,7 +1023,7 @@ const pruneSeriesGenerationJobs = () => {
 };
 
 const appendSeriesJobEvent = (
-  job: SeriesGenerationJob | SeriesGenerationVNextJob,
+  job: SeriesGenerationVNextJob,
   event: Omit<SeriesJobProgressEvent, "at"> & { at?: string }
 ) => {
   const normalizedAt = clean(event.at) || new Date().toISOString();
@@ -1020,24 +1036,6 @@ const appendSeriesJobEvent = (
     job.events = job.events.slice(job.events.length - SERIES_JOB_MAX_EVENTS);
   }
   job.updated_ms = Date.now();
-};
-
-const serializeSeriesJob = (job: SeriesGenerationJob, cursorRaw?: string | null) => {
-  const parsedCursor = Number.parseInt(String(cursorRaw ?? "0"), 10);
-  const cursor = Number.isFinite(parsedCursor) && parsedCursor >= 0 ? parsedCursor : 0;
-  const events = job.events.slice(cursor);
-
-  return {
-    job_id: job.id,
-    status: job.status,
-    created_at: new Date(job.created_ms).toISOString(),
-    updated_at: new Date(job.updated_ms).toISOString(),
-    cursor,
-    next_cursor: cursor + events.length,
-    events,
-    ...(job.output ? job.output : {}),
-    ...(job.error ? { error: job.error } : {}),
-  };
 };
 
 const serializeSeriesVNextJob = (job: SeriesGenerationVNextJob, cursorRaw?: string | null) => {
@@ -1137,8 +1135,8 @@ app.post("/api/series/generate", async (c) => {
     logSeriesResultSummary(logPrefix, {
       startedMs,
       title: result.seriesBlueprint.concept.title,
-      characterCount: result.seriesBlueprint.characters.length,
-      checkpointCount: result.seriesBlueprint.checkpoints.length,
+      characterCount: 2,
+      continuityAxisCount: result.seriesBlueprint.continuityAxes.axes.length,
       workflowVersion: result.workflowVersion,
     });
     return c.json(result);
@@ -1224,8 +1222,8 @@ app.post("/api/series/generate/jobs", async (c) => {
           jobId,
           startedMs,
           title: result.seriesBlueprint.concept.title,
-          characterCount: result.seriesBlueprint.characters.length,
-          checkpointCount: result.seriesBlueprint.checkpoints.length,
+          characterCount: 2,
+          continuityAxisCount: result.seriesBlueprint.continuityAxes.axes.length,
           workflowVersion: result.workflowVersion,
         });
         console.log(`${logPrefix} ジョブ成功 — id: ${jobId}, title: ${result.seriesBlueprint.concept.title}`);
@@ -1277,198 +1275,6 @@ app.get("/api/series/generate/jobs/:jobId", async (c) => {
     );
   }
   return c.json(serializeSeriesVNextJob(job, c.req.query("cursor")));
-});
-
-app.post("/api/series/jobs", async (c) => {
-  const logPrefix = "[api/series/jobs]";
-  try {
-    pruneSeriesGenerationJobs();
-
-    const raw = await c.req.json();
-    const parsed = seriesGenerationRequestSchema.safeParse(raw);
-    if (!parsed.success) {
-      const msg = parsed.error.flatten().formErrors?.join("; ") || parsed.error.message;
-      console.error(`${logPrefix} invalid request:`, msg, parsed.error.flatten());
-      return c.json({ status: "failed", error: `リクエストが不正です: ${msg}` }, 400);
-    }
-
-    const jobId = randomUUID();
-    const now = Date.now();
-    const job: SeriesGenerationJob = {
-      id: jobId,
-      status: "running",
-      created_ms: now,
-      updated_ms: now,
-      events: [],
-    };
-    seriesGenerationJobs.set(jobId, job);
-    if (SERIES_VERBOSE_CONSOLE) {
-      console.log(`${logPrefix} request accepted — id=${jobId} ${summarizeLegacySeriesRequest(parsed.data)}`);
-    }
-
-    appendSeriesJobEvent(job, {
-      phase: "request_received",
-      detail: "シリーズ生成リクエストを受領",
-    });
-    appendSeriesJobEvent(job, {
-      phase: "input_validated",
-      detail: "入力スキーマ検証を完了",
-    });
-
-    void (async () => {
-      try {
-        const startedMs = Date.now();
-        console.log(`${logPrefix} ジョブ開始 — id: ${jobId}`);
-        const output = await generateSeriesWorkflowWithProgress(parsed.data, {
-          onProgress: async (event) => {
-            appendSeriesJobEvent(job, event);
-            logSeriesProgressEvent(logPrefix, {
-              jobId,
-              startedMs,
-              event,
-            });
-          },
-        });
-
-        appendSeriesJobEvent(job, {
-          phase: "response_preparing",
-          detail: "レスポンス整形を実施",
-        });
-
-        const series = output?.series;
-        const hasLegacyEpisodes = Array.isArray(series?.episode_blueprints);
-        const hasCheckpoints = Array.isArray(series?.checkpoints);
-        if (series?.title && (hasCheckpoints || hasLegacyEpisodes)) {
-          job.status = "succeeded";
-          job.output = output;
-          appendSeriesJobEvent(job, {
-            phase: "completed",
-            detail: "シリーズ生成が完了",
-          });
-          logSeriesResultSummary(logPrefix, {
-            jobId,
-            startedMs,
-            title: series.title,
-            characterCount: Array.isArray(series.characters) ? series.characters.length : 0,
-            checkpointCount: Array.isArray(series.checkpoints) ? series.checkpoints.length : 0,
-            workflowVersion: clean(output?.meta?.workflow_version),
-          });
-          console.log(`${logPrefix} ジョブ成功 — id: ${jobId}, title: ${series.title}`);
-          return;
-        }
-
-        throw new Error("Series payload missing in generated output");
-      } catch (error: any) {
-        const message = error?.message || "unknown error";
-        job.status = "failed";
-        job.error = message;
-        job.updated_ms = Date.now();
-        console.error(`${logPrefix} ジョブ失敗 — id: ${jobId}:`, message);
-      }
-    })();
-
-    return c.json(
-      {
-        job_id: jobId,
-        status: "running",
-        poll_path: `/api/series/jobs/${jobId}`,
-        cursor: 0,
-        next_cursor: job.events.length,
-        events: job.events,
-      },
-      202
-    );
-  } catch (error: any) {
-    console.error(`${logPrefix} error:`, error?.message || error);
-    return c.json(
-      {
-        status: "failed",
-        error: error?.message || "unknown error",
-      },
-      500
-    );
-  }
-});
-
-app.get("/api/series/jobs/:jobId", async (c) => {
-  pruneSeriesGenerationJobs();
-  const jobId = c.req.param("jobId");
-  const job = seriesGenerationJobs.get(jobId);
-  if (!job) {
-    return c.json(
-      {
-        status: "failed",
-        error: "job_not_found",
-      },
-      404
-    );
-  }
-  return c.json(serializeSeriesJob(job, c.req.query("cursor")));
-});
-
-app.post("/api/series", async (c) => {
-  const logPrefix = "[api/series]";
-  try {
-    const raw = await c.req.json();
-    const parsed = seriesGenerationRequestSchema.safeParse(raw);
-    if (!parsed.success) {
-      const msg = parsed.error.flatten().formErrors?.join("; ") || parsed.error.message;
-      console.error(`${logPrefix} invalid request:`, msg, parsed.error.flatten());
-      return c.json({ status: "failed", error: `リクエストが不正です: ${msg}` }, 400);
-    }
-    const input = parsed.data;
-    const startedMs = Date.now();
-    if (SERIES_VERBOSE_CONSOLE) {
-      console.log(`${logPrefix} request accepted — ${summarizeLegacySeriesRequest(input)}`);
-    }
-    console.log(`${logPrefix} リクエスト受付 — ワークフロー開始`);
-    const run = await seriesWorkflow.createRun();
-    const result = await run.start({ inputData: input });
-    console.log(`${logPrefix} ワークフロー実行完了`);
-    const output = unwrapMastraOutput(result);
-
-    const series = output?.series || output;
-    const meta =
-      output?.meta ??
-      (result as any)?.outputData?.meta ??
-      (result as any)?.output?.meta ??
-      (result as any)?.data?.meta ??
-      (result as any)?.result?.meta ??
-      null;
-
-    const hasLegacyEpisodes = Array.isArray(series?.episode_blueprints);
-    const hasCheckpoints = Array.isArray(series?.checkpoints);
-    if (series?.title && (hasCheckpoints || hasLegacyEpisodes)) {
-      logSeriesResultSummary(logPrefix, {
-        startedMs,
-        title: series?.title,
-        characterCount: Array.isArray(series?.characters) ? series.characters.length : 0,
-        checkpointCount: Array.isArray(series?.checkpoints) ? series.checkpoints.length : 0,
-        workflowVersion: clean(meta?.workflow_version),
-      });
-      console.log(`${logPrefix} 成功 — シリーズ返却:`, series?.title ?? "—");
-      return c.json({ series, meta });
-    }
-
-    const failure = extractFailure(result) || "Series payload missing in Mastra result";
-    console.error(`${logPrefix} workflow did not return valid series:`, failure, result);
-    return c.json(
-      {
-        status: "failed",
-        error: failure,
-      },
-      500
-    );
-  } catch (error: any) {
-    console.error(`${logPrefix} error:`, error?.message, error);
-    return c.json(
-      {
-        status: "failed",
-        error: error?.message || "unknown error",
-      },
-      500
-    );
-  }
 });
 
 app.post("/api/series/episode/jobs", async (c) => {
@@ -1534,7 +1340,7 @@ app.post("/api/series/episode/jobs", async (c) => {
             detail: "vNextエピソード生成が完了",
           });
           console.log(
-            `${epLog} vNextジョブ成功 — id: ${jobId}, title: ${result.episodeOutput.episodeMeta.title}, spots: ${result.episodeOutput.selectedSpots.length}, elapsed: ${(elapsedMs / 1000).toFixed(1)}秒`
+            `${epLog} vNextジョブ成功 — id: ${jobId}, title: ${result.episodeOutput.title}, spots: ${result.episodeOutput.selectedSpots.length}, elapsed: ${(elapsedMs / 1000).toFixed(1)}秒`
           );
         } catch (error: any) {
           const message = error?.message || "unknown error";

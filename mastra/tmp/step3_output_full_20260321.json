@@ -1,0 +1,133 @@
+{
+  "characters": [
+    {
+      "id": "char_1",
+      "name": "高瀬 玲",
+      "role": "シリーズ内で独立して行動する主人公（主人公ではない）。九州大学伊都キャンパスに属する同一調査チームの中核メンバー",
+      "tier": "primary",
+      "must_appear": true,
+      "is_partner": false,
+      "goal": "最終話までに事件の主因である引き継ぎ漏れと誤配置の連鎖を解明し、新生活を始めたばかりの新入生が新生活で必要な導線を理解し、迷わず行動を始められる状態にする状態で物語を終える。事件解決の達成感と「次に何をすべきか」が同時に残る着地を目指す。",
+      "arc_start": "断片的な情報に振り回される。",
+      "arc_end": "不確実性を受け入れつつ判断できる。",
+      "personality": "観察力は高いが、抱え込みやすい。",
+      "appearance": "落ち着いたダークグリーンのジャケット、鋭い目線。中肉中背だが姿勢がよく、常に周囲を観察している。",
+      "portrait_prompt": "rendering bible:, style preset: シネマティックアニメ, style canon: cinematic anime illustration, clean line art, cel-shaded coloring, controlled warm lighting, high readability silhouettes, medium_family: cinematic anime illustration, line_treatment: clean controlled linework, stable thickness, readable contour hierarchy, shading_treatment: cel-shaded base with restrained painterly transitions, texture_treatment: stylized texture accents only, avoid gritty photo noise, realism_level: grounded stylization (human-scale, physically plausible materials), lighting_rule: single key-light logic with soft rim support, avoid random neon glow, palette_rule: limited controlled palette with one warm/cool anchor pair, camera_lens_feeling: human-eye lens feeling, clear focal hierarchy, no extreme distortion, era_realism: contemporary or historically plausible environment rendering, style guardrails: consistent line thickness, painterly but stylized textures, limited cinematic palette, strong key light and rim light, forbidden_rendering_drifts: photorealistic skin pores / mixed-media collage / 3D CGI waxy rendering / speculative sci-fi glow language / photorealistic skin pores, live-action photo look, gritty documentary realism, 3D render look, palette anchors: 翡翠, genre mood: 新入生オリエンテーション事件ミステリー, emotional tone: 知的な高揚感と機能的な探索, setting texture: 九州大学伊都キャンパス。センターゾーンからウエストゾーンに至る、広大で機能的な現代建築群。, for series 伊都キャンパス・ロジスティクス：消えた新歓機材の行方, narrative visual brief:, case_core: small-scale anomalies and contradictions connected across episodes, truth_nature: grounded human-causal truth behind apparent inconsistencies, environment_layer: 九州大学伊都キャンパス。センターゾーンからウエストゾーンに至る、広大で機能的な現代建築群。, clue_objects: local notice print with subtle correction marks / ticket stub or receipt with mismatched sequence / public timetable snapshot with a missing line, human_traces: wet footprint or dirt transfer indicating recent movement / half-open locker/cabinet with hurried handling marks / recently removed tape or pin marks on a community board, material_anchors: real public-signage materials and aging patterns / human-scale architectural surfaces with plausible wear, time_window: daylight to twilight, weather_window: realistically variable local weather, cover_composition_family: clue tableau, hard_forbidden_motifs: futuristic architecture / holograms / glowing UI overlays / spacecraft / mecha / cyberpunk skyline / fantasy ruins / impossible geometry / speculative technology objects, character purpose: portrait for a grounded mystery series; this character must feel like they belong to the exact same world as the cover art, identity lock: keep the same face identity and anchor traits whenever this character appears again, hard constraint: must match the exact same rendering family, texture logic, lighting logic, and palette logic as the cover art, hard constraint: no photorealistic drift, no mixed media drift, no sci-fi costume drift, no fantasy accessory drift, 高瀬 玲, シリーズ内で独立して行動する主人公（ユーザー本人ではない）, investigation function: observation and contradiction extraction, relationship temperature: controlled tension with cooperative undertone, signature prop: field notebook with case markers, environment residue: subtle wear from daily public movement and local material aging, color theme: 翡翠, notable feature: 右目の下に古い傷痕, 落ち着いたダークグリーンのジャケット、鋭い目線。中肉中背だが姿勢がよく、常に周囲を観察している。, build: 中肉中背で姿勢の良い, 観察力は高いが、抱え込みやすい。, set within the material reality of: 九州大学伊都キャンパス。センターゾーンからウエストゾーンに至る、広大で機能的な現代建築群。, background hint: 九州大学伊都キャンパス。センターゾーンからウエストゾーンに至る、広大で機能的な現代建築群。, from series: 伊都キャンパス・ロジスティクス：消えた新歓機材の行方, case core: small-scale anomaly linked to larger unresolved truth, tone: 知的な高揚感と機能的な探索, portrait framing: waist-up or mid-shot, three-quarter angle preferred when needed for silhouette clarity, composition rule: clean portrait with one clear role-defining prop and one subtle world clue, negative constraints: no idol poster feel, no generic anime hero styling, no sci-fi accessories, no cyberpunk costume logic, no fantasy ornament overload, no interchangeable cast design, no text, no watermark",
+      "portrait_image_url": "http://127.0.0.1:4111/api/series/image?prompt=rendering+bible%3A%2C+style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+medium_family%3A+cinematic+anime+illustration%2C+line_treatment%3A+clean+controlled+linework%2C+stable+thickness%2C+readable+contour+hierarchy%2C+shading_treatment%3A+cel-shaded+base+with+restrained+painterly+transitions%2C+texture_treatment%3A+stylized+text&seed=1591406352&width=768&height=1024&purpose=general",
+      "secrets": [
+        "過去の選択に未解決の後悔がある。"
+      ],
+      "relationship_hooks": [
+        "相棒への依存と自立の揺れを抱える。",
+        "主人公と継続対話し、別視点の観察で推理を前進させる。",
+        "相棒の七海 司と連携し、主人公を含む三者で捜査を進める。"
+      ],
+      "archetype": "Hero",
+      "drive": "知りたいという衝動と、見て見ぬふりできない性分",
+      "dilemma": "真実を追うほど大切な人を危険に晒す矛盾",
+      "arc_midpoint": "信頼していた前提が崩れ、自分の判断基準を問い直す。",
+      "arc_trigger": "相棒が隠していた事実が発覚する場面",
+      "backstory": "かつて重要な選択を誤り、その後悔が行動の根底にある。安定した日常を捨てて真実を追い始めたのは、あの日の償いでもある。",
+      "big_five": {
+        "openness": 75,
+        "conscientiousness": 60,
+        "extraversion": 45,
+        "agreeableness": 55,
+        "neuroticism": 65
+      },
+      "enneagram_type": 5,
+      "core_fear": "無能で無力であること",
+      "core_desire": "有能で理解すること",
+      "speech_pattern": "丁寧語ベースだが、核心に触れると急にタメ口になる",
+      "catchphrase": "……これ、偶然じゃないよな。",
+      "quirks": [
+        "考え込むと左手で首の後ろを触る",
+        "重要なことほど小声になる"
+      ],
+      "relationships": [
+        {
+          "target_id": "char_2",
+          "type": "trust",
+          "description": "最も信頼する存在だが、依存と自立の間で揺れている",
+          "tension_level": 45
+        },
+        {
+          "target_id": "char_3",
+          "type": "debt",
+          "description": "過去に助けられた恩義があり、頭が上がらない",
+          "tension_level": 30
+        }
+      ],
+      "visual_design": {
+        "dominant_color": "翡翠",
+        "body_type": "中肉中背で姿勢の良い",
+        "silhouette_keyword": "鋭角的",
+        "distinguishing_feature": "右目の下に古い傷痕"
+      }
+    },
+    {
+      "id": "char_2",
+      "name": "七海 司",
+      "role": "常にユーザーと行動を共にする「謎の先輩」を相棒として配置。九州大学伊都キャンパスに属する同一調査チームの中核メンバー",
+      "tier": "primary",
+      "must_appear": true,
+      "is_partner": true,
+      "goal": "主人公の目的達成を補助しつつ自分の信念を守る。",
+      "arc_start": "感情より効率を優先する。",
+      "arc_end": "信頼を優先し、危機時には踏み込む。",
+      "personality": "冷静で機転が利く。",
+      "appearance": "機能的な服装で、整った姿勢を崩さない。暗い紺色のコート。",
+      "portrait_prompt": "rendering bible:, style preset: シネマティックアニメ, style canon: cinematic anime illustration, clean line art, cel-shaded coloring, controlled warm lighting, high readability silhouettes, medium_family: cinematic anime illustration, line_treatment: clean controlled linework, stable thickness, readable contour hierarchy, shading_treatment: cel-shaded base with restrained painterly transitions, texture_treatment: stylized texture accents only, avoid gritty photo noise, realism_level: grounded stylization (human-scale, physically plausible materials), lighting_rule: single key-light logic with soft rim support, avoid random neon glow, palette_rule: limited controlled palette with one warm/cool anchor pair, camera_lens_feeling: human-eye lens feeling, clear focal hierarchy, no extreme distortion, era_realism: contemporary or historically plausible environment rendering, style guardrails: consistent line thickness, painterly but stylized textures, limited cinematic palette, strong key light and rim light, forbidden_rendering_drifts: photorealistic skin pores / mixed-media collage / 3D CGI waxy rendering / speculative sci-fi glow language / photorealistic skin pores, live-action photo look, gritty documentary realism, 3D render look, palette anchors: 群青, genre mood: 新入生オリエンテーション事件ミステリー, emotional tone: 知的な高揚感と機能的な探索, setting texture: 九州大学伊都キャンパス。センターゾーンからウエストゾーンに至る、広大で機能的な現代建築群。, for series 伊都キャンパス・ロジスティクス：消えた新歓機材の行方, narrative visual brief:, case_core: small-scale anomalies and contradictions connected across episodes, truth_nature: grounded human-causal truth behind apparent inconsistencies, environment_layer: 九州大学伊都キャンパス。センターゾーンからウエストゾーンに至る、広大で機能的な現代建築群。, clue_objects: local notice print with subtle correction marks / ticket stub or receipt with mismatched sequence / public timetable snapshot with a missing line, human_traces: wet footprint or dirt transfer indicating recent movement / half-open locker/cabinet with hurried handling marks / recently removed tape or pin marks on a community board, material_anchors: real public-signage materials and aging patterns / human-scale architectural surfaces with plausible wear, time_window: daylight to twilight, weather_window: realistically variable local weather, cover_composition_family: clue tableau, hard_forbidden_motifs: futuristic architecture / holograms / glowing UI overlays / spacecraft / mecha / cyberpunk skyline / fantasy ruins / impossible geometry / speculative technology objects, character purpose: portrait for a grounded mystery series; this character must feel like they belong to the exact same world as the cover art, identity lock: keep the same face identity and anchor traits whenever this character appears again, hard constraint: must match the exact same rendering family, texture logic, lighting logic, and palette logic as the cover art, hard constraint: no photorealistic drift, no mixed media drift, no sci-fi costume drift, no fantasy accessory drift, 七海 司, 常にユーザーと行動を共にする「謎の先輩」を相棒として配置, investigation function: observation and contradiction extraction, relationship temperature: controlled tension with cooperative undertone, signature prop: field notebook with case markers, environment residue: subtle wear from daily public movement and local material aging, color theme: 群青, notable feature: 常に手袋を外さない（左手に秘密がある）, 機能的な服装で、整った姿勢を崩さない。暗い紺色のコート。, build: 長身で引き締まった, 冷静で機転が利く。, set within the material reality of: 九州大学伊都キャンパス。センターゾーンからウエストゾーンに至る、広大で機能的な現代建築群。, background hint: 九州大学伊都キャンパス。センターゾーンからウエストゾーンに至る、広大で機能的な現代建築群。, from series: 伊都キャンパス・ロジスティクス：消えた新歓機材の行方, case core: small-scale anomaly linked to larger unresolved truth, tone: 知的な高揚感と機能的な探索, portrait framing: waist-up or mid-shot, three-quarter angle preferred when needed for silhouette clarity, composition rule: clean portrait with one clear role-defining prop and one subtle world clue, negative constraints: no idol poster feel, no generic anime hero styling, no sci-fi accessories, no cyberpunk costume logic, no fantasy ornament overload, no interchangeable cast design, no text, no watermark",
+      "portrait_image_url": "http://127.0.0.1:4111/api/series/image?prompt=rendering+bible%3A%2C+style+preset%3A+%E3%82%B7%E3%83%8D%E3%83%9E%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%8B%E3%83%A1%2C+style+canon%3A+cinematic+anime+illustration%2C+clean+line+art%2C+cel-shaded+coloring%2C+controlled+warm+lighting%2C+high+readability+silhouettes%2C+medium_family%3A+cinematic+anime+illustration%2C+line_treatment%3A+clean+controlled+linework%2C+stable+thickness%2C+readable+contour+hierarchy%2C+shading_treatment%3A+cel-shaded+base+with+restrained+painterly+transitions%2C+texture_treatment%3A+stylized+text&seed=52487522&width=768&height=1024&purpose=general",
+      "secrets": [
+        "敵側と接点を持っていた時期がある。"
+      ],
+      "relationship_hooks": [
+        "主人公と衝突しながら協働の型を作る。",
+        "高瀬 玲と役割分担し、主人公の仮説検証を共同で担う。"
+      ],
+      "archetype": "Caregiver",
+      "drive": "守りたいものを守る。そのためなら手を汚す覚悟もある",
+      "dilemma": "効率と情のどちらを優先すべきか、答えが出ない",
+      "arc_midpoint": "効率だけでは守れないと悟り、感情に向き合う。",
+      "arc_trigger": "主人公が危険に陥り、合理的判断だけでは救えない場面",
+      "backstory": "かつて組織に属していた時期があり、その頃の人脈と経験が今の実務能力の源。しかし組織を離れた理由は本人しか知らない。",
+      "big_five": {
+        "openness": 40,
+        "conscientiousness": 85,
+        "extraversion": 55,
+        "agreeableness": 50,
+        "neuroticism": 30
+      },
+      "enneagram_type": 6,
+      "core_fear": "支えを失い孤立すること",
+      "core_desire": "安全と確実さ",
+      "speech_pattern": "簡潔で断定的。専門用語を自然に混ぜる",
+      "catchphrase": "事実だけ見ろ。感情は後だ。",
+      "quirks": [
+        "考え事をするとき腕時計を回す",
+        "甘いものに目がない（本人は認めない）"
+      ],
+      "relationships": [
+        {
+          "target_id": "char_1",
+          "type": "trust",
+          "description": "主人公を守る使命感と、対等でいたい葛藤",
+          "tension_level": 40
+        },
+        {
+          "target_id": "char_4",
+          "type": "secret",
+          "description": "過去の組織時代に面識があり、その事実を隠している",
+          "tension_level": 75
+        }
+      ],
+      "visual_design": {
+        "dominant_color": "群青",
+        "body_type": "長身で引き締まった",
+        "silhouette_keyword": "流線型",
+        "distinguishing_feature": "常に手袋を外さない（左手に秘密がある）"
+      }
+    }
+  ]
+}

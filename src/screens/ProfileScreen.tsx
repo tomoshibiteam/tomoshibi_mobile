@@ -13,15 +13,15 @@ import { Ionicons } from "@expo/vector-icons";
 import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import type { MainTabParamList, RootStackParamList } from "@/navigation/types";
 import { fonts } from "@/theme/fonts";
+import { formatProfileHandle } from "@/lib/profileHandle";
 import { useSessionUserId } from "@/hooks/useSessionUser";
 import { useFriendshipsRealtime } from "@/hooks/useFriendshipsRealtime";
 import {
   fetchFollowCounts,
   fetchQuestSocialStats,
-  fetchUserAchievements,
   fetchUserProfile,
 } from "@/services/social";
-import type { AchievementRow, ProfileRow } from "@/types/social";
+import type { ProfileRow } from "@/types/social";
 import { ProfileAvatar } from "@/components/common/ProfileAvatar";
 import { getSupabaseOrThrow, isSupabaseConfigured } from "@/lib/supabase";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
@@ -30,7 +30,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { deleteSeriesDraft, fetchMySeriesOptions, type SeriesOption } from "@/services/quests";
 
 type Props = BottomTabScreenProps<MainTabParamList, "Profile">;
-type ProfileTab = "series" | "timeline" | "likes" | "drafts";
+type ProfileTab = "series" | "timeline" | "likes";
+type SeriesVisibility = "private" | "public";
 
 type TimelineRow = {
   id: string;
@@ -52,12 +53,6 @@ type LikedQuestRow = {
 
 const FALLBACK_COVER =
   "https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=800&q=80";
-
-const FALLBACK_ACHIEVEMENTS = [
-  { id: "guide", name: "名誉案内人", tone: "featured" as const },
-  { id: "story", name: "ストーリーテラー", tone: "normal" as const },
-  { id: "reader", name: "読書家", tone: "normal" as const },
-];
 
 const formatCompactNumber = (value: number) => {
   if (value >= 10000) return `${Math.round(value / 1000)}k`;
@@ -81,16 +76,6 @@ const formatDuration = (seconds: number | null | undefined) => {
   return `${hour}時間${remain}分`;
 };
 
-const createHandle = (name: string | null | undefined, userId: string) => {
-  const base = (name || "traveler")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "_")
-    .replace(/[^a-z0-9_\-.ぁ-んァ-ヶ一-龠]/g, "");
-  if (base.length > 0) return `@${base}`;
-  return `@user_${userId.slice(0, 6)}`;
-};
-
 export const ProfileScreen = ({}: Props) => {
   const rootNavigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { userId, loading: authLoading } = useSessionUserId();
@@ -103,10 +88,10 @@ export const ProfileScreen = ({}: Props) => {
   const [allSeries, setAllSeries] = useState<SeriesOption[]>([]);
   const [timelineRows, setTimelineRows] = useState<TimelineRow[]>([]);
   const [likedQuests, setLikedQuests] = useState<LikedQuestRow[]>([]);
-  const [achievements, setAchievements] = useState<AchievementRow[]>([]);
   const [ratingMap, setRatingMap] = useState<Record<string, number>>({});
   const [playCountMap, setPlayCountMap] = useState<Record<string, number>>({});
   const [activeTab, setActiveTab] = useState<ProfileTab>("series");
+  const [seriesVisibility, setSeriesVisibility] = useState<SeriesVisibility>("private");
 
   const refresh = useCallback(async () => {
     if (!userId || !isSupabaseConfigured) {
@@ -116,7 +101,6 @@ export const ProfileScreen = ({}: Props) => {
       setAllSeries([]);
       setTimelineRows([]);
       setLikedQuests([]);
-      setAchievements([]);
       setRatingMap({});
       setPlayCountMap({});
       setLoading(false);
@@ -125,18 +109,16 @@ export const ProfileScreen = ({}: Props) => {
 
     setLoading(true);
     try {
-      const [profileRow, counts, seriesRows, achievementRows] = await Promise.all([
+      const [profileRow, counts, seriesRows] = await Promise.all([
         fetchUserProfile(userId),
         fetchFollowCounts(userId),
         fetchMySeriesOptions(userId, 120),
-        fetchUserAchievements(userId),
       ]);
 
       setProfile(profileRow);
       setFollowers(counts.followers);
       setFollowing(counts.following);
       setAllSeries(seriesRows);
-      setAchievements(achievementRows);
 
       const publishedSeriesIds = seriesRows
         .filter((row) => !row.status || row.status === "published")
@@ -305,33 +287,24 @@ export const ProfileScreen = ({}: Props) => {
     () => profile?.bio || "日常の中にある小さな奇跡を探しています。あなたの次の冒険を書き残しましょう。",
     [profile?.bio]
   );
-  const handle = useMemo(() => (userId ? createHandle(profile?.name || null, userId) : "@guest"), [profile?.name, userId]);
-
-  const badgeItems = useMemo(() => {
-    if (achievements.length > 0) {
-      return achievements.map((item, index) => ({
-        id: item.id,
-        name: item.name,
-        tone: index === 0 ? ("featured" as const) : ("normal" as const),
-      }));
-    }
-    return FALLBACK_ACHIEVEMENTS;
-  }, [achievements]);
+  const handle = useMemo(
+    () => (userId ? formatProfileHandle(profile?.handle || null, profile?.name || null, userId) : "@guest"),
+    [profile?.handle, profile?.name, userId]
+  );
 
   const publishedSeries = useMemo(
     () => allSeries.filter((series) => !series.status || series.status === "published"),
     [allSeries]
   );
-  const draftSeries = useMemo(
+  const privateSeries = useMemo(
     () => allSeries.filter((series) => series.status && series.status !== "published"),
     [allSeries]
   );
 
-  const tabs: Array<{ key: ProfileTab; label: string; badge?: number }> = [
+  const tabs: Array<{ key: ProfileTab; label: string }> = [
     { key: "series", label: "シリーズ" },
     { key: "timeline", label: "タイムライン" },
     { key: "likes", label: "いいね" },
-    { key: "drafts", label: "下書き", badge: draftSeries.length },
   ];
 
   const handlePublishDraft = async (questId: string) => {
@@ -417,7 +390,10 @@ export const ProfileScreen = ({}: Props) => {
         typeof error?.message === "string" && /auth session missing/i.test(error.message);
 
       if (error && !canIgnoreSignOutError) throw error;
-      rootNavigation.reset({ index: 0, routes: [{ name: "Auth" }] });
+      rootNavigation.reset({
+        index: 0,
+        routes: [{ name: "MainTabs", params: { screen: "Profile" } }],
+      });
     } catch (error) {
       console.error("ProfileScreen: sign out failed", error);
       if (Platform.OS === "web" && typeof globalThis.alert === "function") {
@@ -454,11 +430,14 @@ export const ProfileScreen = ({}: Props) => {
   };
 
   const renderSeries = () => {
-    if (publishedSeries.length === 0) {
+    const isPublicView = seriesVisibility === "public";
+    const seriesItems = isPublicView ? publishedSeries : privateSeries;
+
+    if (seriesItems.length === 0) {
       return (
         <View className="rounded-2xl border border-dashed border-[#E2DBD3] bg-white px-5 py-8 items-center">
           <Text className="text-sm text-[#6B6762] mb-3" style={{ fontFamily: fonts.bodyRegular }}>
-            表示できるシリーズがありません
+            {isPublicView ? "公開しているシリーズはありません" : "非公開のシリーズはありません"}
           </Text>
           <Pressable
             className="h-10 rounded-xl bg-[#EE8C2B] px-4 items-center justify-center"
@@ -474,50 +453,95 @@ export const ProfileScreen = ({}: Props) => {
 
     return (
       <View className="flex-row flex-wrap justify-between">
-        {publishedSeries.map((item) => {
+        {seriesItems.map((item) => {
           const playCount = playCountMap[item.id] || 0;
           const averageRating = ratingMap[item.id];
-          const statusText = playCount > 0 ? formatCompactNumber(playCount) : "NEW";
+          const statusText = isPublicView ? (playCount > 0 ? formatCompactNumber(playCount) : "NEW") : "非公開";
 
           return (
-            <Pressable
-              key={item.id}
-              style={{ width: "48%", marginBottom: 16 }}
-              onPress={() => rootNavigation.navigate("SeriesDetail", { questId: item.id })}
-            >
-              <View className="relative rounded-xl overflow-hidden mb-2.5 bg-[#E3D6C9]" style={{ aspectRatio: 3 / 4 }}>
-                <Image
-                  source={{ uri: item.coverImageUrl || FALLBACK_COVER }}
-                  className="absolute inset-0 w-full h-full"
-                  resizeMode="cover"
-                />
-                <View className="absolute inset-0 bg-black/20" />
+            <View key={item.id} style={{ width: "48%", marginBottom: 16 }}>
+              <Pressable onPress={() => rootNavigation.navigate("SeriesDetail", { questId: item.id })}>
+                <View
+                  className="relative rounded-xl overflow-hidden mb-2.5 bg-[#E3D6C9]"
+                  style={{ aspectRatio: 3 / 4 }}
+                >
+                  <Image
+                    source={{ uri: item.coverImageUrl || FALLBACK_COVER }}
+                    className="absolute inset-0 w-full h-full"
+                    resizeMode="cover"
+                  />
+                  <View className="absolute inset-0 bg-black/20" />
 
-                <View className="absolute top-2 right-2 bg-black/60 rounded-full px-2 py-0.5 flex-row items-center gap-1">
-                  <Ionicons name="eye-outline" size={10} color="#FFFFFF" />
-                  <Text className="text-[10px] text-white" style={{ fontFamily: fonts.displayBold }}>
-                    {statusText}
-                  </Text>
-                </View>
-
-                {typeof averageRating === "number" ? (
-                  <View className="absolute bottom-2 left-2 bg-black/55 rounded-full px-2 py-0.5 flex-row items-center gap-1">
-                    <Ionicons name="star" size={10} color="#FCD34D" />
+                  <View className="absolute top-2 right-2 bg-black/60 rounded-full px-2 py-0.5 flex-row items-center gap-1">
+                    <Ionicons
+                      name={isPublicView ? "eye-outline" : "lock-closed-outline"}
+                      size={10}
+                      color="#FFFFFF"
+                    />
                     <Text className="text-[10px] text-white" style={{ fontFamily: fonts.displayBold }}>
-                      {averageRating.toFixed(1)}
+                      {statusText}
                     </Text>
                   </View>
-                ) : null}
-              </View>
 
-              <Text className="text-sm text-[#2B1E16] mb-1 leading-5" numberOfLines={2} style={{ fontFamily: fonts.displayBold }}>
-                {item.title || "タイトル未設定"}
-              </Text>
+                  {isPublicView && typeof averageRating === "number" ? (
+                    <View className="absolute bottom-2 left-2 bg-black/55 rounded-full px-2 py-0.5 flex-row items-center gap-1">
+                      <Ionicons name="star" size={10} color="#FCD34D" />
+                      <Text className="text-[10px] text-white" style={{ fontFamily: fonts.displayBold }}>
+                        {averageRating.toFixed(1)}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
 
-              <Text className="text-xs text-[#7A6652]" numberOfLines={1} style={{ fontFamily: fonts.bodyRegular }}>
-                {item.description || item.areaName || "新しい物語が公開されています"}
-              </Text>
-            </Pressable>
+                <Text
+                  className="text-sm text-[#2B1E16] mb-1 leading-5"
+                  numberOfLines={2}
+                  style={{ fontFamily: fonts.displayBold }}
+                >
+                  {item.title || "タイトル未設定"}
+                </Text>
+
+                <Text className="text-xs text-[#7A6652]" numberOfLines={1} style={{ fontFamily: fonts.bodyRegular }}>
+                  {item.description || item.areaName || (isPublicView ? "新しい物語が公開されています" : "まだ公開していないシリーズです")}
+                </Text>
+              </Pressable>
+
+              {!isPublicView ? (
+                <View className="flex-row items-center gap-2 mt-3">
+                  <Pressable
+                    className="flex-1 h-8 rounded-lg border border-[#D8CFC6] bg-white items-center justify-center"
+                    onPress={() => {
+                      handleDeleteDraft(item.id);
+                    }}
+                    disabled={Boolean(actionLoading)}
+                  >
+                    {actionLoading === "delete" ? (
+                      <ActivityIndicator size="small" color="#9A4236" />
+                    ) : (
+                      <Text className="text-xs text-[#9A4236]" style={{ fontFamily: fonts.displayBold }}>
+                        消去
+                      </Text>
+                    )}
+                  </Pressable>
+
+                  <Pressable
+                    className="flex-1 h-8 rounded-lg bg-[#EE8C2B] items-center justify-center"
+                    onPress={() => {
+                      void handlePublishDraft(item.id);
+                    }}
+                    disabled={Boolean(actionLoading)}
+                  >
+                    {actionLoading === "publish" ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text className="text-xs text-white" style={{ fontFamily: fonts.displayBold }}>
+                        公開
+                      </Text>
+                    )}
+                  </Pressable>
+                </View>
+              ) : null}
+            </View>
           );
         })}
 
@@ -633,85 +657,10 @@ export const ProfileScreen = ({}: Props) => {
     );
   };
 
-  const renderDrafts = () => {
-    if (draftSeries.length === 0) {
-      return (
-        <View className="rounded-2xl border border-dashed border-[#E2DBD3] bg-white px-5 py-8 items-center">
-          <Text className="text-sm text-[#6B6762] mb-2" style={{ fontFamily: fonts.bodyRegular }}>
-            下書きはありません
-          </Text>
-          <Text className="text-xs text-[#8E8984]" style={{ fontFamily: fonts.bodyRegular }}>
-            作成中のクエストがあるとここに表示されます。
-          </Text>
-        </View>
-      );
-    }
-
-    return (
-      <View className="gap-3">
-        {draftSeries.map((quest) => (
-          <View
-            key={quest.id}
-            className="rounded-2xl border border-[#ECE6DF] bg-white px-4 py-3"
-          >
-            <View className="flex-row items-center justify-between gap-3">
-              <Pressable
-                className="flex-1 min-w-0"
-                onPress={() => rootNavigation.navigate("SeriesDetail", { questId: quest.id })}
-              >
-                <Text className="text-sm text-[#221910]" numberOfLines={1} style={{ fontFamily: fonts.displayBold }}>
-                  {quest.title}
-                </Text>
-                <Text className="text-xs text-[#6B6762] mt-1" style={{ fontFamily: fonts.bodyRegular }}>
-                  {quest.areaName || "エリア未設定"}
-                </Text>
-              </Pressable>
-
-              <View className="flex-row items-center gap-2">
-                <Pressable
-                  className="h-8 rounded-lg border border-[#D8CFC6] bg-white px-3 items-center justify-center"
-                  onPress={() => {
-                    handleDeleteDraft(quest.id);
-                  }}
-                  disabled={Boolean(actionLoading)}
-                >
-                  {actionLoading === "delete" ? (
-                    <ActivityIndicator size="small" color="#9A4236" />
-                  ) : (
-                    <Text className="text-xs text-[#9A4236]" style={{ fontFamily: fonts.displayBold }}>
-                      消去
-                    </Text>
-                  )}
-                </Pressable>
-
-                <Pressable
-                  className="h-8 rounded-lg bg-[#EE8C2B] px-3 items-center justify-center"
-                  onPress={() => {
-                    void handlePublishDraft(quest.id);
-                  }}
-                  disabled={Boolean(actionLoading)}
-                >
-                  {actionLoading === "publish" ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                  ) : (
-                    <Text className="text-xs text-white" style={{ fontFamily: fonts.displayBold }}>
-                      公開
-                    </Text>
-                  )}
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        ))}
-      </View>
-    );
-  };
-
   const renderActiveContent = () => {
     if (activeTab === "series") return renderSeries();
     if (activeTab === "timeline") return renderTimeline();
-    if (activeTab === "likes") return renderLikes();
-    return renderDrafts();
+    return renderLikes();
   };
 
   if (!isSupabaseConfigured) {
@@ -742,23 +691,74 @@ export const ProfileScreen = ({}: Props) => {
   if (!userId) {
     return (
       <SafeAreaView edges={["top"]} className="flex-1 bg-[#F8F7F6]">
-        <View className="px-6 pt-10">
-          <Text className="text-xl text-[#221910] mb-2" style={{ fontFamily: fonts.displayBold }}>
-            ログインが必要です
+        <View className="h-14 px-4 border-b border-[#ECE6DF] flex-row items-center justify-center">
+          <Text className="text-base text-[#3D2E1F]" style={{ fontFamily: fonts.displayBold }}>
+            プロフィール
           </Text>
-          <Text className="text-sm text-[#6C5647]" style={{ fontFamily: fonts.bodyRegular }}>
-            マイプロフィールとフォロー情報を表示するにはログインしてください。
-          </Text>
-
-          <Pressable
-            className="h-11 rounded-xl bg-[#EE8C2B] mt-5 items-center justify-center"
-            onPress={() => rootNavigation.navigate("Auth")}
-          >
-            <Text className="text-white text-sm" style={{ fontFamily: fonts.displayBold }}>
-              ログイン / 新規登録
-            </Text>
-          </Pressable>
         </View>
+
+        <ScrollView
+          className="flex-1"
+          contentContainerStyle={{
+            flexGrow: 1,
+            paddingHorizontal: 20,
+            paddingTop: 28,
+            paddingBottom: 32,
+            justifyContent: "center",
+          }}
+          showsVerticalScrollIndicator={false}
+        >
+          <View className="items-center">
+            <View
+              className="w-28 h-28 rounded-full overflow-hidden border-4 border-white shadow-md bg-[#E6E1DB]"
+              style={{
+                shadowColor: "#000000",
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.12,
+                shadowRadius: 10,
+                elevation: 3,
+              }}
+            >
+              <ProfileAvatar
+                name="ゲスト"
+                imageUrl={null}
+                size={112}
+                showBorder={false}
+              />
+            </View>
+
+            <Text className="text-[28px] text-[#221910] mt-4" style={{ fontFamily: fonts.displayExtraBold }}>
+              ゲスト
+            </Text>
+            <Text
+              className="text-sm text-[#6C5647] mt-2 text-center leading-6 max-w-[320px]"
+              style={{ fontFamily: fonts.bodyRegular }}
+            >
+              ホームや検索はそのまま使えます。ログインすると、プロフィール保存、作品管理、フォロー、プレイ履歴が使えるようになります。
+            </Text>
+
+            <View className="flex-row gap-3 w-full mt-6">
+              <Pressable
+                className="flex-1 h-12 rounded-xl bg-[#EE8C2B] items-center justify-center"
+                onPress={() => rootNavigation.navigate("Auth")}
+              >
+                <Text className="text-white text-sm" style={{ fontFamily: fonts.displayBold }}>
+                  ログイン / 新規登録
+                </Text>
+              </Pressable>
+
+              <Pressable
+                className="flex-1 h-12 rounded-xl border border-[#DDD5CC] bg-white items-center justify-center"
+                onPress={() => rootNavigation.navigate("MainTabs", { screen: "Search" })}
+              >
+                <Text className="text-sm text-[#6C5647]" style={{ fontFamily: fonts.displayBold }}>
+                  作品を探す
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+
+        </ScrollView>
       </SafeAreaView>
     );
   }
@@ -778,12 +778,7 @@ export const ProfileScreen = ({}: Props) => {
             {handle}
           </Text>
 
-          <Pressable
-            className="w-9 h-9 rounded-full items-center justify-center"
-            onPress={() => rootNavigation.navigate("Settings")}
-          >
-            <Ionicons name="menu" size={20} color="#6B6762" />
-          </Pressable>
+          <View className="w-9 h-9" />
         </View>
       </SafeAreaView>
 
@@ -888,48 +883,7 @@ export const ProfileScreen = ({}: Props) => {
           </View>
         </View>
 
-        <View className="mt-4 pb-6 border-b border-[#EFE2D6]">
-          <View className="px-5 mb-3 flex-row items-center justify-between">
-            <Text className="text-sm text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
-              獲得称号
-            </Text>
-            <Text className="text-xs text-[#EE8C2B]" style={{ fontFamily: fonts.displayBold }}>
-              すべて見る
-            </Text>
-          </View>
-
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 4, gap: 10 }}
-          >
-            {badgeItems.map((badge) => (
-              <View
-                key={badge.id}
-                className={`rounded-full border flex-row items-center gap-2 py-1.5 pl-2 pr-4 ${
-                  badge.tone === "featured" ? "bg-[#FFF1DE] border-[#F4D6AE]" : "bg-[#F3ECE4] border-[#EADFCF]"
-                }`}
-              >
-                <View
-                  className={`w-6 h-6 rounded-full items-center justify-center ${
-                    badge.tone === "featured" ? "bg-[#EE8C2B]/20" : "bg-[#DED1BF]"
-                  }`}
-                >
-                  <Ionicons
-                    name="book-outline"
-                    size={12}
-                    color={badge.tone === "featured" ? "#EE8C2B" : "#8F7A64"}
-                  />
-                </View>
-                <Text className="text-xs text-[#5F4A38]" style={{ fontFamily: fonts.displayBold }}>
-                  {badge.name}
-                </Text>
-              </View>
-            ))}
-          </ScrollView>
-        </View>
-
-        <View className="pt-2 bg-[#F8F7F6]">
+        <View className="mt-4 pt-2 bg-[#F8F7F6]">
           <View className="flex-row border-b border-[#E7D9C7]">
             {tabs.map((tab) => {
               const active = activeTab === tab.key;
@@ -946,13 +900,6 @@ export const ProfileScreen = ({}: Props) => {
                     >
                       {tab.label}
                     </Text>
-                    {typeof tab.badge === "number" && tab.badge > 0 ? (
-                      <View className="px-1.5 py-0.5 rounded-full bg-[#E6DED5]">
-                        <Text className="text-[10px] text-[#6B6762]" style={{ fontFamily: fonts.displayBold }}>
-                          {tab.badge}
-                        </Text>
-                      </View>
-                    ) : null}
                   </View>
                 </Pressable>
               );
@@ -962,12 +909,42 @@ export const ProfileScreen = ({}: Props) => {
 
         <View className="px-5 pt-5">
           <View className="flex-row items-center justify-between mb-4">
-            <Text className="text-lg text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
-              {activeTab === "series" && "公開シリーズ"}
-              {activeTab === "timeline" && "最近のタイムライン"}
-              {activeTab === "likes" && "お気に入り"}
-              {activeTab === "drafts" && "下書き"}
-            </Text>
+            {activeTab === "series" ? (
+              <View className="rounded-full bg-[#EFE7DE] p-1 flex-row">
+                <Pressable
+                  className={`h-9 px-5 rounded-full items-center justify-center ${
+                    seriesVisibility === "private" ? "bg-[#221910]" : ""
+                  }`}
+                  onPress={() => setSeriesVisibility("private")}
+                >
+                  <Text
+                    className={`text-sm ${seriesVisibility === "private" ? "text-white" : "text-[#6C5647]"}`}
+                    style={{ fontFamily: fonts.displayBold }}
+                  >
+                    非公開
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  className={`h-9 px-5 rounded-full items-center justify-center ${
+                    seriesVisibility === "public" ? "bg-[#EE8C2B]" : ""
+                  }`}
+                  onPress={() => setSeriesVisibility("public")}
+                >
+                  <Text
+                    className={`text-sm ${seriesVisibility === "public" ? "text-white" : "text-[#6C5647]"}`}
+                    style={{ fontFamily: fonts.displayBold }}
+                  >
+                    公開
+                  </Text>
+                </Pressable>
+              </View>
+            ) : (
+              <Text className="text-lg text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
+                {activeTab === "timeline" && "最近のタイムライン"}
+                {activeTab === "likes" && "お気に入り"}
+              </Text>
+            )}
           </View>
 
           {renderActiveContent()}

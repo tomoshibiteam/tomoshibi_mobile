@@ -1,6 +1,17 @@
 # 意思決定ログ（Decision Log）
 
-- 最終更新日: 2026-03-16
+- 最終更新日: 2026-03-26
+
+### [DEC-20260326-008] シリーズ生成・エピソード生成ではフォールバック出力を禁止し hard error で停止する
+- 日付: 2026-03-26
+- ステータス: 決定
+- 決定内容: シリーズ生成・エピソード生成・関連画像生成の実行経路では、ヒューリスティックな代替文面・代替キャラ・代替スポット・代替ルート・代替プロバイダへのフォールバックを行わず、外部AIや実素材が不足した時点で hard error を返して停止する。
+- 理由: 検証環境ではフォールバックが品質問題を隠し、何が壊れているかの切り分けを困難にするため。低品質の擬似成功より、失敗位置を明示する失敗の方が改善速度に寄与する。
+- 影響範囲: Mastra series V2 workflow、episode runtime V2、legacy episode planner 実行経路、シリーズ画像生成プロキシ、デバッグログ、テスト時の失敗条件。
+- 関連仮説: 一時的に失敗率は上がるが、生成品質と障害切り分け速度は改善する。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/product/SERIES_PIPELINE_PHASE1_REDESIGN_MEMO.md
 
 ## 使い方
 - 重要な意思決定を時系列で追記する（上に新しいものを追加）
@@ -23,6 +34,40 @@
 ```
 
 ## ログ
+
+### [DEC-20260322-035] シリーズを「継続世界の母体」、エピソードを「1回完結の体験単位」に再定義
+- 日付: 2026-03-22
+- ステータス: 決定
+- 決定内容: 標準モードのシリーズ生成は、長編3話構造・固定 checkpoint・first episode seed を正本成果物とせず、`SeriesBlueprintV2` を返す方式へ切り替える。シリーズは `世界観 / 固定キャラ / ユーザーの立場 / continuity axes / continuity contract / episode generation contract` を持つ母体とし、エピソード生成はその母体を読み込んで毎回完結の1話を都度生成する。継続性は大謎一本道ではなく、関係性・発見ログ・共有記憶・称号・callback 候補の蓄積で担保する。
+- 理由: 旧「3話固定の長編寄りシリーズ」前提では、観光文脈で重要な各話満足感、地域横断性、生成安定性、シリーズ/エピソード責務分離が崩れやすかったため。
+- 影響範囲: `mastra/src/workflows/series-workflow-v2.ts`、`mastra/src/lib/runtime/seriesRuntimeV2.ts`、`mastra/src/schemas/series-runtime-v2.ts`、`mastra/src/server.ts`、`src/services/seriesAi.ts`、`src/services/quests.ts`、シリーズ結果UIとエピソード生成接続、基準文書のシリーズ/エピソード定義。
+- 関連仮説: 継続軸を 2〜4 本に制限し、各話完結を強制する方が、プロトタイプ段階では愛着形成と継続利用の両立に有利である。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md（2, 4, 6, 7）
+  - docs/business/COMMON_UNDERSTANDING_OPERATIONS.md
+
+### [DEC-20260322-036] 生成パイプラインは schema-first / validator-first / no-local-fallback を標準化
+- 日付: 2026-03-22
+- ステータス: 決定
+- 決定内容: シリーズ生成・エピソード生成の全主要ステップは、`構造生成 → validator → repair → 必要時のみ prose 生成` の順序を標準化する。各ステップは strict schema と semantic validator を持ち、`accepted=false` の成果物は下流へ渡さない。外部LLM失敗時にローカルモデルへ silently fallback する運用は停止し、repair / retry 後も品質基準を満たさない場合は明示的に error を返す。
+- 理由: 「それっぽいが弱い」生成結果が downstream へ流れ、最終出力の角度が下がる問題と、ローカル fallback による重複コスト・品質不安定を止めるため。
+- 影響範囲: `series-workflow-v2.ts` の StepRunResult/validator 導入、`seriesRuntimeV2.ts` の episode artifact 分解、server/job error handling、フロント progress 表示、運用時の失敗時挙動。
+- 関連仮説: strict schema と semantic validator を両方入れる方が、prompt 改善だけに依存するよりも生成品質の下振れを抑えられる。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/business/COMMON_UNDERSTANDING_OPERATIONS.md
+
+### [DEC-20260318-034] シリーズ生成の話数を3話固定（導入・展開・結末）に統一
+- 日付: 2026-03-18
+- ステータス: 更新
+- 決定内容: シリーズ生成の `desired_episode_count` は入力値に関わらず 3 話固定とし、checkpoint も 3 点固定（導入・展開・結末）で生成する。フロント送信値、Mastraワークフロー、planner/consistency/schema の制約を同一方針へ揃える。
+- 理由: プロトタイプ段階ではシリーズ設計の可読性・検証速度・運用コストを優先し、長編可変話数よりも最小構成で品質を詰めるため。
+- 影響範囲: `src/services/seriesAi.ts`（送信話数固定）、`mastra/src/workflows/series-workflow.ts`（固定話数運用）、`mastra/src/lib/agents/seriesEpisodePlannerAgent.ts`（3 checkpoint固定と導入/展開/結末の明示）、`mastra/src/lib/agents/seriesConsistencyAgent.ts` および関連 agent/schemas（checkpoint件数整合）。
+- 関連仮説: 3話構成での継続率と満足度が確認できた後、将来的に可変話数へ再拡張する可能性がある。
+- 関連文書:
+  - docs/business/TOMOSHIBI_COMMON_UNDERSTANDING.md
+  - docs/business/COMMON_UNDERSTANDING_OPERATIONS.md
+  - docs/product/SERIES_EPISODE_GENERATION_FLOW_DETAIL.md
 
 ### [DEC-20260316-033] シリーズ画像生成promptを「Rendering Bible」と「Narrative Visual Brief」に分離
 - 日付: 2026-03-16

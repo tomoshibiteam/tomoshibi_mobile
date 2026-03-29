@@ -4,7 +4,12 @@ import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { createQuestDraft, saveSeriesBlueprint } from "@/services/quests";
+import {
+  createQuestDraft,
+  findReusableSeriesDraft,
+  saveSeriesBlueprint,
+  updateQuestDraftMetadata,
+} from "@/services/quests";
 import { useSessionUserId } from "@/hooks/useSessionUser";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import type { RootStackParamList } from "@/navigation/types";
@@ -13,7 +18,7 @@ import { fonts } from "@/theme/fonts";
 
 type Props = NativeStackScreenProps<RootStackParamList, "SeriesGenerationResult">;
 
-type ResultTabKey = "overview" | "characters" | "world";
+type ResultTabKey = "overview" | "characters";
 
 const SERIES_OPTIONS_KEY = "tomoshibi.seriesOptions";
 const SELECTED_SERIES_KEY = "tomoshibi.selectedSeries";
@@ -22,7 +27,6 @@ const SERIES_DRAFTS_KEY = "tomoshibi.seriesDrafts";
 const RESULT_TABS: Array<{ key: ResultTabKey; label: string }> = [
   { key: "overview", label: "概要" },
   { key: "characters", label: "登場人物" },
-  { key: "world", label: "世界観" },
 ];
 
 type CharacterTone = {
@@ -158,7 +162,10 @@ const sortCharactersForDisplay = (characters: GeneratedSeriesCharacter[]) =>
     .map((item) => item.character);
 
 const buildCharacterTags = (character: GeneratedSeriesCharacter) => {
-  const sources = [character.role, ...(character.relationshipHooks || [])]
+  const relationTexts = (character.relationshipHooks || [])
+    .map((hook) => normalizeText(hook?.relation, ""))
+    .filter(Boolean);
+  const sources = [character.role, ...relationTexts]
     .map((value) => normalizeText(value, ""))
     .filter(Boolean)
     .flatMap((value) =>
@@ -191,13 +198,15 @@ const resolveCompanionCharacterIndex = (characters: GeneratedSeriesCharacter[]) 
 
   characters.forEach((character, index) => {
     const roleText = normalizeText(character.role, "");
+    const relationTexts = (character.relationshipHooks || [])
+      .map((hook) => normalizeText(hook?.relation, ""))
+      .filter(Boolean);
     let score = 0;
     if (isCompanionRole(roleText)) score += 120;
-    if ((character.relationshipHooks || []).some((item) => COMPANION_RELATION_PATTERN.test(normalizeText(item, "")))) {
+    if (relationTexts.some((item) => COMPANION_RELATION_PATTERN.test(item))) {
       score += 40;
     }
     if (character.mustAppear) score += 24;
-    if (character.tier === "primary") score += 16;
     if (character.isKeyPerson) score += 8;
     if (isProtagonistRole(roleText)) score -= 28;
     score -= index * 0.01;
@@ -225,7 +234,6 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
   const [activeTab, setActiveTab] = useState<ResultTabKey>("overview");
   const [heroImageFailed, setHeroImageFailed] = useState(false);
   const [failedPortraits, setFailedPortraits] = useState<Record<string, boolean>>({});
-  const [failedWorldVisuals, setFailedWorldVisuals] = useState<Record<string, boolean>>({});
   const [characterSlideIndex, setCharacterSlideIndex] = useState(0);
   const [imagesReady, setImagesReady] = useState(Boolean(imagesPreloaded));
 
@@ -257,45 +265,6 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
 
   const characterPageWidth = Math.max(1, width);
   const characterCardWidth = Math.min(380, Math.max(300, width - 56));
-  const worldVisualCards = useMemo(() => {
-    const first = generated.world?.visualAssets?.[0];
-    const second = generated.world?.visualAssets?.[1];
-    const firstFallback = buildSeedFallbackImageUrl(`${generated.title}-world-upper`, 960, 640);
-    const secondFallback = buildSeedFallbackImageUrl(`${generated.title}-world-lower`, 960, 640);
-
-    return [
-      {
-        key: first?.id || "world_upper",
-        badge: "上層エリア",
-        title: normalizeText(first?.title, normalizeText(generated.world?.socialStructure, "上層街区")),
-        description: normalizeText(
-          first?.description,
-          normalizeText(generated.world?.setting, "主要スポットが密集する歩行導線の中心エリア。")
-        ),
-        imageUri: first?.imageUrl || generated.coverImageUrl || firstFallback,
-        fallbackUri: firstFallback,
-      },
-      {
-        key: second?.id || "world_lower",
-        badge: "下層エリア",
-        title: normalizeText(second?.title, normalizeText(generated.world?.coreConflict, "下層街区")),
-        description: normalizeText(
-          second?.description,
-          normalizeText(generated.continuity?.globalMystery, "暮らしの現場に謎が潜む探索エリア。")
-        ),
-        imageUri: second?.imageUrl || generated.coverImageUrl || secondFallback,
-        fallbackUri: secondFallback,
-      },
-    ];
-  }, [
-    generated.continuity?.globalMystery,
-    generated.coverImageUrl,
-    generated.title,
-    generated.world?.coreConflict,
-    generated.world?.setting,
-    generated.world?.socialStructure,
-    generated.world?.visualAssets,
-  ]);
 
   const handleAdopt = useCallback(async () => {
     if (isSubmitting) return;
@@ -313,13 +282,37 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
 
       if (isSupabaseConfigured && userId) {
         try {
-          const draft = await createQuestDraft({
-            creatorId: userId,
-            title: generated.title,
-            description: generated.overview,
-            areaName: generated.world?.setting || null,
-            coverImageUrl: generated.coverImageUrl || null,
+          const reusableDraft = await findReusableSeriesDraft({
+            userId,
+            sourcePrompt,
+            titleCandidate: generated.title,
           });
+
+          const draft = reusableDraft
+            ? {
+                questId: reusableDraft.questId,
+                seriesId: reusableDraft.seriesId,
+              }
+            : await createQuestDraft({
+                creatorId: userId,
+                title: generated.title,
+                description: generated.overview,
+                areaName: generated.world?.setting || null,
+                coverImageUrl: generated.coverImageUrl || null,
+              });
+
+          if (reusableDraft) {
+            await updateQuestDraftMetadata({
+              questId: draft.questId,
+              seriesId: draft.seriesId,
+              userId,
+              title: generated.title,
+              description: generated.overview,
+              areaName: generated.world?.setting || null,
+              coverImageUrl: generated.coverImageUrl || null,
+            });
+          }
+
           await saveSeriesBlueprint({
             questId: draft.questId,
             seriesId: draft.seriesId,
@@ -420,10 +413,6 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
     const charactersThumb =
       orderedCharacters[0]?.portraitImageUrl ||
       buildSeedFallbackImageUrl(`${generated.title}-characters-thumb`, 640, 400);
-    const worldThumb =
-      worldVisualCards[0]?.imageUri ||
-      generated.coverImageUrl ||
-      buildSeedFallbackImageUrl(`${generated.title}-world-thumb`, 640, 400);
     const storyLead = `「${normalizeText(generated.genre, "物語")}の世界で、${normalizeText(orderedCharacters[0]?.name, "主人公")}が真実を追う」`;
 
     return (
@@ -495,8 +484,8 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
           </View>
         </View>
 
-        <View className="flex-row gap-3 pb-8">
-          <Pressable onPress={() => setActiveTab("characters")} className="flex-1 rounded-2xl overflow-hidden" style={{ aspectRatio: 1.4 }}>
+        <View className="pb-8">
+          <Pressable onPress={() => setActiveTab("characters")} className="rounded-2xl overflow-hidden" style={{ aspectRatio: 1.9 }}>
             <Image source={{ uri: charactersThumb }} className="absolute inset-0 w-full h-full" resizeMode="cover" />
             <View className="absolute inset-0 bg-black/45" />
             <View className="absolute left-3 right-3 bottom-3">
@@ -506,22 +495,6 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
               <View className="flex-row items-center justify-between">
                 <Text className="text-sm text-white" style={{ fontFamily: fonts.displayBold }}>
                   登場人物を見る
-                </Text>
-                <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
-              </View>
-            </View>
-          </Pressable>
-
-          <Pressable onPress={() => setActiveTab("world")} className="flex-1 rounded-2xl overflow-hidden" style={{ aspectRatio: 1.4 }}>
-            <Image source={{ uri: worldThumb }} className="absolute inset-0 w-full h-full" resizeMode="cover" />
-            <View className="absolute inset-0 bg-black/45" />
-            <View className="absolute left-3 right-3 bottom-3">
-              <Text className="text-[10px] text-white/80 mb-1 tracking-[0.8px]" style={{ fontFamily: fonts.displayBold }}>
-                World Build
-              </Text>
-              <View className="flex-row items-center justify-between">
-                <Text className="text-sm text-white" style={{ fontFamily: fonts.displayBold }}>
-                  世界観を見る
                 </Text>
                 <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
               </View>
@@ -578,7 +551,10 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
               const tone = pickCharacterTone(index);
               const cardKey = `${character.id || index}-${character.name}`;
               const isCompanion = index === companionCharacterIndex;
-              const relation = normalizeText(character.relationshipHooks?.[0], "他の登場人物との関係性は未設定です。");
+              const relation = normalizeText(
+                character.relationshipHooks?.[0]?.relation,
+                "他の登場人物との関係性は未設定です。"
+              );
               const role = normalizeText(character.role, "主要人物");
               const tags = isCompanion
                 ? ["#あなたの相棒", ...buildCharacterTags(character)].slice(0, 4)
@@ -720,116 +696,6 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
     </View>
   );
 
-  const renderWorldTab = () => (
-    <View className="px-4 pt-4 pb-6 gap-6">
-      <View className="rounded-2xl border border-[#EFE6DD] bg-white overflow-hidden">
-        <View className="p-5 pb-2">
-          <View className="flex-row items-center gap-2 mb-1">
-            <Ionicons name="earth-outline" size={18} color="#EE8C2B" />
-            <Text className="text-lg text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
-              舞台設定
-            </Text>
-          </View>
-          <Text className="text-xs text-[#62584E]" style={{ fontFamily: fonts.bodyRegular }}>
-            {normalizeText(generated.world?.setting, "舞台未設定")}
-          </Text>
-        </View>
-
-        <View className="px-5 pb-5">
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 4 }}>
-            {worldVisualCards.map((card, index) => {
-              const visualUri = failedWorldVisuals[card.key] ? card.fallbackUri : card.imageUri;
-              return (
-                <View
-                  key={card.key}
-                  className={`w-[240px] rounded-lg border border-[#EFE6DD] bg-[#F8F7F6] p-3 ${index === 0 ? "mr-3" : ""}`}
-                >
-                  <View className="h-28 rounded-md mb-3 overflow-hidden">
-                    <Image
-                      source={{ uri: visualUri }}
-                      className="absolute inset-0 w-full h-full"
-                      resizeMode="cover"
-                      onError={() =>
-                        setFailedWorldVisuals((prev) => ({
-                          ...prev,
-                          [card.key]: true,
-                        }))
-                      }
-                    />
-                    <View className="absolute inset-0 bg-black/20" />
-                    <View className="absolute right-2 bottom-2 rounded bg-white/90 px-2 py-0.5">
-                      <Text className="text-[10px] text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
-                        {card.badge}
-                      </Text>
-                    </View>
-                  </View>
-                  <Text className="text-sm text-[#221910] mb-1" style={{ fontFamily: fonts.displayBold }}>
-                    {card.title}
-                  </Text>
-                  <Text className="text-[11px] text-[#62584E] leading-5" style={{ fontFamily: fonts.bodyRegular }}>
-                    {card.description}
-                  </Text>
-                </View>
-              );
-            })}
-          </ScrollView>
-        </View>
-      </View>
-
-      <View className="gap-3">
-        <View className="flex-row items-center gap-2 px-1">
-          <Ionicons name="book-outline" size={18} color="#EE8C2B" />
-          <Text className="text-lg text-[#221910]" style={{ fontFamily: fonts.displayBold }}>
-            キーワード
-          </Text>
-        </View>
-
-        <View className="flex-row gap-3">
-          <View className="flex-1 rounded-2xl border border-[#EFE6DD] bg-white p-4">
-            <View className="w-10 h-10 rounded-full bg-[#FCE7F3] items-center justify-center mb-3">
-              <Ionicons name="heart-outline" size={18} color="#EC4899" />
-            </View>
-            <Text className="text-sm text-[#221910] mb-1" style={{ fontFamily: fonts.displayBold }}>
-              {normalizeText(generated.world?.recurringMotifs?.[0], "感情エネルギー")}
-            </Text>
-            <Text className="text-[10px] text-[#62584E] leading-4" style={{ fontFamily: fonts.bodyRegular }}>
-              {normalizeText(generated.world?.tabooRules?.[0], "人々の感情と都市の動力が深く結びついている。")}
-            </Text>
-          </View>
-
-          <View className="flex-1 rounded-2xl border border-[#EFE6DD] bg-white p-4">
-            <View className="w-10 h-10 rounded-full bg-[#DBEAFE] items-center justify-center mb-3">
-              <Ionicons name="diamond-outline" size={18} color="#3B82F6" />
-            </View>
-            <Text className="text-sm text-[#221910] mb-1" style={{ fontFamily: fonts.displayBold }}>
-              {normalizeText(generated.world?.recurringMotifs?.[1], "原初のプリズム")}
-            </Text>
-            <Text className="text-[10px] text-[#62584E] leading-4" style={{ fontFamily: fonts.bodyRegular }}>
-              {normalizeText(generated.continuity?.midSeasonTwist, "世界の均衡を支える中核概念が存在する。")}
-            </Text>
-          </View>
-        </View>
-
-        <View className="rounded-2xl border border-[#EFE6DD] bg-white p-4">
-          <View className="flex-row items-start gap-4">
-            <View className="w-10 h-10 rounded-full bg-[#F3F4F6] items-center justify-center">
-              <Ionicons name="aperture-outline" size={18} color="#6B7280" />
-            </View>
-            <View className="flex-1">
-              <Text className="text-sm text-[#221910] mb-1" style={{ fontFamily: fonts.displayBold }}>
-                {normalizeText(generated.world?.recurringMotifs?.[2], "ゼロ・クロマ")}
-              </Text>
-              <Text className="text-[10px] text-[#62584E] leading-5" style={{ fontFamily: fonts.bodyRegular }}>
-                {normalizeText(generated.continuity?.finalePayoff, "この世界では色の有無が地位や行動範囲に強く影響する。")}
-              </Text>
-            </View>
-          </View>
-        </View>
-      </View>
-
-    </View>
-  );
-
   const coverImageUri = heroImageFailed ? "" : generated.coverImageUrl || "";
 
   const allImageUris = useMemo(() => {
@@ -838,20 +704,17 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
     for (const character of orderedCharacters) {
       if (character.portraitImageUrl) uris.push(character.portraitImageUrl);
     }
-    for (const card of worldVisualCards) {
-      if (card.imageUri) uris.push(card.imageUri);
-    }
     return uris.filter(Boolean);
-  }, [coverImageUri, orderedCharacters, worldVisualCards]);
+  }, [coverImageUri, orderedCharacters]);
 
   const [loadedCount, setLoadedCount] = useState(0);
   const totalImages = allImageUris.length;
   const loadingProgress = totalImages > 0 ? Math.min(1, loadedCount / totalImages) : 1;
 
   const LOADING_MESSAGES = useMemo(() => [
-    "世界観カバー（人物なし）を読み込んでいます...",
+    "シリーズカバーを読み込んでいます...",
     "登場人物カード用のポートレートを読み込んでいます...",
-    "世界観を可視化しています...",
+    "表示データを整えています...",
     "仕上げています...",
   ], []);
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
@@ -1016,7 +879,6 @@ export const SeriesGenerationResultScreen = ({ navigation, route }: Props) => {
         <View className="px-4 pt-4">
           {activeTab === "overview" ? renderOverviewTab() : null}
           {activeTab === "characters" ? renderCharactersTab() : null}
-          {activeTab === "world" ? renderWorldTab() : null}
         </View>
       </ScrollView>
 

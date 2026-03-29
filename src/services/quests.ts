@@ -3,6 +3,7 @@ import type {
   EpisodeSpot,
   GeneratedRuntimeEpisode,
   GeneratedSeriesDraft,
+  GeneratedSeriesRecentContext,
 } from "@/services/seriesAi";
 
 type CreateQuestDraftPayload = {
@@ -69,6 +70,14 @@ export type SeriesDetail = {
   createdAt: string | null;
 };
 
+export type ReusableSeriesDraft = {
+  questId: string;
+  seriesId: string;
+  title: string;
+  sourcePrompt: string | null;
+  createdAt: string | null;
+};
+
 export type SeriesEpisode = {
   id: string;
   title: string;
@@ -109,7 +118,6 @@ export type SeriesEpisodeRuntimeContext = {
     name: string;
     role: string;
     avatarImageUrl?: string | null;
-    tier?: "primary" | "secondary";
     mustAppear?: boolean;
     personality: string | null;
     arcStart: string | null;
@@ -203,6 +211,8 @@ const buildEpisodeSeedCoverUrl = (
 };
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+const asRecordArray = (value: unknown) =>
+  (Array.isArray(value) ? value : []).map((item) => asRecord(item));
 const asStringArray = (value: unknown) =>
   (Array.isArray(value) ? value : [])
     .map((item) => clean(typeof item === "string" ? item : String(item ?? "")))
@@ -536,6 +546,280 @@ export const fetchSeriesDetail = async (questId: string) => {
   } satisfies SeriesDetail;
 };
 
+const limitRecentContext = (values: string[], limit = 8) => dedupe(values).slice(0, limit);
+
+export const fetchRecentSeriesGenerationContext = async (
+  userId: string,
+  limit = 6
+): Promise<GeneratedSeriesRecentContext> => {
+  const supabase = getSupabaseOrThrow();
+
+  const { data: questRows, error: questError } = await supabase
+    .from("quests")
+    .select("id, title, area_name, created_at")
+    .eq("creator_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(Math.max(1, limit));
+
+  if (questError) throw questError;
+  if (!questRows || questRows.length === 0) return {};
+
+  const questIds = questRows
+    .map((row) => clean((row as { id?: string | null }).id || ""))
+    .filter(Boolean);
+  if (questIds.length === 0) return {};
+
+  const bibleByQuestId = new Map<string, Record<string, unknown>>();
+  try {
+    const bibleQuery = await supabase
+      .from("series_bibles")
+      .select(
+        "quest_id, title, overview, genre, tone, premise, season_goal, world, continuity, first_episode_seed, series_blueprint"
+      )
+      .in("quest_id", questIds)
+      .eq("creator_id", userId);
+    if (bibleQuery.error) throw bibleQuery.error;
+    for (const row of (bibleQuery.data || []) as Array<Record<string, unknown>>) {
+      const questId = clean(typeof row.quest_id === "string" ? row.quest_id : "");
+      if (questId) bibleByQuestId.set(questId, row);
+    }
+  } catch (error) {
+    const coded = error as { code?: string };
+    if (coded?.code !== "42P01" && !isMissingAnyColumn(error, ["series_blueprint", "first_episode_seed"])) {
+      throw error;
+    }
+  }
+
+  const characterRowsByQuestId = new Map<string, Array<Record<string, unknown>>>();
+  try {
+    const characterQuery = await supabase
+      .from("series_characters")
+      .select("quest_id, role, personality, arc_start, arc_end")
+      .in("quest_id", questIds)
+      .eq("creator_id", userId);
+    if (characterQuery.error) throw characterQuery.error;
+    for (const row of (characterQuery.data || []) as Array<Record<string, unknown>>) {
+      const questId = clean(typeof row.quest_id === "string" ? row.quest_id : "");
+      if (!questId) continue;
+      const rows = characterRowsByQuestId.get(questId) || [];
+      rows.push(row);
+      characterRowsByQuestId.set(questId, rows);
+    }
+  } catch (error) {
+    const coded = error as { code?: string };
+    if (coded?.code !== "42P01" && !isMissingAnyColumn(error, ["personality", "arc_start", "arc_end"])) {
+      throw error;
+    }
+  }
+
+  const recentTitles: string[] = [];
+  const recentCaseMotifs: string[] = [];
+  const recentCharacterArchetypes: string[] = [];
+  const recentRelationshipPatterns: string[] = [];
+  const recentVisualMotifs: string[] = [];
+  const recentTruthPatterns: string[] = [];
+  const recentCheckpointPatterns: string[] = [];
+  const recentFirstEpisodePatterns: string[] = [];
+  const recentEnvironmentPatterns: string[] = [];
+  const recentAppearancePatterns: string[] = [];
+
+  for (const questRow of questRows as Array<Record<string, unknown>>) {
+    const questId = clean(typeof questRow.id === "string" ? questRow.id : "");
+    const bible = bibleByQuestId.get(questId) || {};
+    const world = asRecord(bible.world);
+    const continuity = asRecord(bible.continuity);
+    const firstEpisodeSeed = asRecord(bible.first_episode_seed);
+    const seriesBlueprint = asRecord(bible.series_blueprint);
+    const frameworkBrief = asRecord(seriesBlueprint.frameworkBrief);
+    const seriesDesign = asRecord(frameworkBrief.seriesDesign);
+    const continuityAxes = asRecord(seriesBlueprint.continuityAxes);
+    const identityPack = asRecord(seriesBlueprint.identityPack);
+    const seriesCoreAnchors = asRecord(identityPack.seriesCoreAnchors);
+    const characterRows = characterRowsByQuestId.get(questId) || [];
+
+    recentTitles.push(
+      clean(typeof bible.title === "string" ? bible.title : "") ||
+        clean(typeof questRow.title === "string" ? questRow.title : "")
+    );
+    recentCaseMotifs.push(
+      clean(typeof continuity.global_mystery === "string" ? continuity.global_mystery : ""),
+      clean(typeof bible.premise === "string" ? bible.premise : ""),
+      clean(typeof bible.overview === "string" ? bible.overview : "")
+    );
+    recentTruthPatterns.push(
+      clean(typeof continuity.finale_payoff === "string" ? continuity.finale_payoff : ""),
+      clean(typeof continuity.mid_season_twist === "string" ? continuity.mid_season_twist : ""),
+      clean(typeof bible.season_goal === "string" ? bible.season_goal : "")
+    );
+    recentEnvironmentPatterns.push(
+      clean(typeof world.setting === "string" ? world.setting : ""),
+      clean(typeof questRow.area_name === "string" ? questRow.area_name : "")
+    );
+    recentFirstEpisodePatterns.push(
+      clean(typeof firstEpisodeSeed.opening_scene === "string" ? firstEpisodeSeed.opening_scene : ""),
+      clean(typeof firstEpisodeSeed.completion_condition === "string" ? firstEpisodeSeed.completion_condition : ""),
+      clean(typeof firstEpisodeSeed.route_style === "string" ? firstEpisodeSeed.route_style : "")
+    );
+    recentRelationshipPatterns.push(
+      clean(typeof seriesDesign.relationshipPromise === "string" ? seriesDesign.relationshipPromise : ""),
+      clean(typeof seriesDesign.fixedCastPolicy === "string" ? seriesDesign.fixedCastPolicy : "")
+    );
+    recentVisualMotifs.push(
+      ...asStringArray(world.recurringMotifs),
+      ...asStringArray(seriesCoreAnchors.nonNegotiableMood),
+      ...asStringArray(seriesCoreAnchors.nonNegotiableTheme)
+    );
+    recentCheckpointPatterns.push(
+      ...asRecordArray(continuityAxes.axes).map((row) => clean(typeof row.label === "string" ? row.label : "")),
+      ...asRecordArray(continuityAxes.axes).map((row) =>
+        clean(typeof row.carryOverRule === "string" ? row.carryOverRule : "")
+      )
+    );
+
+    for (const row of characterRows) {
+      recentCharacterArchetypes.push(
+        clean(typeof row.role === "string" ? row.role : ""),
+        clean(typeof row.personality === "string" ? row.personality : "")
+      );
+      recentAppearancePatterns.push(
+        clean(typeof row.personality === "string" ? row.personality : ""),
+        clean(typeof row.arc_start === "string" ? row.arc_start : ""),
+        clean(typeof row.arc_end === "string" ? row.arc_end : "")
+      );
+    }
+  }
+
+  return {
+    recentTitles: limitRecentContext(recentTitles),
+    recentCaseMotifs: limitRecentContext(recentCaseMotifs),
+    recentCharacterArchetypes: limitRecentContext(recentCharacterArchetypes),
+    recentRelationshipPatterns: limitRecentContext(recentRelationshipPatterns),
+    recentVisualMotifs: limitRecentContext(recentVisualMotifs),
+    recentTruthPatterns: limitRecentContext(recentTruthPatterns),
+    recentCheckpointPatterns: limitRecentContext(recentCheckpointPatterns),
+    recentFirstEpisodePatterns: limitRecentContext(recentFirstEpisodePatterns),
+    recentEnvironmentPatterns: limitRecentContext(recentEnvironmentPatterns),
+    recentAppearancePatterns: limitRecentContext(recentAppearancePatterns),
+  };
+};
+
+export const findReusableSeriesDraft = async (payload: {
+  userId: string;
+  sourcePrompt: string;
+  titleCandidate?: string | null;
+  limit?: number;
+}): Promise<ReusableSeriesDraft | null> => {
+  const supabase = getSupabaseOrThrow();
+  const normalizedPrompt = normalize(payload.sourcePrompt);
+  const normalizedTitle = normalize(payload.titleCandidate);
+  if (!normalizedPrompt && !normalizedTitle) return null;
+
+  const { data: questRows, error: questError } = await supabase
+    .from("quests")
+    .select("id, series_id, title, status, created_at")
+    .eq("creator_id", payload.userId)
+    .eq("status", "draft")
+    .order("created_at", { ascending: false })
+    .limit(Math.max(1, payload.limit ?? 20));
+
+  if (questError) throw questError;
+  if (!questRows || questRows.length === 0) return null;
+
+  const questIds = questRows
+    .map((row) => clean((row as { id?: string | null }).id || ""))
+    .filter(Boolean);
+
+  const sourcePromptByQuestId = new Map<string, string>();
+  try {
+    const bibleQuery = await supabase
+      .from("series_bibles")
+      .select("quest_id, source_prompt")
+      .in("quest_id", questIds)
+      .eq("creator_id", payload.userId);
+    if (bibleQuery.error) throw bibleQuery.error;
+    for (const row of (bibleQuery.data || []) as Array<Record<string, unknown>>) {
+      const questId = clean(typeof row.quest_id === "string" ? row.quest_id : "");
+      const sourcePrompt = clean(typeof row.source_prompt === "string" ? row.source_prompt : "");
+      if (questId && sourcePrompt) sourcePromptByQuestId.set(questId, sourcePrompt);
+    }
+  } catch (error) {
+    const coded = error as { code?: string };
+    if (coded?.code !== "42P01" && !isMissingAnyColumn(error, ["source_prompt"])) {
+      throw error;
+    }
+  }
+
+  let best: ReusableSeriesDraft | null = null;
+  let bestScore = 0;
+
+  for (const row of questRows as Array<Record<string, unknown>>) {
+    const questId = clean(typeof row.id === "string" ? row.id : "");
+    const seriesId = clean(typeof row.series_id === "string" ? row.series_id : "");
+    const title = clean(typeof row.title === "string" ? row.title : "");
+    if (!questId || !seriesId) continue;
+
+    const sourcePrompt = sourcePromptByQuestId.get(questId) || null;
+    let score = 0;
+    if (sourcePrompt && normalizedPrompt && normalize(sourcePrompt) === normalizedPrompt) score += 100;
+    if (title && normalizedTitle && normalize(title) === normalizedTitle) score += 60;
+    if (sourcePrompt && normalizedPrompt && normalize(sourcePrompt).includes(normalizedPrompt)) score += 20;
+    if (title && normalizedTitle && normalize(title).includes(normalizedTitle)) score += 10;
+    if (score <= 0) continue;
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = {
+        questId,
+        seriesId,
+        title: title || "タイトル未設定",
+        sourcePrompt,
+        createdAt: typeof row.created_at === "string" ? row.created_at : null,
+      };
+    }
+  }
+
+  return best;
+};
+
+type UpdateQuestDraftMetadataPayload = {
+  questId: string;
+  seriesId: string;
+  userId: string;
+  title: string;
+  description?: string | null;
+  areaName?: string | null;
+  coverImageUrl?: string | null;
+};
+
+export const updateQuestDraftMetadata = async (payload: UpdateQuestDraftMetadataPayload) => {
+  const supabase = getSupabaseOrThrow();
+
+  const { error: seriesError } = await supabase
+    .from("series")
+    .update({
+      title: payload.title,
+      worldview_text: payload.description || "",
+    })
+    .eq("id", payload.seriesId)
+    .eq("owner_id", payload.userId);
+
+  if (seriesError) throw seriesError;
+
+  const { error: questError } = await supabase
+    .from("quests")
+    .update({
+      title: payload.title,
+      description: payload.description || null,
+      area_name: payload.areaName || null,
+      cover_image_url: payload.coverImageUrl || null,
+    })
+    .eq("id", payload.questId)
+    .eq("creator_id", payload.userId)
+    .eq("status", "draft");
+
+  if (questError) throw questError;
+};
+
 export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: string) => {
   const supabase = getSupabaseOrThrow();
 
@@ -622,7 +906,6 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
       name: string | null;
       role: string | null;
       portrait_image_url: string | null;
-      tier: string | null;
       must_appear: boolean | null;
       personality: string | null;
       arc_start: string | null;
@@ -633,7 +916,7 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
   try {
     const queryWithTier = await supabase
       .from("series_characters")
-      .select("id, name, role, portrait_image_url, tier, must_appear, personality, arc_start, arc_end")
+      .select("id, name, role, portrait_image_url, must_appear, personality, arc_start, arc_end")
       .eq("quest_id", questId)
       .eq("creator_id", userId)
       .order("character_order", { ascending: true })
@@ -644,7 +927,6 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
       name: string | null;
       role: string | null;
       portrait_image_url?: string | null;
-      tier?: string | null;
       must_appear?: boolean | null;
       personality: string | null;
       arc_start: string | null;
@@ -653,7 +935,7 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
 
     if (
       queryWithTier.error &&
-      isMissingAnyColumn(queryWithTier.error, ["tier", "must_appear", "portrait_image_url"])
+      isMissingAnyColumn(queryWithTier.error, ["must_appear", "portrait_image_url"])
     ) {
       const legacyQuery = await supabase
         .from("series_characters")
@@ -673,7 +955,6 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
       }> | null)?.map((row) => ({
         ...row,
         portrait_image_url: null,
-        tier: null,
         must_appear: null,
       })) || null;
     } else {
@@ -683,7 +964,6 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
         name: string | null;
         role: string | null;
         portrait_image_url?: string | null;
-        tier?: string | null;
         must_appear?: boolean | null;
         personality: string | null;
         arc_start: string | null;
@@ -696,7 +976,6 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
       name: string | null;
       role: string | null;
       portrait_image_url: string | null;
-      tier: string | null;
       must_appear: boolean | null;
       personality: string | null;
       arc_start: string | null;
@@ -753,7 +1032,6 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
       name: string | null;
       role: string | null;
       portrait_image_url: string | null;
-      tier?: string | null;
       must_appear?: boolean | null;
       personality: string | null;
       arc_start: string | null;
@@ -765,8 +1043,7 @@ export const fetchSeriesEpisodeRuntimeContext = async (questId: string, userId: 
         name: row.name || "登場人物",
         role: row.role || "役割未設定",
         avatarImageUrl: normalizeEpisodeCoverUrl(row.portrait_image_url),
-        tier: clean(row.tier || "").toLowerCase() === "primary" ? "primary" : "secondary",
-        mustAppear: Boolean(row.must_appear),
+        mustAppear: typeof row.must_appear === "boolean" ? row.must_appear : false,
         personality: row.personality,
         arcStart: row.arc_start,
         arcEnd: row.arc_end,
@@ -996,21 +1273,27 @@ export const applySeriesContinuityPatchVNext = async (
   const relationshipPatch = Array.isArray(rawPatch.relationshipPatch)
     ? rawPatch.relationshipPatch
     : [];
+  const achievementPatch = asRecord(rawPatch.achievementPatch);
   const payoffPatch = asRecord(rawPatch.payoffPatch);
-  const arcPatch = asRecord(rawPatch.arcPatch);
+  const continuityAxisPatch = Array.isArray(rawPatch.continuityAxisPatch)
+    ? rawPatch.continuityAxisPatch
+    : [];
   const localCharacterPatch = asRecord(rawPatch.localCharacterPatch);
 
   const legacyProgress = asRecord(row.progress_state);
   const currentState = asRecord(row.user_series_state);
+  const progressSummary = asRecord(currentState.progressSummary);
   const currentProgress = asRecord(currentState.currentProgress);
   const rememberedExperience = asRecord(currentState.rememberedExperience);
+  const achievementState = asRecord(currentState.achievementState);
   const continuityState = asRecord(currentState.continuityState);
 
   const currentEpisodeCount = Math.max(
     0,
     Number.parseInt(
       String(
-        currentProgress.episodeCountCompleted ??
+        progressSummary.episodeCountCompleted ??
+          currentProgress.episodeCountCompleted ??
           legacyProgress.last_completed_episode_no ??
           0
       ),
@@ -1025,6 +1308,8 @@ export const applySeriesContinuityPatchVNext = async (
   );
   const unresolvedThreads = dedupe(
     asStringArray(payoffPatch.activeThreads).concat(
+      asStringArray(progressSummary.activeThreads)
+    ).concat(
       asStringArray(currentProgress.unresolvedThreads)
     )
   ).filter(
@@ -1034,7 +1319,9 @@ export const applySeriesContinuityPatchVNext = async (
       )
   );
   const resolvedThreads = dedupe(
-    asStringArray(currentProgress.resolvedThreads)
+    asStringArray(progressSummary.resolvedThreads)
+      .concat(asStringArray(currentProgress.resolvedThreads))
+      .concat(asStringArray(legacyProgress.revealed_facts))
       .concat(asStringArray(payoffPatch.closedThreads))
       .concat(asStringArray(payoffPatch.resolvedForeshadowing))
       .concat(asStringArray(memoryPatch.addedEvents))
@@ -1049,6 +1336,36 @@ export const applySeriesContinuityPatchVNext = async (
         (resolved) => normalize(resolved) === normalize(item)
       )
   );
+
+  const continuityAxisProgressById = new Map<string, Record<string, unknown>>();
+  asRecordArray(progressSummary.continuityAxisProgress).forEach((item) => {
+    const axisId = clean(typeof item.axisId === "string" ? item.axisId : "");
+    if (!axisId) return;
+    continuityAxisProgressById.set(axisId, item);
+  });
+  continuityAxisPatch.forEach((item) => {
+    const rowPatch = asRecord(item);
+    const axisId = clean(typeof rowPatch.axisId === "string" ? rowPatch.axisId : "");
+    if (!axisId) return;
+    const before = continuityAxisProgressById.get(axisId) || {};
+    continuityAxisProgressById.set(axisId, {
+      ...before,
+      axisId,
+      currentLabel:
+        clean(typeof rowPatch.nextLabel === "string" ? rowPatch.nextLabel : "") ||
+        clean(typeof before.currentLabel === "string" ? before.currentLabel : "") ||
+        "進行中",
+      recentShift:
+        clean(typeof rowPatch.movementReason === "string" ? rowPatch.movementReason : "") ||
+        clean(typeof before.recentShift === "string" ? before.recentShift : "") ||
+        "変化なし",
+    });
+  });
+  const continuityAxisProgress = Array.from(continuityAxisProgressById.values()).map((item) => ({
+    axisId: clean(typeof item.axisId === "string" ? item.axisId : ""),
+    currentLabel: clean(typeof item.currentLabel === "string" ? item.currentLabel : "") || "進行中",
+    recentShift: clean(typeof item.recentShift === "string" ? item.recentShift : "") || "変化なし",
+  }));
 
   const previousRelationship = Array.isArray(currentState.relationshipState)
     ? currentState.relationshipState.map((item) => asRecord(item))
@@ -1144,11 +1461,6 @@ export const applySeriesContinuityPatchVNext = async (
     });
   });
 
-  const localCarryoverExisting = Array.isArray(
-    continuityState.episodeLocalCharacterCarryovers
-  )
-    ? continuityState.episodeLocalCharacterCarryovers.map((item) => asRecord(item))
-    : [];
   const callbackEligibleRows = Array.isArray(localCharacterPatch.callbackEligible)
     ? localCharacterPatch.callbackEligible.map((item) => asRecord(item))
     : [];
@@ -1156,46 +1468,29 @@ export const applySeriesContinuityPatchVNext = async (
     ? localCharacterPatch.introduced.map((item) => asRecord(item))
     : [];
 
-  const callbackById = new Map<string, string>();
-  callbackEligibleRows.forEach((item) => {
-    const id = clean(typeof item.localCharacterId === "string" ? item.localCharacterId : "");
-    if (!id) return;
-    callbackById.set(
-      id,
-      clean(typeof item.reason === "string" ? item.reason : "") || "callback_eligible"
-    );
-  });
-
-  const localCarryoverMerged = dedupe(
-    localCarryoverExisting.map(
-      (item) =>
-        `${clean(typeof item.localCharacterId === "string" ? item.localCharacterId : "")}::${clean(
-          typeof item.displayName === "string" ? item.displayName : ""
-        )}::${clean(
-          typeof item.callbackEligibility === "string" ? item.callbackEligibility : ""
-        )}`
-    ).concat(
-      introducedRows
-        .map((item) => {
-          const id = clean(
-            typeof item.localCharacterId === "string" ? item.localCharacterId : ""
-          );
-          if (!id || !callbackById.has(id)) return "";
-          const name = clean(typeof item.displayName === "string" ? item.displayName : "") || id;
-          return `${id}::${name}::${callbackById.get(id) || "callback_eligible"}`;
-        })
-        .filter(Boolean)
-    )
-  )
-    .map((packed) => {
-      const [localCharacterId, displayName, callbackEligibility] = packed.split("::");
-      return {
-        localCharacterId: clean(localCharacterId),
-        displayName: clean(displayName),
-        callbackEligibility: clean(callbackEligibility),
-      };
+  const callbackMemoryLabels = introducedRows
+    .map((item) => {
+      const localCharacterId = clean(
+        typeof item.localCharacterId === "string" ? item.localCharacterId : ""
+      );
+      if (!localCharacterId) return "";
+      const reasonRow = callbackEligibleRows.find(
+        (rowCallback) =>
+          clean(
+            typeof rowCallback.localCharacterId === "string"
+              ? rowCallback.localCharacterId
+              : ""
+          ) === localCharacterId
+      );
+      const displayName =
+        clean(typeof item.displayName === "string" ? item.displayName : "") ||
+        localCharacterId;
+      const reason =
+        clean(typeof reasonRow?.reason === "string" ? reasonRow.reason : "") ||
+        "再登場候補";
+      return `${displayName}:${reason}`;
     })
-    .filter((item) => item.localCharacterId);
+    .filter(Boolean);
 
   const remembered = {
     visitedLocations: dedupe(
@@ -1245,7 +1540,6 @@ export const applySeriesContinuityPatchVNext = async (
   };
 
   const nextUserSeriesState = {
-    ...currentState,
     id:
       clean(typeof currentState.id === "string" ? currentState.id : "") ||
       `${payload.questId}:${payload.userId}`,
@@ -1264,35 +1558,43 @@ export const applySeriesContinuityPatchVNext = async (
     ),
     stateVersion:
       Math.max(1, Number.parseInt(String(currentState.stateVersion ?? 1), 10) || 1) + 1,
-    currentProgress: {
+    progressSummary: {
       episodeCountCompleted: nextEpisodeCount,
-      currentCheckpointIndex: Math.max(
-        0,
-        Number.parseInt(
-          String(arcPatch.currentCheckpointIndexAfterEpisode ?? currentProgress.currentCheckpointIndex ?? 0),
-          10
-        ) || 0
-      ),
-      currentArcSummary:
-        clean(typeof arcPatch.arcSummaryAfterEpisode === "string" ? arcPatch.arcSummaryAfterEpisode : "") ||
-        baseLegacyPatch.relationshipStateSummary ||
-        "関係性は継続中。",
-      unresolvedThreads,
+      activeThreads: unresolvedThreads,
       resolvedThreads,
-      activeForeshadowing,
-      completedEpisodeIds: dedupe(
+      recentEpisodeIds: dedupe(
+        asStringArray(progressSummary.recentEpisodeIds).concat(
         asStringArray(currentProgress.completedEpisodeIds).concat(
           `episode_${nextEpisodeCount}`
         )
+        )
       ),
+      continuityAxisProgress,
     },
     rememberedExperience: remembered,
     relationshipState: Array.from(relationById.values()),
+    achievementState: {
+      titles: dedupe(
+        asStringArray(achievementState.titles).concat(
+          asStringArray(achievementPatch.addedTitles)
+        )
+      ),
+      achievements: dedupe(
+        asStringArray(achievementState.achievements).concat(
+          asStringArray(achievementPatch.addedAchievements)
+        )
+      ),
+      discoveryTags: dedupe(
+        asStringArray(achievementState.discoveryTags).concat(
+          asStringArray(achievementPatch.addedDiscoveryTags)
+        )
+      ),
+    },
     continuityState: {
       callbackCandidates: dedupe(
-        asStringArray(continuityState.callbackCandidates).concat(
-          asStringArray(memoryPatch.addedEvents)
-        )
+        asStringArray(continuityState.callbackCandidates)
+          .concat(asStringArray(memoryPatch.addedEvents))
+          .concat(callbackMemoryLabels)
       ),
       motifsInUse: asStringArray(continuityState.motifsInUse),
       blockedLines: asStringArray(continuityState.blockedLines),
@@ -1301,7 +1603,6 @@ export const applySeriesContinuityPatchVNext = async (
           asStringArray(payoffPatch.newlySeededForeshadowing)
         )
       ),
-      episodeLocalCharacterCarryovers: localCarryoverMerged,
     },
   };
 
@@ -1316,10 +1617,17 @@ export const applySeriesContinuityPatchVNext = async (
   })();
 
   const projectedProgressState = {
-    last_completed_episode_no: nextUserSeriesState.currentProgress.episodeCountCompleted,
-    unresolved_threads: nextUserSeriesState.currentProgress.unresolvedThreads,
-    revealed_facts: nextUserSeriesState.currentProgress.resolvedThreads,
-    relationship_state_summary: nextUserSeriesState.currentProgress.currentArcSummary,
+    last_completed_episode_no: nextUserSeriesState.progressSummary.episodeCountCompleted,
+    unresolved_threads: nextUserSeriesState.progressSummary.activeThreads,
+    revealed_facts: nextUserSeriesState.progressSummary.resolvedThreads,
+    relationship_state_summary:
+      dedupe(
+        nextUserSeriesState.relationshipState.map((item) => {
+          const row = asRecord(item);
+          return clean(typeof row.closenessLabel === "string" ? row.closenessLabel : "");
+        })
+      ).join(" / ") ||
+      baseLegacyPatch.relationshipStateSummary,
     relationship_flags: dedupe(
       nextUserSeriesState.relationshipState.flatMap((item) =>
         asStringArray(asRecord(item).specialFlags)
@@ -2032,8 +2340,9 @@ export const saveSeriesBlueprint = async (payload: SaveSeriesBlueprintPayload) =
   const seriesId = payload.seriesId;
   const seriesBlueprintRaw = asRecord(payload.generated.seriesBlueprint);
   const initialTemplateRaw = asRecord(payload.generated.initialUserSeriesStateTemplate);
-  const narrativeRaw = asRecord(seriesBlueprintRaw.narrative);
-  const firstSeedRaw = asRecord(seriesBlueprintRaw.firstEpisodeSeed);
+  const progressStateRaw = asRecord(payload.generated.progressState);
+  const blueprintPersistentCharacters = asRecord(seriesBlueprintRaw.persistentCharacters);
+  const blueprintContinuityAxes = asRecordArray(asRecord(seriesBlueprintRaw.continuityAxes).axes);
   const seriesBlueprintId = clean(
     typeof seriesBlueprintRaw.id === "string" ? seriesBlueprintRaw.id : ""
   ) || seriesId;
@@ -2042,41 +2351,96 @@ export const saveSeriesBlueprint = async (payload: SaveSeriesBlueprintPayload) =
     Number.parseInt(String(seriesBlueprintRaw.version ?? 1), 10) || 1
   );
 
+  const buildDefaultRelationshipState = () => {
+    const rows = [
+      asRecord(blueprintPersistentCharacters.partner),
+      asRecord(blueprintPersistentCharacters.anchorNpc),
+    ].filter((row) => Object.keys(row).length > 0);
+    return rows.map((row, index) => ({
+      characterId: clean(typeof row.id === "string" ? row.id : "") || `char_${index + 1}`,
+      closenessLabel: index === 0 ? "neutral" : "distant",
+      trustLevel: index === 0 ? 40 : 30,
+      tensionLevel: 20,
+      affectionLevel: 0,
+      specialFlags: [],
+      sharedMemories: [],
+      unresolvedEmotions: [],
+    }));
+  };
+
+  const continuityAxisProgress =
+    asRecordArray(asRecord(initialTemplateRaw.progressSummary).continuityAxisProgress).length > 0
+      ? asRecordArray(asRecord(initialTemplateRaw.progressSummary).continuityAxisProgress).map((row, index) => ({
+          axisId: clean(typeof row.axisId === "string" ? row.axisId : "") || `axis_${index + 1}`,
+          currentLabel: clean(typeof row.currentLabel === "string" ? row.currentLabel : "") || "初期",
+          recentShift: clean(typeof row.recentShift === "string" ? row.recentShift : "") || "初期状態",
+        }))
+      : blueprintContinuityAxes.map((row, index) => ({
+          axisId: clean(typeof row.axisId === "string" ? row.axisId : "") || `axis_${index + 1}`,
+          currentLabel:
+            clean(typeof row.initialStateLabel === "string" ? row.initialStateLabel : "") || "初期",
+          recentShift: "初期状態",
+        }));
+
   const initialUserSeriesStatePayload =
-    Object.keys(initialTemplateRaw).length > 0
+    Object.keys(initialTemplateRaw).length > 0 || Object.keys(seriesBlueprintRaw).length > 0
       ? {
           id: `${payload.questId}:${payload.userId}`,
           userId: payload.userId,
           seriesBlueprintId,
           referencedBlueprintVersion,
           stateVersion: 1,
-          currentProgress: asRecord(initialTemplateRaw.currentProgress),
-          relationshipState: Array.isArray(initialTemplateRaw.relationshipState)
-            ? initialTemplateRaw.relationshipState
-            : [],
-          rememberedExperience: asRecord(initialTemplateRaw.rememberedExperience),
-          continuityState: asRecord(initialTemplateRaw.continuityState),
-          monetizationState: {
-            episodeLimit: Math.max(
-              1,
+          progressSummary: {
+            episodeCountCompleted: Math.max(
+              0,
               Number.parseInt(
-                String(narrativeRaw.freePlanDefaultEpisodeLimit ?? 3),
+                String(
+                  asRecord(initialTemplateRaw.progressSummary).episodeCountCompleted ??
+                    progressStateRaw.lastCompletedEpisodeNo ??
+                    0
+                ),
                 10
-              ) || 3
+              ) || 0
             ),
-            extensionUnlocked: false,
+            activeThreads: dedupe(
+              asStringArray(asRecord(initialTemplateRaw.progressSummary).activeThreads).concat(
+                asStringArray(progressStateRaw.unresolvedThreads)
+              )
+            ),
+            resolvedThreads: dedupe(
+              asStringArray(asRecord(initialTemplateRaw.progressSummary).resolvedThreads).concat(
+                asStringArray(progressStateRaw.revealedFacts)
+              )
+            ),
+            recentEpisodeIds: asStringArray(asRecord(initialTemplateRaw.progressSummary).recentEpisodeIds),
+            continuityAxisProgress,
           },
-          metadata: {
-            createdAt: now,
-            plannedEnding:
-              clean(typeof narrativeRaw.plannedEnding === "string" ? narrativeRaw.plannedEnding : "") ||
-              null,
-            coreMystery:
-              clean(typeof narrativeRaw.coreMysteryOrDrive === "string" ? narrativeRaw.coreMysteryOrDrive : "") ||
-              null,
-            firstEpisodePurpose:
-              clean(typeof firstSeedRaw.purpose === "string" ? firstSeedRaw.purpose : "") ||
-              null,
+          rememberedExperience: {
+            visitedLocations: asStringArray(asRecord(initialTemplateRaw.rememberedExperience).visitedLocations),
+            keyEvents: asStringArray(asRecord(initialTemplateRaw.rememberedExperience).keyEvents),
+            importantConversations: asStringArray(
+              asRecord(initialTemplateRaw.rememberedExperience).importantConversations
+            ),
+            playerChoices: asStringArray(asRecord(initialTemplateRaw.rememberedExperience).playerChoices),
+            emotionalMoments: asStringArray(asRecord(initialTemplateRaw.rememberedExperience).emotionalMoments),
+            relationshipTurningPoints: asStringArray(
+              asRecord(initialTemplateRaw.rememberedExperience).relationshipTurningPoints
+            ),
+          },
+          relationshipState:
+            asRecordArray(initialTemplateRaw.relationshipState).length > 0
+              ? asRecordArray(initialTemplateRaw.relationshipState)
+              : buildDefaultRelationshipState(),
+          achievementState: {
+            titles: asStringArray(asRecord(initialTemplateRaw.achievementState).titles),
+            achievements: asStringArray(asRecord(initialTemplateRaw.achievementState).achievements),
+            discoveryTags: asStringArray(asRecord(initialTemplateRaw.achievementState).discoveryTags),
+          },
+          continuityState: {
+            callbackCandidates: asStringArray(asRecord(initialTemplateRaw.continuityState).callbackCandidates),
+            motifsInUse: asStringArray(asRecord(initialTemplateRaw.continuityState).motifsInUse),
+            blockedLines: asStringArray(asRecord(initialTemplateRaw.continuityState).blockedLines),
+            promisedPayoffs: asStringArray(asRecord(initialTemplateRaw.continuityState).promisedPayoffs),
           },
         }
       : {};
@@ -2174,7 +2538,6 @@ export const saveSeriesBlueprint = async (payload: SaveSeriesBlueprintPayload) =
     character_order: index + 1,
     name: character.name,
     role: character.role,
-    tier: character.tier === "primary" ? "primary" : "secondary",
     must_appear: Boolean(character.mustAppear),
     goal: character.goal || null,
     arc_start: character.arcStart || null,
@@ -2194,8 +2557,11 @@ export const saveSeriesBlueprint = async (payload: SaveSeriesBlueprintPayload) =
             distinguishing_feature: character.identityAnchorTokens.distinguishingFeature || "",
           }
         : {},
-    secrets: character.secrets || [],
-    relationship_hooks: character.relationshipHooks || [],
+    relationship_hooks: (character.relationshipHooks || []).map((hook) => ({
+      target_id: clean(hook.targetId) || "",
+      target_name: clean(hook.targetName) || "",
+      relation: clean(hook.relation) || "",
+    })),
     updated_at: now,
   }));
 
@@ -2205,7 +2571,6 @@ export const saveSeriesBlueprint = async (payload: SaveSeriesBlueprintPayload) =
     if (
       insertCharactersError &&
       isMissingAnyColumn(insertCharactersError, [
-        "tier",
         "must_appear",
         "appearance",
         "portrait_prompt",
@@ -2226,7 +2591,6 @@ export const saveSeriesBlueprint = async (payload: SaveSeriesBlueprintPayload) =
         arc_start: row.arc_start,
         arc_end: row.arc_end,
         personality: row.personality,
-        secrets: row.secrets,
         relationship_hooks: row.relationship_hooks,
         updated_at: row.updated_at,
       }));
@@ -2264,25 +2628,7 @@ export const saveSeriesBlueprint = async (payload: SaveSeriesBlueprintPayload) =
     updated_at: now,
   }));
 
-  const episodeRowsFromCheckpoints = (payload.generated.checkpoints || []).map((checkpoint, index) => ({
-    bible_id: bibleId,
-    quest_id: payload.questId,
-    creator_id: payload.userId,
-    episode_no: checkpoint.checkpointNo || index + 1,
-    title: checkpoint.title,
-    objective: checkpoint.purpose || null,
-    synopsis: checkpoint.unlockHint || null,
-    key_location: payload.generated.world?.setting || null,
-    emotional_beat: checkpoint.expectedEmotion || null,
-    required_setups: [checkpoint.unlockHint].filter(Boolean),
-    payoff_targets: [checkpoint.carryOver].filter(Boolean),
-    cliffhanger: checkpoint.carryOver || null,
-    continuity_notes: "checkpoint_based_series_design",
-    suggested_mission: checkpoint.purpose || null,
-    updated_at: now,
-  }));
-
-  const episodeRows = episodeRowsFromBlueprints.length > 0 ? episodeRowsFromBlueprints : episodeRowsFromCheckpoints;
+  const episodeRows = episodeRowsFromBlueprints;
 
   if (episodeRows.length > 0) {
     const { error: insertEpisodesError } = await supabase.from("series_episode_blueprints").insert(episodeRows);

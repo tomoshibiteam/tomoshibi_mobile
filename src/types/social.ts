@@ -3,6 +3,7 @@ export type ConnectionTab = "followers" | "following";
 export type ProfileRow = {
   id: string;
   name: string | null;
+  handle?: string | null;
   bio: string | null;
   profile_picture_url: string | null;
 };

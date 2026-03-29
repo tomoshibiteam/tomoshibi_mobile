@@ -6,6 +6,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import type { RootStackParamList } from "@/navigation/types";
 import { TopBar } from "@/components/common/TopBar";
 import { fonts } from "@/theme/fonts";
+import { formatProfileHandle } from "@/lib/profileHandle";
 import { useSessionUserId } from "@/hooks/useSessionUser";
 import { useFriendshipsRealtime } from "@/hooks/useFriendshipsRealtime";
 import {
@@ -23,16 +24,6 @@ import { UserListItem } from "@/components/social/UserListItem";
 type Props = NativeStackScreenProps<RootStackParamList, "UserConnections">;
 
 const normalizeTab = (tab?: ConnectionTab): ConnectionTab => (tab === "following" ? "following" : "followers");
-
-const createHandle = (name: string | null, userId: string) => {
-  const base = (name || "traveler")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "_")
-    .replace(/[^a-z0-9_\-.ぁ-んァ-ヶ一-龠]/g, "");
-  if (base.length > 0) return `@${base}`;
-  return `@user_${userId.slice(0, 6)}`;
-};
 
 export const UserConnectionsScreen = ({ navigation, route }: Props) => {
   const { userId: targetUserId, tab } = route.params;
@@ -152,7 +143,7 @@ export const UserConnectionsScreen = ({ navigation, route }: Props) => {
     }
   };
 
-  const handle = createHandle(targetProfile?.name || null, targetUserId);
+  const handle = formatProfileHandle(targetProfile?.handle || null, targetProfile?.name || null, targetUserId);
 
   if (!loading && !targetProfile) {
     return (

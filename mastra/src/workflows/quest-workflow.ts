@@ -23,6 +23,7 @@ import { generatePuzzle } from "../lib/agents/puzzleAgent";
 import { generateSpotTourismResearch } from "../lib/agents/tourismResearchAgent";
 import { normalizeObjectiveMissionLink } from "../lib/objectiveMissionLink";
 import { logQuestProgressData, withQuestProgress } from "../lib/questProgress";
+import { isMastraTextModelAvailable } from "../lib/modelConfig";
 
 const requestSchema = z.object({
   prompt: z.string(),
@@ -2088,13 +2089,10 @@ const generateQuestStep = createStep({
     });
 
     const tourismState = await withQuestProgress("tourism_research", async () => {
-      const hasTourismResearchModelKey = Boolean(
-        process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
-          process.env.OPENAI_API_KEY ||
-          process.env.ANTHROPIC_API_KEY
-      );
-      if (!hasTourismResearchModelKey) {
-        throw new Error("Tourism research requires AI model API key.");
+      if (!isMastraTextModelAvailable()) {
+        throw new Error(
+          "Tourism research requires an available text model configuration (API key or local Ollama mode)."
+        );
       }
       const tourismResearch = await generateSpotTourismResearch({
         prompt: inputData.prompt,

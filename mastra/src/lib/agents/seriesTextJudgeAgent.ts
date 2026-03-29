@@ -22,8 +22,8 @@ export const seriesTextJudgeCandidateSchema = z.object({
   overview: z.string(),
   premise: z.string(),
   season_goal: z.string(),
-  characters: z.array(seriesCharacterSchema).min(3).max(8),
-  checkpoints: z.array(seriesCheckpointSchema).min(4).max(8),
+  characters: z.array(seriesCharacterSchema).min(2).max(8),
+  checkpoints: z.array(seriesCheckpointSchema).length(3),
   first_episode_seed: seriesEpisodeSeedSchema,
 });
 

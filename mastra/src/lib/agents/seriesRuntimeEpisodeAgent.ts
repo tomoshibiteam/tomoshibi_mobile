@@ -16,6 +16,10 @@ import {
   buildSeriesImageUrl,
   buildSeriesVisualStyleGuide,
 } from "../seriesVisuals";
+import {
+  resolveEpisodeSpotSheetCandidates,
+  type EpisodeSpotGroundingRow,
+} from "../episodeSpotGroundingContext";
 
 const clean = (value?: string | null) => (value || "").replace(/\s+/g, " ").trim();
 
@@ -113,7 +117,6 @@ const runtimeSeriesContextSchema = z.object({
         id: z.string().optional(),
         name: z.string(),
         role: z.string(),
-        tier: z.enum(["primary", "secondary"]).optional(),
         must_appear: z.boolean().optional(),
         personality: z.string().optional(),
         appearance: z.string().optional(),
@@ -217,7 +220,6 @@ const episodePlanOutputSchema = z.object({
       id: z.string(),
       name: z.string(),
       role: z.string(),
-      tier: z.enum(["primary", "secondary"]).default("secondary"),
       must_appear: z.boolean().default(false),
       personality: z.string(),
       voice_profile: voiceProfileSchema,
@@ -389,8 +391,6 @@ type EpisodeOutputUniqueCharacter = SeriesRuntimeEpisodeOutput["episode_unique_c
 
 export type SeriesRuntimeEpisodeProgressPhase =
   | "pipeline_start"
-  | "fallback_plan_start"
-  | "fallback_plan_done"
   | "episode_plan_start"
   | "episode_plan_done"
   | "spot_resolution_start"
@@ -450,7 +450,7 @@ const EPISODE_PLANNER_INSTRUCTIONS = `
 - シリーズ固定キャラクターを characters に含め、voice_profile を付与する
 - episode_unique_characters を2〜3人出力する
 - 主人公（プレイヤー）は characters に含めない
-- primaryキャラを1〜2人含め、must_appear=true を維持する
+- must_appear=true の固定キャラを必ず含める
 - 合計5〜6人程度の登場人物密度を維持する
 - id は char_1 から連番
 
@@ -484,18 +484,6 @@ const hasModelApiKey = () =>
       process.env.OPENAI_API_KEY ||
       process.env.ANTHROPIC_API_KEY
   );
-
-const sceneRoleForIndex = (
-  index: number,
-  spotCount: number
-): "起" | "承" | "転" | "結" => {
-  if (spotCount <= 2) return index === 0 ? "起" : "結";
-  if (index === 0) return "起";
-  if (index === spotCount - 1) return "結";
-  const middleCount = spotCount - 2;
-  const relative = index - 1;
-  return relative < Math.ceil(middleCount / 2) ? "承" : "転";
-};
 
 const DEFAULT_VOICE_PROFILE: z.infer<typeof voiceProfileSchema> = {
   vocabulary: "formal",
@@ -548,14 +536,6 @@ type EpisodeSpotRequirement = z.infer<typeof spotRequirementSchema>;
 type EpisodeWorld = z.infer<typeof episodeWorldSchema>;
 type EpisodeUniqueCharacter = z.infer<typeof episodeUniqueCharacterSchema>;
 
-const normalizeCharacterTier = (
-  value?: string,
-  fallback?: "primary" | "secondary"
-): "primary" | "secondary" => {
-  if (value === "primary" || value === "secondary") return value;
-  return fallback || "secondary";
-};
-
 const resolveDesiredSpotCount = (input: SeriesRuntimeEpisodeRequest) =>
   Math.max(
     EPISODE_SPOT_MIN,
@@ -565,39 +545,31 @@ const resolveDesiredSpotCount = (input: SeriesRuntimeEpisodeRequest) =>
     )
   );
 
-const buildFallbackEpisodeWorld = (
-  input: SeriesRuntimeEpisodeRequest
-): EpisodeWorld => {
-  const location = clean(input.episode_request.stage_location) || "街";
-  const purpose = clean(input.episode_request.purpose) || "街歩き";
-  return {
-    title: `${location}で紡ぐ${purpose}の章`,
-    mood: "発見と余韻が同居する街歩きミステリー",
-    atmosphere: `${location}の土地感覚を活かした現実接続型の物語空間`,
-    sensory_keywords: dedupeStrings(["石畳", "光と影", "街の生活音", "匂いの記憶"]),
-    story_axis: "街の断片情報をつなぎ、次話へ続く意味を見つける",
-    emotional_arc: "導入の違和感→関係進展→真相の輪郭→次話への余韻",
-    local_theme: `${location}らしさを体験として回収する`,
-  };
-};
-
 const normalizeEpisodeWorld = (
-  raw: EpisodeWorld | undefined,
-  fallback: EpisodeWorld
-): EpisodeWorld => {
-  if (!raw) return fallback;
-  return {
-    title: clean(raw.title) || fallback.title,
-    mood: clean(raw.mood) || fallback.mood,
-    atmosphere: clean(raw.atmosphere) || fallback.atmosphere,
-    sensory_keywords:
-      dedupeStrings(raw.sensory_keywords || []).slice(0, 8).length > 0
-        ? dedupeStrings(raw.sensory_keywords || []).slice(0, 8)
-        : fallback.sensory_keywords,
-    story_axis: clean(raw.story_axis) || fallback.story_axis,
-    emotional_arc: clean(raw.emotional_arc) || fallback.emotional_arc,
-    local_theme: clean(raw.local_theme) || fallback.local_theme,
+  raw: EpisodeWorld | undefined
+): EpisodeWorld | null => {
+  if (!raw) return null;
+  const candidate = {
+    title: clean(raw.title),
+    mood: clean(raw.mood),
+    atmosphere: clean(raw.atmosphere),
+    sensory_keywords: dedupeStrings(raw.sensory_keywords || []).slice(0, 8),
+    story_axis: clean(raw.story_axis),
+    emotional_arc: clean(raw.emotional_arc),
+    local_theme: clean(raw.local_theme),
   };
+  if (
+    !candidate.title ||
+    !candidate.mood ||
+    !candidate.atmosphere ||
+    candidate.sensory_keywords.length < 2 ||
+    !candidate.story_axis ||
+    !candidate.emotional_arc ||
+    !candidate.local_theme
+  ) {
+    return null;
+  }
+  return candidate;
 };
 
 const selectSeriesCastForEpisode = (
@@ -608,10 +580,6 @@ const selectSeriesCastForEpisode = (
       name: clean(character.name) || "案内人",
       role: clean(character.role) || "同行者",
       personality: clean(character.personality) || "落ち着いている",
-      tier: normalizeCharacterTier(
-        character.tier,
-        character.must_appear ? "primary" : "secondary"
-      ),
       must_appear: Boolean(character.must_appear),
     }))
     .filter((character) => clean(character.name).length > 0);
@@ -620,7 +588,6 @@ const selectSeriesCastForEpisode = (
     .slice()
     .sort((left, right) => {
       if (left.must_appear !== right.must_appear) return left.must_appear ? -1 : 1;
-      if (left.tier !== right.tier) return left.tier === "primary" ? -1 : 1;
       return 0;
     });
 
@@ -634,80 +601,24 @@ const selectSeriesCastForEpisode = (
   });
 
   const selected = deduped.slice(0, 3);
-  const fallback =
-    selected.length > 0
-      ? selected
-      : [
-          {
-            name: "案内人",
-            role: "現地を導くガイド",
-            personality: "慎重で観察力が高い",
-            tier: "primary" as const,
-            must_appear: true,
-          },
-        ];
+  if (selected.length === 0) {
+    throw new Error("episode_series_cast_missing");
+  }
 
-  return fallback.map((character, index) => ({
+  return selected.map((character, index) => ({
     id: `series_char_${index + 1}`,
     name: clean(character.name) || "案内人",
     role: clean(character.role) || "同行者",
     personality: clean(character.personality) || "落ち着いている",
-    tier: normalizeCharacterTier(character.tier, character.must_appear ? "primary" : "secondary"),
     must_appear: Boolean(character.must_appear) || index === 0,
     voice_profile: DEFAULT_VOICE_PROFILE,
   }));
 };
 
-const buildFallbackEpisodeUniqueCharacters = (
-  input: SeriesRuntimeEpisodeRequest,
-  world: EpisodeWorld,
-  desiredCount = EPISODE_DEFAULT_UNIQUE_CHARACTER_COUNT
-): EpisodeUniqueCharacter[] => {
-  const location = clean(input.episode_request.stage_location) || "この街";
-  const purpose = clean(input.episode_request.purpose) || "街歩き";
-  const base: EpisodeUniqueCharacter[] = [
-    {
-      name: `${location}の語り部`,
-      role: "地域の背景を知るキーパーソン",
-      personality: "穏やかで含みのある話し方をする",
-      motivation: "土地の記憶を正しく受け継いでほしい",
-      relation_to_series: "固定キャラが追う謎の断片に接続する証言者",
-      introduction_scene: "起点スポットで短い違和感を提示する",
-    },
-    {
-      name: `${purpose}の現場担当`,
-      role: "現地導線を動かす実務的な人物",
-      personality: "率直で行動が早い",
-      motivation: "今日中に整理すべき未解決事項がある",
-      relation_to_series: "固定キャラとの会話で次話のキー情報を引き出す",
-      introduction_scene: "中盤スポットで具体的な行動ミッションを渡す",
-    },
-    {
-      name: `${location}の目撃者`,
-      role: "終盤の意味づけを行う補助人物",
-      personality: "観察眼が鋭く、言葉は少ない",
-      motivation: "見過ごされた真実を共有したい",
-      relation_to_series: "今回の余韻と次話フックを橋渡しする",
-      introduction_scene: "終盤スポットで断片情報をつなぐ",
-    },
-  ];
-
-  const count = Math.max(
-    EPISODE_UNIQUE_CHARACTER_MIN,
-    Math.min(EPISODE_UNIQUE_CHARACTER_MAX, desiredCount)
-  );
-  return base.slice(0, count).map((row) => ({
-    ...row,
-    relation_to_series:
-      clean(row.relation_to_series) || `${world.story_axis}に接続する人物`,
-  }));
-};
-
 const normalizeEpisodeUniqueCharacters = (
   raw: EpisodeUniqueCharacter[] | undefined,
-  fallback: EpisodeUniqueCharacter[],
   desiredCount = EPISODE_DEFAULT_UNIQUE_CHARACTER_COUNT
-): EpisodeUniqueCharacter[] => {
+): EpisodeUniqueCharacter[] | null => {
   const targetCount = Math.max(
     EPISODE_UNIQUE_CHARACTER_MIN,
     Math.min(EPISODE_UNIQUE_CHARACTER_MAX, desiredCount)
@@ -731,179 +642,52 @@ const normalizeEpisodeUniqueCharacters = (
         character.relation_to_series &&
         character.introduction_scene
     );
-
-  const merged = [...normalized];
-  fallback.forEach((character) => {
-    if (merged.length >= targetCount) return;
-    if (merged.some((row) => clean(row.name).toLowerCase() === clean(character.name).toLowerCase())) return;
-    merged.push(character);
-  });
-
-  return merged.slice(0, targetCount);
+  if (normalized.length !== targetCount) return null;
+  return normalized.slice(0, targetCount);
 };
 
-const buildSpotRequirementTemplate = (
-  index: number,
-  count: number
-) => {
-  const sceneRole = sceneRoleForIndex(index, count);
-  const isFirst = index === 0;
-  const isLast = index === count - 1;
-  const isSecond = index === 1;
-  const isPreLast = index === count - 2;
-
-  if (isFirst) {
-    return {
-      sceneRole,
-      spotRole: "導入用の静かな公共スポット",
-      requiredAttributes: ["公共アクセス可能", "徒歩導線の起点", "地域性が伝わる"],
-      visitConstraints: ["日中想定", "単独屋内完結を避ける"],
-      tourismValueType: "地域導入",
-      objective: "導入の違和感を認識し、探索方針を定める",
-      purpose: "導入",
-      chapterHook: "次の地点へ向かう理由が生まれる。",
-      keyClue: "導入地点で見つかる最初の兆候",
-      tensionLevel: 3,
-      mission: "周囲を観察し、最初の手がかりを特定する",
-    };
-  }
-  if (isLast) {
-    return {
-      sceneRole,
-      spotRole: "最後の余韻に向く見晴らし地点",
-      requiredAttributes: ["締めに使える景観", "次話フックを置ける", "公共アクセスで離脱可能"],
-      visitConstraints: ["移動負荷を抑える", "夜間閉鎖を避ける"],
-      tourismValueType: "景観",
-      objective: "今回の成果を確定し、次話フックを残す",
-      purpose: "収束",
-      chapterHook: "未解決要素が次話へ接続される。",
-      keyClue: "終盤で明らかになる接続鍵",
-      tensionLevel: 8,
-      mission: "得た情報を統合して、次話の問いを言語化する",
-    };
-  }
-  if (isSecond) {
-    return {
-      sceneRole,
-      spotRole: "地域性を体感できる歴史・文化スポット",
-      requiredAttributes: ["地域性の説明可能性", "観光目的に接続", "徒歩圏で移動可能"],
-      visitConstraints: ["公共空間中心", "混雑ピークを避ける"],
-      tourismValueType: "歴史",
-      objective: "地域背景と物語の接点を明確化する",
-      purpose: "展開",
-      chapterHook: "固定キャラクターの視点変化を誘発する。",
-      keyClue: "土地の履歴を示す断片",
-      tensionLevel: 5,
-      mission: "歴史的痕跡から次地点に繋がる情報を抽出する",
-    };
-  }
-  if (isPreLast) {
-    return {
-      sceneRole,
-      spotRole: "核心前の意思決定が起きる結節点",
-      requiredAttributes: ["会話しやすい", "複数導線へ接続可能", "安全に滞在できる"],
-      visitConstraints: ["徒歩移動15分圏目安", "閉鎖空間のみを避ける"],
-      tourismValueType: "文化体験",
-      objective: "最終局面へ進むための判断材料を揃える",
-      purpose: "転換",
-      chapterHook: "終盤で回収すべき問いを確定する。",
-      keyClue: "矛盾を解く補助情報",
-      tensionLevel: 7,
-      mission: "観察結果を照合し、仮説の矛盾点を1つ潰す",
-    };
-  }
-  return {
-    sceneRole,
-    spotRole: "関係進展と発見が同時に起こる回遊拠点",
-    requiredAttributes: ["会話と観察の両立", "徒歩導線で接続可能", "観光価値を説明可能"],
-    visitConstraints: ["移動負荷を抑える", "私有地侵入を避ける"],
-    tourismValueType: "文化体験",
-    objective: "手がかりを照合し、関係性と理解を一段進める",
-    purpose: "展開",
-    chapterHook: "次地点で確かめるべき仮説が生まれる。",
-    keyClue: "中盤で浮かび上がる補助情報",
-    tensionLevel: 6,
-    mission: "現地要素から次地点に接続する根拠を1つ得る",
-  };
-};
-
-const buildFallbackSpotRequirementsForEpisode = (
-  input: SeriesRuntimeEpisodeRequest,
-  desiredSpotCount = resolveDesiredSpotCount(input)
-): EpisodeSpotRequirement[] => {
-  const count = Math.max(
-    EPISODE_SPOT_MIN,
-    Math.min(EPISODE_SPOT_MAX, desiredSpotCount)
-  );
-  const fromSeed = (input.series.first_episode_seed?.spot_requirements || []).slice(0, count);
-
-  const fallbackByIndex = Array.from({ length: count }, (_, index) =>
-    buildSpotRequirementTemplate(index, count)
-  );
-
-  const base = Array.from({ length: count }, (_, index) => {
-    const requirement = fromSeed[index];
-    const fallback = fallbackByIndex[index];
-    const spotRole = clean(requirement?.spot_role) || fallback.spotRole;
-    return {
-      requirement_id: clean(requirement?.requirement_id) || `req_${index + 1}`,
-      scene_role: requirement?.scene_role || fallback.sceneRole,
-      spot_role: spotRole,
-      required_attributes: dedupeStrings(
-        requirement?.required_attributes?.length
-          ? requirement.required_attributes
-          : fallback.requiredAttributes
-      ),
-      visit_constraints: dedupeStrings(
-        requirement?.visit_constraints?.length
-          ? requirement.visit_constraints
-          : fallback.visitConstraints
-      ),
-      tourism_value_type: clean(requirement?.tourism_value_type) || fallback.tourismValueType,
-      objective: `${spotRole}で次の判断材料を得る`,
-      purpose: fallback.purpose,
-      chapter_hook: fallback.chapterHook,
-      key_clue: `${spotRole}に関する断片`,
-      tension_level: Math.max(1, Math.min(10, fallback.tensionLevel)),
-      mission: fallback.mission,
-    } satisfies EpisodeSpotRequirement;
-  });
-
-  return base;
-};
 
 const normalizePlanSpotRequirements = (
   planRequirements: EpisodePlan["spot_requirements"] | undefined,
-  fallback: EpisodeSpotRequirement[],
   desiredSpotCount: number
-): EpisodeSpotRequirement[] => {
+): EpisodeSpotRequirement[] | null => {
   const count = Math.max(
     EPISODE_SPOT_MIN,
     Math.min(EPISODE_SPOT_MAX, desiredSpotCount)
   );
   const source = Array.isArray(planRequirements) ? planRequirements : [];
-  const base = Array.from({ length: count }, (_, index) =>
-    source[index] || fallback[Math.min(index, fallback.length - 1)]
-  );
-  return base.map((requirement, index) => {
-    const fallbackRequirement =
-      fallback[Math.min(index, fallback.length - 1)] || fallback[0];
-    return {
-      requirement_id: clean(requirement.requirement_id) || `req_${index + 1}`,
-      scene_role:
-        requirement.scene_role || sceneRoleForIndex(index, Math.max(EPISODE_SPOT_MIN, base.length)),
-      spot_role: clean(requirement.spot_role) || fallbackRequirement.spot_role,
-      required_attributes: dedupeStrings(requirement.required_attributes || fallbackRequirement.required_attributes),
-      visit_constraints: dedupeStrings(requirement.visit_constraints || fallbackRequirement.visit_constraints),
-      tourism_value_type: clean(requirement.tourism_value_type) || fallbackRequirement.tourism_value_type,
-      objective: clean(requirement.objective) || fallbackRequirement.objective,
-      purpose: clean(requirement.purpose) || fallbackRequirement.purpose,
-      chapter_hook: clean(requirement.chapter_hook) || fallbackRequirement.chapter_hook,
-      key_clue: clean(requirement.key_clue) || fallbackRequirement.key_clue,
-      tension_level: Math.max(1, Math.min(10, requirement.tension_level || fallbackRequirement.tension_level)),
-      mission: clean(requirement.mission) || fallbackRequirement.mission,
-    };
-  });
+  if (source.length !== count) return null;
+  const normalized = source.map((requirement, index) => ({
+    requirement_id: clean(requirement.requirement_id) || `req_${index + 1}`,
+    scene_role: requirement.scene_role,
+    spot_role: clean(requirement.spot_role),
+    required_attributes: dedupeStrings(requirement.required_attributes || []),
+    visit_constraints: dedupeStrings(requirement.visit_constraints || []),
+    tourism_value_type: clean(requirement.tourism_value_type),
+    objective: clean(requirement.objective),
+    purpose: clean(requirement.purpose),
+    chapter_hook: clean(requirement.chapter_hook),
+    key_clue: clean(requirement.key_clue),
+    tension_level: Math.max(1, Math.min(10, requirement.tension_level || 0)),
+    mission: clean(requirement.mission),
+  }));
+  if (
+    normalized.some((requirement) =>
+      !requirement.requirement_id ||
+      !requirement.scene_role ||
+      !requirement.spot_role ||
+      requirement.required_attributes.length === 0 ||
+      !requirement.tourism_value_type ||
+      !requirement.objective ||
+      !requirement.purpose ||
+      !requirement.chapter_hook ||
+      !requirement.key_clue ||
+      !requirement.mission
+    )
+  ) {
+    return null;
+  }
+  return normalized;
 };
 
 const normalizeEpisodePlan = (
@@ -911,17 +695,17 @@ const normalizeEpisodePlan = (
   input: SeriesRuntimeEpisodeRequest
 ): EpisodePlan => {
   const desiredSpotCount = resolveDesiredSpotCount(input);
-  const fallbackRequirements = buildFallbackSpotRequirementsForEpisode(
-    input,
-    desiredSpotCount
-  );
   const normalizedRequirements = normalizePlanSpotRequirements(
     plan.spot_requirements,
-    fallbackRequirements,
     desiredSpotCount
   );
-  const fallbackWorld = buildFallbackEpisodeWorld(input);
-  const normalizedEpisodeWorld = normalizeEpisodeWorld(plan.episode_world, fallbackWorld);
+  if (!normalizedRequirements) {
+    throw new Error("episode_plan_spot_requirements_invalid");
+  }
+  const normalizedEpisodeWorld = normalizeEpisodeWorld(plan.episode_world);
+  if (!normalizedEpisodeWorld) {
+    throw new Error("episode_plan_world_invalid");
+  }
   const baseSeriesCharacters = selectSeriesCastForEpisode(input.series.characters || []);
   const plannedCharacters = plan.characters || [];
   const normalizedSeriesCharacters = baseSeriesCharacters.map((character) => {
@@ -935,16 +719,13 @@ const normalizeEpisodePlan = (
     };
   });
 
-  const fallbackUniqueCharacters = buildFallbackEpisodeUniqueCharacters(
-    input,
-    normalizedEpisodeWorld,
-    EPISODE_DEFAULT_UNIQUE_CHARACTER_COUNT
-  );
   const normalizedUniqueCharacters = normalizeEpisodeUniqueCharacters(
     plan.episode_unique_characters,
-    fallbackUniqueCharacters,
     EPISODE_DEFAULT_UNIQUE_CHARACTER_COUNT
   );
+  if (!normalizedUniqueCharacters) {
+    throw new Error("episode_plan_unique_characters_invalid");
+  }
   const uniqueCharactersAsCast = normalizedUniqueCharacters.map((character) => {
     const match = plannedCharacters.find(
       (row) => clean(row.name).toLowerCase() === clean(character.name).toLowerCase()
@@ -953,7 +734,6 @@ const normalizeEpisodePlan = (
       id: "ep_char",
       name: character.name,
       role: character.role,
-      tier: "secondary" as const,
       must_appear: false,
       personality: clean(match?.personality) || character.personality,
       voice_profile: match?.voice_profile || DEFAULT_VOICE_PROFILE,
@@ -1015,7 +795,7 @@ ${checkpoints.map((cp) => `- #${cp.checkpoint_no} ${cp.title} / purpose=${cp.pur
 ${characters
   .map(
     (c) =>
-      `- ${c.name} (${c.role}) / tier=${c.tier || "secondary"} / must_appear=${Boolean(c.must_appear)} / 性格: ${
+      `- ${c.name} (${c.role}) / must_appear=${Boolean(c.must_appear)} / 性格: ${
         c.personality || "未設定"
       }`
   )
@@ -1035,57 +815,13 @@ ${episode_request.user_wishes ? `\n## ユーザーの思い（最大限尊重）
 - planner段階では具体スポット名を決めず、spot_requirements の role仕様を5〜7件出力する
 - spot_requirements は scene_role=起承転結の順で設計する
 - required_attributes / visit_constraints / tourism_value_type を必ず埋める
-- primary キャラ（must_appear=true）は必ず今回の characters に含める
+- must_appear=true の固定キャラは必ず今回の characters に含める
 - series characters はシリーズ固定キャラ枠として出力し、episode_unique_characters を2〜3人出力する
 - episode_world を最初に設計し、そこで定義した空気感・感情軸に沿って人物と要件を作る
 - 単一屋内完結は禁止
 
 episodePlanOutputSchema を満たす JSON のみを返してください。
 `;
-};
-
-const buildFallbackPlan = (input: SeriesRuntimeEpisodeRequest): EpisodePlan => {
-  const location = clean(input.episode_request.stage_location) || "街";
-  const world = buildFallbackEpisodeWorld(input);
-  const seriesCharacters = selectSeriesCastForEpisode(input.series.characters || []);
-  const uniqueCharacters = buildFallbackEpisodeUniqueCharacters(
-    input,
-    world,
-    EPISODE_DEFAULT_UNIQUE_CHARACTER_COUNT
-  );
-  const planCharacters = [...seriesCharacters, ...uniqueCharacters.map((character) => ({
-    id: "ep_char",
-    name: character.name,
-    role: character.role,
-    tier: "secondary" as const,
-    must_appear: false,
-    personality: character.personality,
-    voice_profile: DEFAULT_VOICE_PROFILE,
-  }))].map((character, index) => ({
-    ...character,
-    id: `char_${index + 1}`,
-  }));
-  const requirements = buildFallbackSpotRequirementsForEpisode(
-    input,
-    resolveDesiredSpotCount(input)
-  );
-
-  return {
-    title: `第${(input.series.progress_state?.last_completed_episode_no || 0) + 1}話: ${location}の${clean(
-      input.episode_request.purpose
-    )}`,
-    one_liner: `${location}を歩き、新たな手がかりを探す。`,
-    premise: `${input.series.title}の一章。${location}で物語が動く。`,
-    goal: "新しい手がかりを1つ得て、次の展開への布石を打つ。",
-    narrative_voice: "past",
-    episode_world: world,
-    episode_unique_characters: uniqueCharacters,
-    characters: planCharacters,
-    spot_requirements: requirements,
-    completion_condition: "主要スポットで新しい手がかりを1つ得る。",
-    carry_over_hook: "最後に残された問いが、次回の行動を促す。",
-    estimated_duration_minutes: Math.max(10, Math.min(45, input.episode_request.desired_duration_minutes || 20)),
-  };
 };
 
 const generateEpisodePlan = async (
@@ -1142,8 +878,7 @@ const generateEpisodePlan = async (
     }
   }
 
-  console.warn(`${logPrefix} フォールバック使用`);
-  return buildFallbackPlan(input);
+  throw new Error("episode_plan_generation_failed");
 };
 
 // ---------------------------------------------------------------------------
@@ -1302,10 +1037,73 @@ const buildRequirementKeywords = (requirement: EpisodeSpotRequirement) => {
   return dedupeStrings(tokens).slice(0, 12);
 };
 
+const buildSheetDrivenCandidates = (
+  requirement: EpisodeSpotRequirement,
+  context: SpotResolutionContext,
+  index: number,
+  sheetRows: EpisodeSpotGroundingRow[]
+): SpotCandidate[] => {
+  if (!sheetRows.length) return [];
+  const location = clean(context.stageLocation);
+  const roleKeywords = buildRequirementKeywords(requirement);
+  const tourismKeywords = dedupeStrings(
+    [requirement.tourism_value_type, requirement.purpose || "", requirement.objective || ""].flatMap((text) =>
+      clean(text)
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(Boolean)
+    )
+  );
+  const defaultWalk = Math.max(3, Math.min(20, 5 + index * 2));
+  const maxCandidates = Math.max(
+    3,
+    Math.min(20, Number.parseInt(clean(process.env.EPISODE_SPOT_GROUNDING_PER_REQUIREMENT) || "8", 10) || 8)
+  );
+
+  const scored = sheetRows
+    .map((row) => {
+      const haystack = `${clean(row.name)} ${clean(row.area)} ${clean(row.summary)} ${(row.tags || []).join(" ")}`.toLowerCase();
+      const roleHits = roleKeywords.filter((keyword) => haystack.includes(keyword.toLowerCase())).length;
+      const tourismHits = tourismKeywords.filter((keyword) => haystack.includes(keyword.toLowerCase())).length;
+      const localityHit =
+        !!location &&
+        (clean(row.name).includes(location) || clean(row.area).includes(location) || row.raw_text.includes(location));
+
+      const roleMatch = Math.min(1, 0.2 + roleHits * 0.15);
+      const tourismMatch = Math.min(1, 0.2 + tourismHits * 0.2);
+      const localityScore = localityHit ? 0.95 : 0.55;
+
+      return {
+        requirement_id: requirement.requirement_id,
+        spot_name: clean(row.name),
+        tourism_focus: clean(row.summary) || `${requirement.tourism_value_type}に触れられる地点`,
+        estimated_walk_minutes: row.estimated_walk_minutes || defaultWalk,
+        public_accessible: row.public_accessible !== false,
+        role_match_score: roleMatch,
+        tourism_match_score: tourismMatch,
+        locality_score: localityScore,
+      } as SpotCandidate;
+    })
+    .filter((candidate) => !!candidate.spot_name)
+    .sort((left, right) => relevanceScore(right) - relevanceScore(left));
+
+  const unique: SpotCandidate[] = [];
+  const seen = new Set<string>();
+  for (const candidate of scored) {
+    const key = clean(candidate.spot_name).toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(candidate);
+    if (unique.length >= maxCandidates) break;
+  }
+  return unique;
+};
+
 const buildCandidateSpots = (
   requirement: EpisodeSpotRequirement,
   context: SpotResolutionContext,
-  index: number
+  index: number,
+  sheetRows: EpisodeSpotGroundingRow[]
 ): SpotCandidate[] => {
   const location = clean(context.stageLocation) || "街";
   const keywordString = [requirement.spot_role, requirement.tourism_value_type, ...requirement.required_attributes].join(" ");
@@ -1342,7 +1140,7 @@ const buildCandidateSpots = (
   ]).slice(0, 8);
 
   const keywords = buildRequirementKeywords(requirement);
-  return candidatesRaw.map((spotName, candidateIndex) => {
+  const synthetic = candidatesRaw.map((spotName, candidateIndex) => {
     const haystack = `${spotName} ${requirement.tourism_value_type}`.toLowerCase();
     const hits = keywords.filter((keyword) => haystack.includes(keyword.toLowerCase())).length;
     const roleMatch = Math.min(1, 0.2 + hits * 0.15);
@@ -1365,6 +1163,21 @@ const buildCandidateSpots = (
       locality_score: locality,
     };
   });
+
+  const sheetDriven = buildSheetDrivenCandidates(requirement, context, index, sheetRows);
+  if (sheetDriven.length === 0) return synthetic;
+
+  const merged = [...sheetDriven, ...synthetic];
+  const deduped: SpotCandidate[] = [];
+  const seen = new Set<string>();
+  for (const candidate of merged) {
+    const key = clean(candidate.spot_name).toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(candidate);
+    if (deduped.length >= 12) break;
+  }
+  return deduped;
 };
 
 const filterEligibleCandidates = (
@@ -1409,13 +1222,11 @@ const filterEligibleCandidates = (
     }
   });
 
-  if (eligible.length > 0) return { eligible, rejectedReasons };
-  const fallback = candidates.slice().sort((left, right) => relevanceScore(right) - relevanceScore(left)).slice(0, 2);
   return {
-    eligible: fallback,
+    eligible,
     rejectedReasons: [
       ...rejectedReasons,
-      `requirement:${requirement.requirement_id}:no_fully_eligible_candidate_fallback`,
+      `requirement:${requirement.requirement_id}:no_fully_eligible_candidate`,
     ],
   };
 };
@@ -1540,7 +1351,7 @@ const runOrToolsRoute = async (distanceMatrix: number[][]): Promise<OrToolsRoute
 const selectCandidateSequence = (optionsPerRequirement: SpotCandidate[][]): SpotCandidate[] => {
   if (optionsPerRequirement.length === 0) return [];
   if (optionsPerRequirement.some((options) => options.length === 0)) {
-    return optionsPerRequirement.map((options) => options[0]).filter(Boolean);
+    return [];
   }
 
   type Cell = {
@@ -1614,26 +1425,37 @@ const resolveSpotRequirements = async (
     転: 2,
     結: 3,
   };
+  const sheetCandidates = await resolveEpisodeSpotSheetCandidates({
+    stageLocation: clean(context.stageLocation) || "街",
+    purpose: clean(context.purpose),
+    requirementHint: normalizedRequirements
+      .map((requirement) => `${clean(requirement.spot_role)} ${clean(requirement.tourism_value_type)}`)
+      .join(" / "),
+    limit: 40,
+    scope: "resolveSpotRequirements",
+  });
 
   const traces = normalizedRequirements.map((requirement, index) => {
-    const candidates = buildCandidateSpots(requirement, context, index);
+    const candidates = buildCandidateSpots(requirement, context, index, sheetCandidates);
     const { eligible, rejectedReasons } = filterEligibleCandidates(candidates, requirement, context);
     const reranked = mmrRerankCandidates(eligible, 3);
-    const fallback = candidates
-      .slice()
-      .sort((left, right) => relevanceScore(right) - relevanceScore(left))
-      .slice(0, 1);
     const options = reranked.map((row) => row.candidate);
     return {
       requirement,
       candidates,
       rejectedReasons,
       reranked,
-      options: options.length > 0 ? options : fallback,
+      options,
     };
   });
+  if (traces.some((trace) => trace.options.length === 0)) {
+    throw new Error("episode_spot_resolution_no_eligible_candidate");
+  }
 
   const selectedByRequirement = selectCandidateSequence(traces.map((trace) => trace.options));
+  if (selectedByRequirement.length !== traces.length) {
+    throw new Error("episode_spot_resolution_sequence_failed");
+  }
   const rawSelected = traces.map(
     (trace, index) => trace.options.find((candidate) => candidate === selectedByRequirement[index]) || trace.options[0]
   );
@@ -1658,18 +1480,18 @@ const resolveSpotRequirements = async (
   const distanceMatrix = buildDistanceMatrix(filteredSelected);
 
   const ortoolsResult = await runOrToolsRoute(distanceMatrix);
-  const fallbackOrder = filteredSelected.map((_, index) => index);
+  const defaultOrder = filteredSelected.map((_, index) => index);
   const optimizedOrder =
     ortoolsResult && "order" in ortoolsResult
       ? ortoolsResult.order.filter((index) => index >= 0 && index < filteredSelected.length)
-      : fallbackOrder;
+      : defaultOrder;
   const validOrder =
     optimizedOrder.length === filteredSelected.length &&
     new Set(optimizedOrder).size === filteredSelected.length &&
     optimizedOrder[0] === 0 &&
     optimizedOrder[optimizedOrder.length - 1] === filteredSelected.length - 1
       ? optimizedOrder
-      : fallbackOrder;
+      : defaultOrder;
 
   let transferMinutes = 0;
   let maxLegMinutes = 0;
@@ -1715,12 +1537,15 @@ const resolveSpotRequirements = async (
 
   const resolved = normalizedRequirements.map((requirement, index) => {
     const picked = filteredSelected[index];
+    if (!picked) {
+      throw new Error(`episode_spot_resolution_missing_pick:${requirement.requirement_id}`);
+    }
     const trace = traces[index];
     return {
       ...requirement,
-      spot_name: picked?.spot_name || `${clean(context.stageLocation)} 回遊地点${index + 1}`,
-      tourism_focus: picked?.tourism_focus || `${requirement.tourism_value_type}の要素に注目する`,
-      estimated_walk_minutes: picked?.estimated_walk_minutes || 10,
+      spot_name: picked.spot_name,
+      tourism_focus: picked.tourism_focus,
+      estimated_walk_minutes: picked.estimated_walk_minutes,
       eligibility_notes: trace.rejectedReasons.slice(0, 6),
     };
   });
@@ -1756,9 +1581,7 @@ const resolveSpotRequirements = async (
       optimizer:
         ortoolsResult && "order" in ortoolsResult
           ? ortoolsResult.optimizer
-          : ROUTE_OPTIMIZER_MODE === "off"
-            ? "heuristic_dp_v1"
-            : "heuristic_dp_fallback_v1",
+          : "heuristic_dp_v1",
       total_estimated_walk_minutes: Math.max(0, totalEstimatedWalkMinutes),
       transfer_minutes: Math.max(0, Math.round(transferMinutes)),
       max_leg_minutes: Math.max(0, Math.round(maxLegMinutes)),
@@ -2212,7 +2035,7 @@ const assembleEpisode = async (
   ]);
   const relationFlagsToAdd = dedupeStrings([
     ...relationShift,
-    plan.characters.some((character) => character.tier === "primary" && character.must_appear)
+    plan.characters.some((character) => character.must_appear)
       ? "primary_companion_engaged"
       : "",
   ]);
@@ -2221,7 +2044,7 @@ const assembleEpisode = async (
     : [];
   const relationshipStateSummary = clean(
     `${relationSummaryBefore || "関係性は継続中。"} 今回は${plan.characters
-      .filter((character) => character.tier === "primary")
+      .filter((character) => character.must_appear)
       .map((character) => character.name)
       .join("・")}との相互理解が進んだ。`
   );

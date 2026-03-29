@@ -267,6 +267,12 @@ export type GeneratedSeriesCharacterRelationship = {
   tensionLevel?: number;
 };
 
+export type GeneratedSeriesCharacterRelationshipHook = {
+  targetId?: string;
+  targetName?: string;
+  relation: string;
+};
+
 export type GeneratedSeriesCharacterVisualDesign = {
   dominantColor: string;
   bodyType: string;
@@ -286,8 +292,8 @@ export type GeneratedSeriesCharacter = {
   id?: string;
   name: string;
   role: string;
-  tier?: "primary" | "secondary";
   mustAppear?: boolean;
+  isPartner?: boolean;
   archetype?: string;
   goal?: string;
   drive?: string;
@@ -304,8 +310,7 @@ export type GeneratedSeriesCharacter = {
   identityAnchorTokens?: GeneratedSeriesCharacterIdentityAnchorTokens;
   portraitPrompt?: string;
   portraitImageUrl?: string;
-  secrets?: string[];
-  relationshipHooks?: string[];
+  relationshipHooks?: GeneratedSeriesCharacterRelationshipHook[];
   relationships?: GeneratedSeriesCharacterRelationship[];
   investigationFunction?: string;
   emotionalTemperature?: string;
@@ -695,6 +700,10 @@ const RUNTIME_EPISODE_GENERATION_PHASES = [
   "input_validated",
   "characters_validated",
   "series_context_loaded",
+  "episode_request_brief_start",
+  "episode_request_brief_done",
+  "local_material_selection_start",
+  "local_material_selection_done",
   "continuity_context_built",
   "pipeline_start",
   "fallback_plan_start",
@@ -705,6 +714,18 @@ const RUNTIME_EPISODE_GENERATION_PHASES = [
   "spot_resolution_done",
   "episode_cast_design_start",
   "episode_cast_design_done",
+  "episode_cast_usage_start",
+  "episode_cast_usage_done",
+  "spot_mystery_structure_start",
+  "spot_mystery_structure_done",
+  "narration_plan_start",
+  "narration_plan_done",
+  "dialogue_plan_start",
+  "dialogue_plan_done",
+  "episode_outline_start",
+  "episode_outline_done",
+  "route_dry_run_start",
+  "route_dry_run_done",
   "scene_generation_start",
   "scene_generation_done",
   "spot_chapter_start",
@@ -748,6 +769,7 @@ export type GenerateSeriesByMastraPayload = {
   prompt?: string;
   desiredEpisodeCount?: number;
   creatorId?: string;
+  creatorName?: string;
   generationMode?: "proposal" | "full";
   existingIdentityPack?: GeneratedSeriesIdentityPack;
   identityRetcon?: boolean;
@@ -759,16 +781,36 @@ const SERIES_DRAFT_GENERATION_PHASES = [
   "input_validated",
   "sanitize_series_request_start",
   "sanitize_series_request_done",
+  "load_series_generation_context_start",
+  "load_series_generation_context_done",
+  "evaluate_series_generation_eligibility_start",
+  "evaluate_series_generation_eligibility_done",
+  "derive_series_design_brief_start",
+  "derive_series_design_brief_done",
+  "derive_series_framework_brief_start",
+  "derive_series_framework_brief_done",
   "generate_series_concept_start",
   "generate_series_concept_done",
+  "generate_series_core_start",
+  "generate_series_core_done",
+  "generate_user_role_frame_start",
+  "generate_user_role_frame_done",
   "generate_series_characters_start",
   "generate_series_characters_done",
+  "generate_persistent_cast_start",
+  "generate_persistent_cast_done",
   "build_series_identity_pack_start",
   "build_series_identity_pack_done",
   "generate_series_checkpoints_start",
   "generate_series_checkpoints_done",
+  "build_series_continuity_axes_start",
+  "build_series_continuity_axes_done",
+  "build_episode_generation_contract_start",
+  "build_episode_generation_contract_done",
   "seed_route_dry_run_start",
   "seed_route_dry_run_done",
+  "generate_series_visual_bundle_start",
+  "generate_series_visual_bundle_done",
   "finalize_series_blueprint_start",
   "generate_series_cover_candidates_start",
   "generate_series_cover_candidates_done",
@@ -796,23 +838,8 @@ export type GenerateSeriesByMastraOptions = {
 
 const SERIES_DRAFT_DEFAULT_TIMEOUT_MS = 600_000;
 const SERIES_DRAFT_DEFAULT_POLL_INTERVAL_MS = 700;
-const SERIES_VNEXT_STRICT =
-  clean(process.env.EXPO_PUBLIC_SERIES_VNEXT_STRICT ?? process.env.SERIES_VNEXT_STRICT).toLowerCase() !==
-  "false";
-const SERIES_VNEXT_LEGACY_FALLBACK_ALLOWED = false;
-const SERIES_VNEXT_SYNC_FALLBACK_ALLOWED = false;
+const FIXED_SERIES_EPISODE_COUNT = 3;
 const SERIES_RUNTIME_EPISODE_LEGACY_FALLBACK_ALLOWED = false;
-const SERIES_VNEXT_REQUEST_TIMEOUT_MS = (() => {
-  const parsed = Number.parseInt(
-    clean(
-      process.env.EXPO_PUBLIC_SERIES_VNEXT_REQUEST_TIMEOUT_MS ??
-        process.env.SERIES_VNEXT_REQUEST_TIMEOUT_MS
-    ),
-    10
-  );
-  if (!Number.isFinite(parsed) || parsed <= 0) return 180_000;
-  return parsed;
-})();
 
 const isSeriesDraftGenerationPhase = (value: string): value is SeriesDraftGenerationPhase =>
   (SERIES_DRAFT_GENERATION_PHASES as readonly string[]).includes(value);
@@ -822,6 +849,50 @@ const normalizeStringArray = (value: unknown) => {
   return value.map((item) => clean(typeof item === "string" ? item : String(item ?? ""))).filter(Boolean);
 };
 const asStringArray = (value: unknown) => normalizeStringArray(value);
+
+const normalizeRelationshipHooks = (value: unknown): GeneratedSeriesCharacterRelationshipHook[] => {
+  if (!Array.isArray(value)) return [];
+  const deduped = new Set<string>();
+  const hooks: GeneratedSeriesCharacterRelationshipHook[] = [];
+  value.forEach((item) => {
+    if (typeof item === "string") {
+      const relation = clean(item);
+      if (!relation) return;
+      const key = `::${relation.toLowerCase()}`;
+      if (deduped.has(key)) return;
+      deduped.add(key);
+      hooks.push({ relation });
+      return;
+    }
+    if (!item || typeof item !== "object") return;
+    const row = item as Record<string, unknown>;
+    const targetId = clean(
+      typeof row.target_id === "string"
+        ? row.target_id
+        : typeof row.targetId === "string"
+          ? row.targetId
+          : ""
+    );
+    const targetName = clean(
+      typeof row.target_name === "string"
+        ? row.target_name
+        : typeof row.targetName === "string"
+          ? row.targetName
+          : ""
+    );
+    const relation = clean(typeof row.relation === "string" ? row.relation : "");
+    if (!relation) return;
+    const key = `${targetId.toLowerCase()}::${targetName.toLowerCase()}::${relation.toLowerCase()}`;
+    if (deduped.has(key)) return;
+    deduped.add(key);
+    hooks.push({
+      targetId: targetId || undefined,
+      targetName: targetName || undefined,
+      relation,
+    });
+  });
+  return hooks;
+};
 
 const normalizeMysteryProfile = (raw: unknown): GeneratedSeriesMysteryProfile | undefined => {
   if (!raw || typeof raw !== "object") return undefined;
@@ -1053,14 +1124,12 @@ const normalizeCharacters = (raw: unknown): GeneratedSeriesCharacter[] => {
       id: clean(typeof row.id === "string" ? row.id : undefined) || `char_${index + 1}`,
       name,
       role,
-      tier:
-        clean(typeof row.tier === "string" ? row.tier : "").toLowerCase() === "primary"
-          ? "primary"
-          : "secondary",
       mustAppear:
-        typeof row.must_appear === "boolean"
-          ? row.must_appear
-          : clean(typeof row.tier === "string" ? row.tier : "").toLowerCase() === "primary",
+        typeof row.must_appear === "boolean" ? row.must_appear : false,
+      isPartner:
+        typeof row.is_partner === "boolean"
+          ? row.is_partner
+          : /(相棒|パートナー|バディ|助手|補佐|同行|partner)/i.test(role),
       archetype: clean(typeof row.archetype === "string" ? row.archetype : undefined) || undefined,
       goal: clean(typeof row.goal === "string" ? row.goal : undefined) || undefined,
       drive: clean(typeof row.drive === "string" ? row.drive : undefined) || undefined,
@@ -1091,8 +1160,7 @@ const normalizeCharacters = (raw: unknown): GeneratedSeriesCharacter[] => {
       portraitImageUrl:
         normalizeMediaUrlForClient(typeof row.portrait_image_url === "string" ? row.portrait_image_url : undefined) ||
         undefined,
-      secrets: normalizeStringArray(row.secrets),
-      relationshipHooks: normalizeStringArray(row.relationship_hooks),
+      relationshipHooks: normalizeRelationshipHooks(row.relationship_hooks),
       investigationFunction:
         clean(typeof row.investigation_function === "string" ? row.investigation_function : undefined) || undefined,
       emotionalTemperature:
@@ -1477,49 +1545,100 @@ const normalizeDraftFromVNextResponse = (
   fallback: GenerateSeriesByMastraPayload
 ): GeneratedSeriesDraft | null => {
   const payloadObject = asObject(envelope);
-  const blueprint = asObject(payloadObject.seriesBlueprint);
-  const visualBundle = asObject(payloadObject.visualBundle);
-  const concept = asObject(blueprint.concept);
-  const narrative = asObject(blueprint.narrative);
-  const worldRules = asObject(blueprint.worldRules);
-  const continuityContract = asObject(blueprint.continuityContract);
-  const identityPackRaw = asObject(blueprint.identityPack);
-  const firstEpisodeSeedRaw = asObject(blueprint.firstEpisodeSeed);
-  const initialTemplate = asObject(payloadObject.initialUserSeriesStateTemplate);
+  const pickString = (obj: Record<string, unknown>, keys: string[]) => {
+    for (const key of keys) {
+      if (typeof obj[key] === "string") {
+        const value = clean(obj[key] as string);
+        if (value) return value;
+      }
+    }
+    return "";
+  };
+  const pickObject = (obj: Record<string, unknown>, keys: string[]) => {
+    for (const key of keys) {
+      const value = obj[key];
+      if (value && typeof value === "object" && !Array.isArray(value)) return asObject(value);
+    }
+    return {};
+  };
+  const pickArray = (obj: Record<string, unknown>, keys: string[]) => {
+    for (const key of keys) {
+      const value = obj[key];
+      if (Array.isArray(value)) return value;
+    }
+    return [] as unknown[];
+  };
+  const pickNumber = (obj: Record<string, unknown>, keys: string[], fallbackValue = 0) => {
+    for (const key of keys) {
+      const raw = obj[key];
+      const parsed = Number.parseInt(String(raw ?? ""), 10);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return fallbackValue;
+  };
 
-  const oneLineHook = clean(typeof concept.oneLineHook === "string" ? concept.oneLineHook : "");
-  const premise = clean(typeof concept.premise === "string" ? concept.premise : "");
-  const worldviewCore = clean(typeof concept.worldviewCore === "string" ? concept.worldviewCore : "");
-  const mysteryProfile = normalizeMysteryProfile(concept.mysteryProfile);
-  const title = sanitizeSeriesTitle(typeof concept.title === "string" ? concept.title : "", mysteryProfile);
+  const blueprint = pickObject(payloadObject, ["seriesBlueprint", "series_blueprint", "blueprint"]);
+  const visualBundle = pickObject(payloadObject, ["visualBundle", "visual_bundle"]);
+  const concept = pickObject(blueprint, ["concept"]);
+  const frameworkBrief = pickObject(blueprint, ["frameworkBrief", "framework_brief"]);
+  const experienceDesign = pickObject(frameworkBrief, ["experienceDesign", "experience_design"]);
+  const seriesDesign = pickObject(frameworkBrief, ["seriesDesign", "series_design"]);
+  const episodeDesign = pickObject(frameworkBrief, ["episodeDesign", "episode_design"]);
+  const continuityDesign = pickObject(frameworkBrief, ["continuityDesign", "continuity_design"]);
+  const worldRules = pickObject(frameworkBrief, ["worldRules", "world_rules"]);
+  const continuityContract = pickObject(blueprint, ["continuityContract", "continuity_contract"]);
+  const continuityAxesObject = pickObject(blueprint, ["continuityAxes", "continuity_axes"]);
+  const episodeGenerationContract = pickObject(blueprint, ["episodeGenerationContract", "episode_generation_contract"]);
+  const userRoleFrame = pickObject(blueprint, ["userRoleFrame", "user_role_frame"]);
+  const persistentCharacters = pickObject(blueprint, ["persistentCharacters", "persistent_characters"]);
+  const identityPackRaw = pickObject(blueprint, ["identityPack", "identity_pack"]);
+  const initialTemplate = pickObject(payloadObject, ["initialUserSeriesStateTemplate", "initial_user_series_state_template"]);
+  const progressSummary = pickObject(initialTemplate, ["progressSummary", "progress_summary"]);
+  const rememberedExperience = pickObject(initialTemplate, ["rememberedExperience", "remembered_experience"]);
+  const continuityState = pickObject(initialTemplate, ["continuityState", "continuity_state"]);
+  const relationshipState = pickArray(initialTemplate, ["relationshipState", "relationship_state"]);
+
+  const oneLineHook = pickString(concept, ["oneLineHook", "one_line_hook"]);
+  const premise = pickString(concept, ["premise"]);
+  const worldviewCore = pickString(concept, ["worldviewCore", "worldview_core"]);
+  const mysteryProfile = normalizeMysteryProfile(concept.mysteryProfile ?? concept.mystery_profile);
+  const title = sanitizeSeriesTitle(pickString(concept, ["title"]), mysteryProfile);
   if (!title) return null;
+
   const sanitizedPremise = sanitizeSeriesField(premise, buildPortablePremise(mysteryProfile));
-  const sanitizedOverview = sanitizeSeriesField(oneLineHook || premise, buildPortableOverview(mysteryProfile));
+  const sanitizedOverview = sanitizeSeriesField(
+    oneLineHook || pickString(experienceDesign, ["objective"]) || premise,
+    buildPortableOverview(mysteryProfile)
+  );
   const sanitizedGenre = sanitizeSeriesField(
-    normalizeStringArray(concept.genreAxes)[0] || clean(fallback.interview.genreWorld),
+    normalizeStringArray(concept.genreAxes ?? concept.genre_axes)[0] || clean(fallback.interview.genreWorld),
     derivePortableGenre(clean(fallback.interview.genreWorld), mysteryProfile)
   );
   const sanitizedSeasonGoal = sanitizeSeriesField(
-    clean(typeof narrative.longArcGoal === "string" ? narrative.longArcGoal : ""),
+    pickString(seriesDesign, ["returnReason", "return_reason"]),
     buildPortableSeasonGoal(mysteryProfile)
   );
   const sanitizedWorldSetting = sanitizeSeriesField(worldviewCore, WALKABLE_WORLD_FALLBACK);
 
-  const hardRules = normalizeStringArray(worldRules.hardRules);
-  const mandatoryCallbacks = normalizeStringArray(continuityContract.mandatoryCallbackTypes);
+  const hardRules = normalizeStringArray(worldRules.realityRules ?? worldRules.reality_rules);
+  const mandatoryCallbacks = normalizeStringArray(
+    continuityContract.mandatoryCallbackTypes ?? continuityContract.mandatory_callback_types
+  );
   const aiRules = ensureWalkAiRules(
     [...hardRules, ...mandatoryCallbacks].map((line) => `- ${line}`).join("\n")
   );
 
-  const visualCharactersRaw = Array.isArray(visualBundle.characters) ? visualBundle.characters : [];
+  const visualCharactersRaw = pickArray(visualBundle, ["characters", "character_visuals"]);
   const visualCharacters = visualCharactersRaw
     .map((item, index) => {
       const row = asObject(item);
-      const characterId = clean(typeof row.characterId === "string" ? row.characterId : "");
-      const displayName = clean(typeof row.displayName === "string" ? row.displayName : "");
-      const portraitPrompt = clean(typeof row.portraitPrompt === "string" ? row.portraitPrompt : "") || undefined;
+      const characterId = pickString(row, ["characterId", "character_id", "id"]);
+      const displayName = pickString(row, ["displayName", "display_name", "name"]);
+      const portraitPrompt = pickString(row, ["portraitPrompt", "portrait_prompt", "prompt"]) || undefined;
       const portraitImageUrl =
-        normalizeMediaUrlForClient(typeof row.portraitImageUrl === "string" ? row.portraitImageUrl : "") || undefined;
+        normalizeMediaUrlForClient(
+          pickString(row, ["portraitImageUrl", "portrait_image_url", "imageUrl", "image_url"])
+        ) || undefined;
       if (!characterId && !displayName && !portraitPrompt && !portraitImageUrl) return null;
       return {
         characterId: characterId || `char_${index + 1}`,
@@ -1536,151 +1655,170 @@ const normalizeDraftFromVNextResponse = (
       .filter(([key]) => Boolean(key))
   );
 
-  const vNextCharactersRaw = Array.isArray(blueprint.characters) ? blueprint.characters : [];
-  const characters = vNextCharactersRaw
-    .map((item, index) => {
-      const row = asObject(item);
-      const identity = asObject(row.identity);
-      const usageRules = asObject(row.usageRules);
-      const relationshipDesign = asObject(row.relationshipDesign);
-      const hooks = asObject(row.recurringHooks);
-      const name = clean(typeof row.displayName === "string" ? row.displayName : "");
+  const persistentCharacterRows = [
+    pickObject(persistentCharacters, ["partner"]),
+    pickObject(persistentCharacters, ["anchorNpc", "anchor_npc"]),
+  ]
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => Object.keys(row).length > 0);
+
+  const v2Characters = persistentCharacterRows
+    .map(({ row, index }) => {
+      const identity = pickObject(row, ["identity"]);
+      const usageRules = pickObject(row, ["usageRules", "usage_rules"]);
+      const relationshipDesign = pickObject(row, ["relationshipDesign", "relationship_design"]);
+      const hooks = pickObject(row, ["recurringHooks", "recurring_hooks"]);
+      const visual = pickObject(row, ["visual"]);
+      const name = pickString(row, ["displayName", "display_name", "name"]);
       if (!name) return null;
-      const characterId = clean(typeof row.id === "string" ? row.id : "") || `char_${index + 1}`;
-      const visual =
+      const characterId = pickString(row, ["id", "characterId", "character_id"]) || `char_${index + 1}`;
+      const visualRef =
         visualCharacterById.get(characterId) ||
         visualCharacterByName.get(name.toLowerCase()) ||
         undefined;
-      const mustAppearFrequency = clean(
-        typeof usageRules.mustAppearFrequency === "string" ? usageRules.mustAppearFrequency : ""
-      );
+      const mustAppearFrequency = pickString(usageRules, ["mustAppearFrequency", "must_appear_frequency"]);
+      const mustAppear = mustAppearFrequency === "every_episode" || clean(typeof row.slot === "string" ? row.slot : "") === "partner";
+      const relationFallback =
+        clean(typeof row.slot === "string" ? row.slot : "") === "partner"
+          ? pickString(userRoleFrame, ["relationToPartner", "relation_to_partner"])
+          : pickString(userRoleFrame, ["relationToAnchorNpc", "relation_to_anchor_npc"]);
       return {
         id: characterId,
         name,
         role:
-          clean(typeof row.coreFunctionInSeries === "string" ? row.coreFunctionInSeries : "") ||
-          clean(typeof row.role === "string" ? row.role : "") ||
-          "同行者",
-        tier: mustAppearFrequency === "every_episode" ? "primary" : "secondary",
-        mustAppear: mustAppearFrequency === "every_episode",
-        archetype: clean(typeof row.archetype === "string" ? row.archetype : "") || undefined,
+          pickString(row, ["coreFunctionInSeries", "core_function_in_series", "role"]) ||
+          "継続登場キャラクター",
+        mustAppear,
+        isPartner: clean(typeof row.slot === "string" ? row.slot : "") === "partner",
+        archetype: pickString(row, ["archetype"]) || undefined,
         personality: dedupeStrings([
-          ...normalizeStringArray(identity.immutableTraits),
-          ...normalizeStringArray(identity.mutableTraits),
+          ...normalizeStringArray(identity.immutableTraits ?? identity.immutable_traits),
+          ...normalizeStringArray(identity.mutableTraits ?? identity.mutable_traits),
         ]).join(" / "),
-        goal:
-          clean(typeof identity.motivationCore === "string" ? identity.motivationCore : "") ||
-          undefined,
+        goal: pickString(identity, ["motivationCore", "motivation_core"]) || undefined,
+        appearance: normalizeStringArray(hooks.placeAffinity ?? hooks.place_affinity).join(" / ") || undefined,
         arcStart:
-          clean(typeof relationshipDesign.initialDistanceToUser === "string"
-            ? relationshipDesign.initialDistanceToUser
-            : "") || undefined,
+          pickString(relationshipDesign, ["initialDistanceToUser", "initial_distance_to_user"]) || undefined,
         arcEnd:
-          clean(typeof relationshipDesign.expectedArcWithUser === "string"
-            ? relationshipDesign.expectedArcWithUser
-            : "") || undefined,
-        relationshipHooks: normalizeStringArray(hooks.conversationalHooks),
-        secrets: normalizeStringArray(usageRules.cannotContradict),
-        relationshipTemperature:
-          clean(typeof (row as Record<string, unknown>).relationshipTemperature === "string"
-            ? (row as Record<string, unknown>).relationshipTemperature as string
-            : "") || undefined,
-        signatureProp:
-          clean(typeof (row as Record<string, unknown>).signatureProp === "string"
-            ? (row as Record<string, unknown>).signatureProp as string
-            : "") || undefined,
-        environmentResidue:
-          clean(typeof (row as Record<string, unknown>).environmentResidue === "string"
-            ? (row as Record<string, unknown>).environmentResidue as string
-            : "") || undefined,
-        postureGrammar:
-          clean(typeof (row as Record<string, unknown>).postureGrammar === "string"
-            ? (row as Record<string, unknown>).postureGrammar as string
-            : "") || undefined,
-        portraitPrompt: visual?.portraitPrompt,
-        portraitImageUrl: visual?.portraitImageUrl || undefined,
+          pickString(relationshipDesign, ["expectedArcWithUser", "expected_arc_with_user"]) || undefined,
+        relationshipHooks: dedupeStrings([
+          relationFallback,
+          ...normalizeStringArray(hooks.conversationalHooks ?? hooks.conversational_hooks),
+        ])
+          .slice(0, 3)
+          .map((relation) => ({ relation })),
+        portraitPrompt:
+          visualRef?.portraitPrompt ||
+          pickString(visual, ["portraitPrompt", "portrait_prompt"]) ||
+          undefined,
+        portraitImageUrl:
+          visualRef?.portraitImageUrl ||
+          normalizeMediaUrlForClient(
+            pickString(visual, ["portraitImageUrl", "portrait_image_url"])
+          ) ||
+          undefined,
       } satisfies GeneratedSeriesCharacter;
     })
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
 
-  const vNextCheckpointsRaw = Array.isArray(blueprint.checkpoints) ? blueprint.checkpoints : [];
-  const checkpoints: GeneratedSeriesCheckpoint[] = vNextCheckpointsRaw.reduce<GeneratedSeriesCheckpoint[]>(
-    (acc, item, index) => {
-      const row = asObject(item);
-      const label = clean(typeof row.label === "string" ? row.label : "");
-      if (!label) return acc;
-      const checkpointNo = Number.parseInt(String(row.index ?? index), 10);
-      acc.push({
-        checkpointNo: Number.isFinite(checkpointNo) ? checkpointNo + 1 : index + 1,
-        title: label,
-        purpose: clean(typeof row.narrativePurpose === "string" ? row.narrativePurpose : "") || "",
-        unlockHint: normalizeStringArray(row.requiredProgressConditions).join(" / "),
-        expectedEmotion:
-          normalizeStringArray(row.expectedUserEmotion)[0] ||
-          mapVNextSceneRoleToLegacy(clean(typeof row.roleInArc === "string" ? row.roleInArc : "")),
-        carryOver: normalizeStringArray(row.mustRememberAfterPassing).join(" / "),
-        knowledgeGain: clean(typeof row.narrativePurpose === "string" ? row.narrativePurpose : "") || undefined,
-        remainingUnknown: normalizeStringArray(row.requiredCallbackKinds).join(" / ") || undefined,
-        nextMoveReason: normalizeStringArray(row.requiredProgressConditions).join(" / ") || undefined,
-      });
-      return acc;
-    },
-    []
-  );
+  const legacySeries = pickObject(payloadObject, ["series"]);
+  const legacyCharacters = normalizeCharacters(legacySeries.characters);
+  const characters =
+    v2Characters.length > 0
+      ? v2Characters
+      : legacyCharacters.length > 0
+        ? legacyCharacters
+        : [];
+  if (characters.length === 0) {
+    console.warn("[seriesAi] vNext normalization failed: characters missing in both seriesBlueprint and legacy series.");
+    return null;
+  }
 
-  const seedSpotTypes = normalizeStringArray(firstEpisodeSeedRaw.suggestedPlaceTypes);
-  const handoffNotes = normalizeStringArray(firstEpisodeSeedRaw.handoffNotesForEpisodeRuntime);
+  const continuityAxes = pickArray(continuityAxesObject, ["axes"]);
+  const checkpoints: GeneratedSeriesCheckpoint[] = continuityAxes.map((item, index) => {
+    const row = asObject(item);
+    const kind = clean(typeof row.kind === "string" ? row.kind : "");
+    return {
+      checkpointNo: index + 1,
+      title: pickString(row, ["label"]) || `継続軸 ${index + 1}`,
+      purpose: pickString(row, ["description"]) || "",
+      unlockHint: normalizeStringArray(row.growthSignals ?? row.growth_signals).join(" / "),
+      expectedEmotion: kind === "relationship" ? "関係変化" : kind === "discovery" ? "発見" : "進展",
+      carryOver: pickString(row, ["carryOverRule", "carry_over_rule"]) || "",
+      knowledgeGain: pickString(row, ["description"]) || undefined,
+      nextMoveReason: pickString(row, ["carryOverRule", "carry_over_rule"]) || undefined,
+    };
+  });
+
+  const spotCountPolicy = pickObject(episodeGenerationContract, ["spotCountPolicy", "spot_count_policy"]);
+  const minSpots = Math.max(3, pickNumber(spotCountPolicy, ["min"], 3));
+  const carryOverHint =
+    normalizeStringArray(continuityState.promisedPayoffs ?? continuityState.promised_payoffs)[0] ||
+    checkpoints[0]?.carryOver ||
+    pickString(seriesDesign, ["returnReason", "return_reason"]) ||
+    "次回に続く視点の変化が残る。";
   const firstEpisodeSeed: GeneratedSeriesFirstEpisodeSeed = {
     title: `${title} 第1話`,
-    objective: clean(typeof firstEpisodeSeedRaw.purpose === "string" ? firstEpisodeSeedRaw.purpose : "") || "導入",
-    openingScene:
-      clean(typeof firstEpisodeSeedRaw.openingSituation === "string" ? firstEpisodeSeedRaw.openingSituation : "") ||
-      "旅の入口で違和感と出会う",
-    expectedDurationMinutes: 20,
-    routeStyle: "現地の自然な移動手段を含む周遊",
-    movementStyle: handoffNotes.find((note) => /移動|徒歩|公共交通|自転車|フェリー|ロープウェイ/.test(note)),
+    objective:
+      pickString(experienceDesign, ["objective"]) ||
+      sanitizedOverview ||
+      "このシリーズ世界に入る導入回を始める。",
+    openingScene: oneLineHook || sanitizedPremise || "現地で最初の違和感と出会う。",
+    expectedDurationMinutes: Math.max(20, minSpots * 15),
+    routeStyle: ensureWalkRouteStyle("現地の自然な移動手段を含む周遊"),
+    movementStyle: pickString(episodeDesign, ["spotUsePolicy", "spot_use_policy"]) || undefined,
     completionCondition:
-      clean(typeof firstEpisodeSeedRaw.whyGoThereLogic === "string" ? firstEpisodeSeedRaw.whyGoThereLogic : "") ||
-      "主要スポットで手がかりを得る。",
-    carryOverHint: normalizeStringArray(asObject(firstEpisodeSeedRaw.foreshadowingPlan).seed)[0] || "次話に続く問いが残る。",
-    incitingIncident:
-      handoffNotes.find((note) => /きっかけ|incident|異変|依頼|発端/.test(note)) || "現地で小さな異変が発生する。",
-    firstFalseAssumption:
-      handoffNotes.find((note) => /誤認|仮説|assumption/.test(note)) || "最初の見立てが後で揺らぐ。",
-    firstReversal:
-      handoffNotes.find((note) => /反転|reversal|矛盾/.test(note)) || "別地点の情報で認識が反転する。",
-    unresolvedHook:
-      normalizeStringArray(asObject(firstEpisodeSeedRaw.foreshadowingPlan).seed)[0] || "回収しきれない問いが残る。",
-    spotRequirements: normalizeSpotRequirements(
-      seedSpotTypes.map((spotRole, index) => ({
-        requirement_id: `req_${index + 1}`,
-        scene_role: sceneRoleForIndex(index, Math.max(seedSpotTypes.length, 2)),
-        spot_role: spotRole,
-        required_attributes: [],
-        visit_constraints: [],
-        tourism_value_type: "地域体験",
-      })),
-      worldviewCore
-    ),
-    suggestedSpots: ensureWalkSuggestedSpots(seedSpotTypes, worldviewCore),
+      "その回の出来事の因果を説明できる状態になる。",
+    carryOverHint,
+    incitingIncident: sanitizedPremise || "小さな異変が事件ミステリーの入口になる。",
+    firstFalseAssumption: "最初の見立てが途中で揺らぐ。",
+    firstReversal: "別の現地情報が入ることで認識が反転する。",
+    unresolvedHook: carryOverHint,
+    spotRequirements: Array.from({ length: minSpots }).map((_, index) => ({
+      requirementId: `req_${index + 1}`,
+      sceneRole: sceneRoleForIndex(index, minSpots),
+      spotRole:
+        index === 0
+          ? "導入となる違和感が見つかる場所"
+          : index === minSpots - 1
+            ? "真相説明と余韻に接続する場所"
+            : "観察と照合が進む場所",
+      requiredAttributes: [],
+      visitConstraints: [],
+      tourismValueType: "地域体験",
+    })),
+    suggestedSpots: ensureWalkSuggestedSpots([], sanitizedWorldSetting),
   };
 
-  const currentProgress = asObject(initialTemplate.currentProgress);
+  const relationshipFlags = dedupeStrings(
+    relationshipState.flatMap((item) => {
+      const row = asObject(item);
+      return asStringArray(row.specialFlags);
+    })
+  );
+  const recentRelationShift = normalizeStringArray(
+    rememberedExperience.relationshipTurningPoints ?? rememberedExperience.relationship_turning_points
+  ).slice(-8);
+  const firstRelationship = asObject(relationshipState[0]);
   const progressState: GeneratedSeriesProgressState = {
-    lastCompletedEpisodeNo: Number.parseInt(String(currentProgress.episodeCountCompleted ?? 0), 10) || 0,
-    unresolvedThreads: normalizeStringArray(currentProgress.unresolvedThreads),
-    revealedFacts: normalizeStringArray(currentProgress.resolvedThreads),
-    relationshipStateSummary: "主要キャラクターとの関係は導入段階。",
-    relationshipFlags: [],
-    recentRelationShift: [],
-    companionTrustLevel: 40,
-    nextHook: normalizeStringArray(currentProgress.activeForeshadowing)[0] || "",
+    lastCompletedEpisodeNo:
+      pickNumber(progressSummary, ["episodeCountCompleted", "episode_count_completed"], 0),
+    unresolvedThreads: normalizeStringArray(progressSummary.activeThreads ?? progressSummary.active_threads),
+    revealedFacts: normalizeStringArray(progressSummary.resolvedThreads ?? progressSummary.resolved_threads),
+    relationshipStateSummary:
+      recentRelationShift[0] ||
+      "固定キャラクターとの関係は導入段階。",
+    relationshipFlags,
+    recentRelationShift,
+    companionTrustLevel: pickNumber(firstRelationship, ["trustLevel", "trust_level"], 40),
+    nextHook: carryOverHint,
   };
 
-  const nonNegotiableTheme = normalizeStringArray(asObject(identityPackRaw.seriesCoreAnchors).nonNegotiableTheme);
-  const identityCharacterAnchors = Array.isArray(identityPackRaw.characterAnchors)
-    ? identityPackRaw.characterAnchors
-    : [];
+  const seriesCoreAnchors = pickObject(identityPackRaw, ["seriesCoreAnchors", "series_core_anchors"]);
+  const nonNegotiableTheme = normalizeStringArray(
+    seriesCoreAnchors.nonNegotiableTheme ?? seriesCoreAnchors.non_negotiable_theme
+  );
+  const identityCharacterAnchors = pickArray(identityPackRaw, ["characterAnchors", "character_anchors"]);
   const keyPersonCharacterIds = characters
     .filter((character) => character.mustAppear)
     .map((character) => character.id || "")
@@ -1710,84 +1848,79 @@ const normalizeDraftFromVNextResponse = (
                 dominantColor: "アクセントカラー",
                 outfitKeyItem: "象徴アイテム",
                 distinguishingFeature:
-                  clean(typeof anchorRow.anchorSummary === "string" ? anchorRow.anchorSummary : "") || "印象的な特徴",
+                  pickString(anchorRow, ["anchorSummary", "anchor_summary"]) || "印象的な特徴",
               },
             };
           }),
-          lockedAt: clean(typeof blueprint.origin === "object" ? asObject(blueprint.origin).generatedAt as string : "") || new Date().toISOString(),
+          lockedAt:
+            pickString(pickObject(blueprint, ["origin"]), ["generatedAt", "generated_at"]) || new Date().toISOString(),
         }
       : undefined;
 
-  const worldVisualAssets = Array.isArray(visualBundle.worldVisualAssets)
-    ? visualBundle.worldVisualAssets.reduce<
-      Array<{
-        id: string;
-        title: string;
-        description: string;
-        prompt?: string;
-        imageUrl?: string;
-      }>
-    >((acc, item, index) => {
-      const row = asObject(item);
-      const id = clean(typeof row.id === "string" ? row.id : "") || `world_${index + 1}`;
-      const title = clean(typeof row.title === "string" ? row.title : "");
-      const description = clean(typeof row.description === "string" ? row.description : "");
-      const prompt = clean(typeof row.prompt === "string" ? row.prompt : "") || undefined;
-      const imageUrl =
-        normalizeMediaUrlForClient(typeof row.imageUrl === "string" ? row.imageUrl : "") || undefined;
-      if (!title && !description && !prompt && !imageUrl) return acc;
-      acc.push({
-        id,
-        title: title || `世界観ビジュアル ${index + 1}`,
-        description: description || "世界観の雰囲気を示すビジュアル。",
-        prompt,
-        imageUrl,
-      });
-      return acc;
-    }, [])
-    : [];
+  const cover = pickObject(visualBundle, ["cover"]);
   const coverImagePrompt =
-    clean(typeof visualBundle.coverImagePrompt === "string" ? visualBundle.coverImagePrompt : "") || undefined;
-  const coverImageUrl =
-    normalizeMediaUrlForClient(typeof visualBundle.coverImageUrl === "string" ? visualBundle.coverImageUrl : "") ||
+    pickString(cover, ["prompt"]) ||
+    pickString(visualBundle, ["coverImagePrompt", "cover_image_prompt"]) ||
     undefined;
-  const coverConsistencyReport = normalizeCoverConsistencyReport(visualBundle.coverConsistencyReport);
+  const coverImageUrl =
+    normalizeMediaUrlForClient(
+      pickString(cover, ["imageUrl", "image_url"]) ||
+        pickString(visualBundle, ["coverImageUrl", "cover_image_url"])
+    ) || undefined;
+  const coverConsistencyReport = normalizeCoverConsistencyReport(
+    visualBundle.coverConsistencyReport ?? visualBundle.cover_consistency_report
+  );
+
+  const continuity: GeneratedSeriesContinuity = {
+    globalMystery: sanitizeSeriesField(
+      clean(mysteryProfile?.caseCore) || sanitizedPremise,
+      buildPortableGlobalMystery(mysteryProfile)
+    ),
+    midSeasonTwist: checkpoints[1]?.carryOver || undefined,
+    finalePayoff: sanitizedSeasonGoal || undefined,
+    invariantRules: hardRules,
+    episodeLinkPolicy: dedupeStrings([
+      ...mandatoryCallbacks,
+      ...normalizeStringArray(continuityDesign.callbackPolicy ?? continuityDesign.callback_policy),
+      ...normalizeStringArray(continuityContract.handoffFieldsToEpisodeRuntime ?? continuityContract.handoff_fields_to_episode_runtime),
+    ]),
+  };
 
   return {
     title,
     overview: sanitizedOverview || "概要を生成できませんでした。",
     aiRules,
-    characters: characters.length > 0 ? characters : [],
+    characters,
     coverImagePrompt,
     coverImageUrl,
     genre: sanitizedGenre || undefined,
-    tone: normalizeStringArray(concept.toneKeywords)[0] || clean(fallback.interview.desiredEmotion) || undefined,
+    tone:
+      normalizeStringArray(concept.toneKeywords ?? concept.tone_keywords)[0] ||
+      pickString(experienceDesign, ["toneGuardrail", "tone_guardrail"]) ||
+      clean(fallback.interview.desiredEmotion) ||
+      undefined,
     premise: sanitizedPremise || undefined,
     seasonGoal: sanitizedSeasonGoal || undefined,
     mysteryProfile,
     world: {
-      visualAssets: worldVisualAssets,
+      visualAssets: [],
       setting: sanitizedWorldSetting,
       coreConflict:
-        clean(typeof narrative.coreMysteryOrDrive === "string" ? narrative.coreMysteryOrDrive : "") || undefined,
-      recurringMotifs: normalizeStringArray(concept.aestheticKeywords),
-      tabooRules: normalizeStringArray(worldRules.forbiddenBreaks),
+        pickString(seriesDesign, ["relationshipPromise", "relationship_promise"]) ||
+        pickString(episodeDesign, ["learningIntegrationPolicy", "learning_integration_policy"]) ||
+        undefined,
+      recurringMotifs: normalizeStringArray(concept.aestheticKeywords ?? concept.aesthetic_keywords),
+      tabooRules: normalizeStringArray(
+        continuityContract.forbiddenContinuityBreaks ??
+          continuityContract.forbidden_continuity_breaks ??
+          worldRules.forbiddenGenreDrifts ??
+          worldRules.forbidden_genre_drifts
+      ),
     },
     checkpoints,
     firstEpisodeSeed,
     progressState,
-    continuity: {
-      globalMystery: sanitizeSeriesField(
-        typeof narrative.coreMysteryOrDrive === "string" ? narrative.coreMysteryOrDrive : "",
-        buildPortableGlobalMystery(mysteryProfile)
-      ),
-      finalePayoff: sanitizeSeriesField(
-        typeof narrative.plannedEnding === "string" ? narrative.plannedEnding : "",
-        buildPortableFinalePayoff()
-      ),
-      invariantRules: hardRules,
-      episodeLinkPolicy: normalizeStringArray(continuityContract.mandatoryCallbackTypes),
-    },
+    continuity,
     coverFocusCharacters: characters.slice(0, 3).map((character) => ({
       characterId: character.id || "",
       name: character.name,
@@ -1798,12 +1931,14 @@ const normalizeDraftFromVNextResponse = (
     identityPack,
     coverConsistencyReport,
     workflowVersion:
-      clean(typeof payloadObject.workflowVersion === "string" ? payloadObject.workflowVersion : "") || undefined,
-    seriesBlueprint: payloadObject.seriesBlueprint as Record<string, unknown>,
+      pickString(payloadObject, ["workflowVersion", "workflow_version"]) || undefined,
+    seriesBlueprint: (payloadObject.seriesBlueprint ?? payloadObject.series_blueprint) as Record<string, unknown>,
     initialUserSeriesStateTemplate:
-      payloadObject.initialUserSeriesStateTemplate as Record<string, unknown>,
+      (payloadObject.initialUserSeriesStateTemplate ??
+        payloadObject.initial_user_series_state_template) as Record<string, unknown>,
     episodeRuntimeBootstrapPayload:
-      payloadObject.episodeRuntimeBootstrapPayload as Record<string, unknown>,
+      (payloadObject.episodeRuntimeBootstrapPayload ??
+        payloadObject.episode_runtime_bootstrap_payload) as Record<string, unknown>,
   };
 };
 
@@ -1818,79 +1953,6 @@ export const generateSeriesDraftViaMastra = async (
   const timeoutMs = Math.max(30_000, options.timeoutMs ?? SERIES_DRAFT_DEFAULT_TIMEOUT_MS);
   const pollIntervalMs = Math.max(250, options.pollIntervalMs ?? SERIES_DRAFT_DEFAULT_POLL_INTERVAL_MS);
   const requestTimeoutMs = Math.max(8_000, Math.min(45_000, Math.floor(timeoutMs / 8)));
-  const vNextRequestTimeoutMs = Math.max(
-    30_000,
-    Math.min(300_000, Math.max(Math.floor(timeoutMs / 2), SERIES_VNEXT_REQUEST_TIMEOUT_MS))
-  );
-
-  const body = {
-    interview: {
-      genre_world: payload.interview.genreWorld,
-      desired_emotion: payload.interview.desiredEmotion,
-      companion_preference: payload.interview.companionPreference,
-      continuation_trigger: payload.interview.continuationTrigger,
-      avoidance_preferences: payload.interview.avoidExpressions,
-      additional_notes: payload.interview.additionalNotes,
-      visual_style_preset: clean(payload.interview.visualStylePreset) || undefined,
-      visual_style_notes: clean(payload.interview.visualStyleNotes) || undefined,
-    },
-    prompt: clean(payload.prompt) || undefined,
-    desired_episode_count: payload.desiredEpisodeCount ?? 8,
-    generation_mode: payload.generationMode || undefined,
-    ...(isUuid(payload.creatorId) ? { creator_id: payload.creatorId } : {}),
-    language: "ja",
-    existing_identity_pack: payload.existingIdentityPack
-      ? {
-          version: payload.existingIdentityPack.version,
-          source: payload.existingIdentityPack.source,
-          style_bible: payload.existingIdentityPack.styleBible,
-          key_person_character_ids: payload.existingIdentityPack.keyPersonCharacterIds,
-          characters: payload.existingIdentityPack.characters.map((character) => ({
-            character_id: character.characterId,
-            name: character.name,
-            role: character.role,
-            is_key_person: character.isKeyPerson,
-            identity_anchor_tokens: {
-              hair: character.identityAnchorTokens.hair,
-              silhouette: character.identityAnchorTokens.silhouette,
-              dominant_color: character.identityAnchorTokens.dominantColor,
-              outfit_key_item: character.identityAnchorTokens.outfitKeyItem,
-              distinguishing_feature: character.identityAnchorTokens.distinguishingFeature,
-            },
-            portrait_prompt: clean(character.portraitPrompt) || undefined,
-            portrait_image_url: clean(character.portraitImageUrl) || undefined,
-          })),
-          locked_at: payload.existingIdentityPack.lockedAt,
-        }
-      : undefined,
-    identity_retcon: payload.identityRetcon ? true : undefined,
-    recent_generation_context: payload.recentGenerationContext
-      ? {
-          recent_titles: dedupeStrings(payload.recentGenerationContext.recentTitles || []),
-          recent_case_motifs: dedupeStrings(payload.recentGenerationContext.recentCaseMotifs || []),
-          recent_character_archetypes: dedupeStrings(
-            payload.recentGenerationContext.recentCharacterArchetypes || []
-          ),
-          recent_relationship_patterns: dedupeStrings(
-            payload.recentGenerationContext.recentRelationshipPatterns || []
-          ),
-          recent_visual_motifs: dedupeStrings(payload.recentGenerationContext.recentVisualMotifs || []),
-          recent_truth_patterns: dedupeStrings(payload.recentGenerationContext.recentTruthPatterns || []),
-          recent_checkpoint_patterns: dedupeStrings(
-            payload.recentGenerationContext.recentCheckpointPatterns || []
-          ),
-          recent_first_episode_patterns: dedupeStrings(
-            payload.recentGenerationContext.recentFirstEpisodePatterns || []
-          ),
-          recent_environment_patterns: dedupeStrings(
-            payload.recentGenerationContext.recentEnvironmentPatterns || []
-          ),
-          recent_appearance_patterns: dedupeStrings(
-            payload.recentGenerationContext.recentAppearancePatterns || []
-          ),
-        }
-      : undefined,
-  };
 
   const emitProgress = (event: SeriesDraftGenerationEvent) => {
     options.onProgress?.(event);
@@ -1907,188 +1969,14 @@ export const generateSeriesDraftViaMastra = async (
     };
   };
 
-  const normalizeDraftFromResponse = (json: unknown): GeneratedSeriesDraft => {
-    const payloadObject = (json && typeof json === "object" ? (json as Record<string, unknown>) : null) || {};
-    const vNextDraft = normalizeDraftFromVNextResponse(payloadObject, payload);
-    if (vNextDraft) return vNextDraft;
-    const seriesRaw = (payloadObject.series as Record<string, unknown> | undefined) || payloadObject;
-    const metaRaw = (payloadObject.meta as Record<string, unknown> | undefined) || null;
-
-    const mysteryProfile = normalizeMysteryProfile(seriesRaw.mystery_profile);
-    const title = sanitizeSeriesTitle(
-      typeof seriesRaw.title === "string" ? seriesRaw.title : undefined,
-      mysteryProfile
-    );
-    const rawOverview =
-      clean(typeof seriesRaw.overview === "string" ? seriesRaw.overview : undefined) ||
-      clean(typeof seriesRaw.premise === "string" ? seriesRaw.premise : undefined) ||
-      "概要を生成できませんでした。";
-    const overview = sanitizeSeriesField(rawOverview, buildPortableOverview(mysteryProfile));
-    const aiRules = ensureWalkAiRules(typeof seriesRaw.ai_rules === "string" ? seriesRaw.ai_rules : undefined);
-    const sanitizedGenre = sanitizeSeriesField(
-      typeof seriesRaw.genre === "string" ? seriesRaw.genre : undefined,
-      derivePortableGenre(typeof seriesRaw.genre === "string" ? seriesRaw.genre : undefined, mysteryProfile)
-    );
-    const sanitizedPremise = sanitizeSeriesField(
-      typeof seriesRaw.premise === "string" ? seriesRaw.premise : undefined,
-      buildPortablePremise(mysteryProfile)
-    );
-    const sanitizedSeasonGoal = sanitizeSeriesField(
-      typeof seriesRaw.season_goal === "string" ? seriesRaw.season_goal : undefined,
-      buildPortableSeasonGoal(mysteryProfile)
-    );
-
-    const characters = normalizeCharacters(seriesRaw.characters);
-    if (characters.length === 0) {
-      throw new Error("Mastra response does not include valid characters.");
-    }
-
-    const episodeBlueprints = normalizeEpisodeBlueprints(seriesRaw.episode_blueprints);
-    const checkpointsRaw = normalizeCheckpoints(seriesRaw.checkpoints);
-    const checkpoints =
-      checkpointsRaw.length > 0
-        ? checkpointsRaw
-        : episodeBlueprints.length > 0
-          ? deriveCheckpointsFromLegacyEpisodes(episodeBlueprints)
-          : [];
-    const normalizedWorld = normalizeWorld(seriesRaw.world);
-    const firstEpisodeSeed = normalizeFirstEpisodeSeed(seriesRaw.first_episode_seed);
-    const progressState = normalizeProgressState(seriesRaw.progress_state);
-
-    return {
-      title,
-      overview,
-      aiRules,
-      characters,
-      coverImagePrompt:
-        clean(typeof seriesRaw.cover_image_prompt === "string" ? seriesRaw.cover_image_prompt : undefined) || undefined,
-      coverImageUrl:
-        normalizeMediaUrlForClient(typeof seriesRaw.cover_image_url === "string" ? seriesRaw.cover_image_url : undefined) ||
-        undefined,
-      genre: sanitizedGenre || undefined,
-      tone: clean(typeof seriesRaw.tone === "string" ? seriesRaw.tone : undefined) || undefined,
-      premise: sanitizedPremise || undefined,
-      seasonGoal: sanitizedSeasonGoal || undefined,
-      mysteryProfile,
-      visualStylePreset:
-        clean(typeof seriesRaw.visual_style_preset === "string" ? seriesRaw.visual_style_preset : undefined) ||
-        clean(payload.interview.visualStylePreset) ||
-        undefined,
-      visualStyleNotes:
-        clean(typeof seriesRaw.visual_style_notes === "string" ? seriesRaw.visual_style_notes : undefined) ||
-        clean(payload.interview.visualStyleNotes) ||
-        undefined,
-      world: normalizedWorld,
-      checkpoints,
-      firstEpisodeSeed:
-        firstEpisodeSeed ||
-        (checkpoints[0]
-          ? {
-            title: checkpoints[0].title || "第1話: 旅の始まり",
-            objective: checkpoints[0].purpose || "シリーズ導入の体験を進める。",
-            openingScene: checkpoints[0].unlockHint || "外出の導入で小さな違和感に出会う。",
-            expectedDurationMinutes: 20,
-            routeStyle: "現地の自然な移動手段を含む周遊",
-            completionCondition: "主要スポットで発見を得る。",
-            carryOverHint: checkpoints[0].carryOver || "次回に続く問いが残る。",
-            spotRequirements: normalizeSpotRequirements([], normalizedWorld?.setting || WALKABLE_WORLD_FALLBACK),
-            suggestedSpots: ensureWalkSuggestedSpots([
-              normalizedWorld?.setting ||
-              clean(
-                typeof (seriesRaw.world as Record<string, unknown> | undefined)?.setting === "string"
-                  ? ((seriesRaw.world as Record<string, unknown>).setting as string)
-                  : ""
-              ) ||
-              WALKABLE_WORLD_FALLBACK,
-            ]),
-          }
-          : undefined),
-      progressState:
-        progressState ||
-        {
-          lastCompletedEpisodeNo: 0,
-          unresolvedThreads: (() => {
-            const continuity = seriesRaw.continuity as Record<string, unknown> | undefined;
-            const mystery = clean(typeof continuity?.global_mystery === "string" ? continuity.global_mystery : "");
-            return mystery ? [mystery] : [];
-          })(),
-          revealedFacts: [],
-          relationshipStateSummary: "主要キャラクターとの関係は導入段階。",
-          relationshipFlags: [],
-          recentRelationShift: [],
-          companionTrustLevel: 40,
-          nextHook: "",
-        },
-      episodeBlueprints,
-      continuity: normalizeContinuity(seriesRaw.continuity),
-      coverFocusCharacters: normalizeCoverFocusCharacters(seriesRaw.cover_focus_characters),
-      identityPack: normalizeIdentityPack(seriesRaw.identity_pack),
-      coverConsistencyReport: normalizeCoverConsistencyReport(seriesRaw.cover_consistency_report),
-      workflowVersion:
-        clean(typeof metaRaw?.workflow_version === "string" ? metaRaw.workflow_version : undefined) || undefined,
-    };
-  };
-
-  const runLegacyEndpoint = async (): Promise<GeneratedSeriesDraft> => {
-    let response: Response;
-    try {
-      response = await fetchWithTimeout(
-        `${baseUrl}/api/series`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(body),
-        },
-        requestTimeoutMs,
-        options.signal
-      );
-    } catch (fetchError) {
-      if (fetchError instanceof Error && fetchError.name === "AbortError") {
-        throw new Error(`シリーズ生成がタイムアウトしました（${Math.floor(timeoutMs / 1000)}秒）。再度お試しください。`);
-      }
-      if (fetchError instanceof Error && fetchError.name === "TimeoutError") {
-        throw new Error(`Mastra APIの応答がタイムアウトしました（${Math.floor(requestTimeoutMs / 1000)}秒）。`);
-      }
-      if (isLikelyNetworkError(fetchError)) {
-        throw buildMastraNetworkError(baseUrl, fetchError);
-      }
-      throw fetchError;
-    }
-
-    const rawText = await response.text();
-    const json = parseJsonSafe(rawText);
-    if (!response.ok) {
-      const errMsg =
-        json && typeof json === "object" && json !== null && "error" in json && typeof (json as { error: unknown }).error === "string"
-          ? (json as { error: string }).error
-          : rawText || `HTTP ${response.status}`;
-      throw new Error(errMsg);
-    }
-    return normalizeDraftFromResponse(json);
-  };
-
   const runVNextEndpoint = async (): Promise<GeneratedSeriesDraft> => {
+    const normalizedPrompt = clean(payload.prompt) || undefined;
     const rawRequest = {
       userId: isUuid(payload.creatorId) ? payload.creatorId : undefined,
-      interview: dedupeStrings([
-        payload.interview.genreWorld,
-        payload.interview.desiredEmotion,
-        payload.interview.companionPreference,
-        payload.interview.continuationTrigger,
-        payload.interview.avoidExpressions,
-        payload.interview.additionalNotes || "",
-      ]).join(" / "),
-      prompt: clean(payload.prompt) || undefined,
-      desiredEpisodeLimit: payload.desiredEpisodeCount,
-      explicitGenreHints: dedupeStrings([payload.interview.genreWorld]).filter(Boolean),
-      excludedDirections: dedupeStrings(
-        clean(payload.interview.avoidExpressions)
-          .split(/[／/、,]/)
-          .map((item) => clean(item))
-          .filter(Boolean)
-      ),
+      prompt: normalizedPrompt,
+      desiredEpisodeLimit: FIXED_SERIES_EPISODE_COUNT,
+      explicitGenreHints: [],
+      excludedDirections: [],
       safetyPreferences: [],
       recentTitles: dedupeStrings(payload.recentGenerationContext?.recentTitles || []),
       recentCaseMotifs: dedupeStrings(payload.recentGenerationContext?.recentCaseMotifs || []),
@@ -2112,39 +2000,6 @@ export const generateSeriesDraftViaMastra = async (
       recentAppearancePatterns: dedupeStrings(
         payload.recentGenerationContext?.recentAppearancePatterns || []
       ),
-    };
-
-    const runVNextSyncFallback = async (): Promise<GeneratedSeriesDraft> => {
-      const response = await fetchWithTimeout(
-        `${baseUrl}/api/series/generate`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(rawRequest),
-        },
-        vNextRequestTimeoutMs,
-        options.signal
-      );
-      const rawText = await response.text();
-      const json = parseJsonSafe(rawText);
-      if (!response.ok) {
-        if (response.status === 404 || response.status === 405) {
-          throw new Error("vnext_endpoint_not_available");
-        }
-        const errMsg =
-          json && typeof json === "object" && json !== null && "error" in json
-            ? String((json as { error?: unknown }).error || "")
-            : rawText || `HTTP ${response.status}`;
-        throw new Error(errMsg || "vNextシリーズ生成に失敗しました。");
-      }
-
-      const normalized = normalizeDraftFromVNextResponse(json, payload);
-      if (!normalized || !Array.isArray(normalized.characters) || normalized.characters.length === 0) {
-        throw new Error("vnext_response_normalization_failed");
-      }
-      return normalized;
     };
 
     let createJobResponse: Response | null = null;
@@ -2184,9 +2039,6 @@ export const generateSeriesDraftViaMastra = async (
 
     if (!createJobResponse.ok) {
       if (createJobResponse.status === 404 || createJobResponse.status === 405) {
-        if (SERIES_VNEXT_SYNC_FALLBACK_ALLOWED) {
-          return runVNextSyncFallback();
-        }
         throw new Error("vNextシリーズ生成ジョブAPIが利用できません。");
       }
       const errMsg =
@@ -2205,9 +2057,6 @@ export const generateSeriesDraftViaMastra = async (
           : ""
     );
     if (!jobId) {
-      if (SERIES_VNEXT_SYNC_FALLBACK_ALLOWED) {
-        return runVNextSyncFallback();
-      }
       throw new Error("vNextシリーズ生成ジョブIDが取得できませんでした。");
     }
 
@@ -2318,185 +2167,16 @@ export const generateSeriesDraftViaMastra = async (
       await waitFor(pollIntervalMs, options.signal);
     }
   };
-
+  emitProgress({ phase: "request_received", at: new Date().toISOString(), detail: "シリーズ生成リクエストを受領" });
+  emitProgress({ phase: "input_validated", at: new Date().toISOString(), detail: "入力スキーマ検証を完了" });
   try {
-    emitProgress({ phase: "request_received", at: new Date().toISOString(), detail: "シリーズ生成リクエストを受領" });
-    emitProgress({ phase: "input_validated", at: new Date().toISOString(), detail: "入力スキーマ検証を完了" });
-    const vNext = await runVNextEndpoint();
+    const draft = await runVNextEndpoint();
     emitProgress({ phase: "completed", at: new Date().toISOString(), detail: "vNextシリーズ生成が完了" });
-    return vNext;
-  } catch (vNextError) {
-    const message = clean(vNextError instanceof Error ? vNextError.message : String(vNextError));
-    if (SERIES_VNEXT_STRICT || !SERIES_VNEXT_LEGACY_FALLBACK_ALLOWED) {
-      console.warn("[seriesAi] vNext series generate failed (no-fallback mode):", message);
-      throw new Error(message || "vNextシリーズ生成に失敗しました。");
-    }
-    if (message !== "vnext_endpoint_not_available") {
-      console.warn("[seriesAi] vNext series generate fallback to legacy:", message);
-    }
-  }
-
-  let createJobResponse: Response | null = null;
-  let createJobRaw = "";
-  let createJobJson: unknown = null;
-  try {
-    createJobResponse = await fetchWithTimeout(
-      `${baseUrl}/api/series/jobs`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-      },
-      requestTimeoutMs,
-      options.signal
-    );
-    createJobRaw = await createJobResponse.text();
-    createJobJson = parseJsonSafe(createJobRaw);
-  } catch (fetchError) {
-    if (fetchError instanceof Error && fetchError.name === "AbortError") {
-      throw createAbortError();
-    }
-    if (fetchError instanceof Error && fetchError.name === "TimeoutError") {
-      throw new Error(`Mastra APIへの接続がタイムアウトしました（${Math.floor(requestTimeoutMs / 1000)}秒）。`);
-    }
-    if (isLikelyNetworkError(fetchError)) {
-      throw buildMastraNetworkError(baseUrl, fetchError);
-    }
-    throw fetchError;
-  }
-  if (!createJobResponse) {
-    throw new Error("シリーズ生成ジョブの作成レスポンスが取得できませんでした。");
-  }
-
-  if (!createJobResponse.ok) {
-    if (createJobResponse.status === 404 || createJobResponse.status === 405) {
-      if (SERIES_VNEXT_LEGACY_FALLBACK_ALLOWED) {
-        return runLegacyEndpoint();
-      }
-      throw new Error("シリーズ生成ジョブAPIが利用できません。");
-    }
-    const errMsg =
-      createJobJson && typeof createJobJson === "object" && "error" in createJobJson
-        ? String((createJobJson as { error?: unknown }).error || "")
-        : createJobRaw || `HTTP ${createJobResponse.status}`;
-    throw new Error(errMsg || "シリーズ生成ジョブの作成に失敗しました。");
-  }
-
-  const createJobPayload = asObject(createJobJson);
-  const jobId = clean(
-    typeof createJobPayload.job_id === "string"
-      ? createJobPayload.job_id
-      : typeof createJobPayload.jobId === "string"
-        ? createJobPayload.jobId
-        : ""
-  );
-  if (!jobId) {
-    if (SERIES_VNEXT_LEGACY_FALLBACK_ALLOWED) {
-      return runLegacyEndpoint();
-    }
-    throw new Error("シリーズ生成ジョブIDが取得できませんでした。");
-  }
-
-  const initialEvents = Array.isArray(createJobPayload.events) ? createJobPayload.events : [];
-  initialEvents.forEach((rawEvent) => {
-    const normalized = normalizeSeriesDraftProgressEvent(rawEvent);
-    if (normalized) emitProgress(normalized);
-  });
-
-  const nextCursor = Number.parseInt(
-    String(createJobPayload.next_cursor ?? createJobPayload.cursor ?? initialEvents.length),
-    10
-  );
-  let cursor = Number.isFinite(nextCursor) && nextCursor >= 0 ? nextCursor : initialEvents.length;
-
-  const pollPath = clean(
-    typeof createJobPayload.poll_path === "string"
-      ? createJobPayload.poll_path
-      : typeof createJobPayload.pollPath === "string"
-        ? createJobPayload.pollPath
-        : ""
-  );
-  const pollUrl = pollPath
-    ? `${baseUrl}${pollPath.startsWith("/") ? "" : "/"}${pollPath}`
-    : `${baseUrl}/api/series/jobs/${encodeURIComponent(jobId)}`;
-
-  const startedAt = Date.now();
-  while (true) {
-    if (options.signal?.aborted) {
-      throw createAbortError();
-    }
-    if (Date.now() - startedAt > timeoutMs) {
-      throw new Error(`シリーズ生成がタイムアウトしました（${Math.floor(timeoutMs / 1000)}秒）。再度お試しください。`);
-    }
-
-    const separator = pollUrl.includes("?") ? "&" : "?";
-    let pollResponse: Response | null = null;
-    let pollRaw = "";
-    let pollJson: unknown = null;
-    try {
-      pollResponse = await fetchWithTimeout(
-        `${pollUrl}${separator}cursor=${cursor}`,
-        {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        },
-        requestTimeoutMs,
-        options.signal
-      );
-      pollRaw = await pollResponse.text();
-      pollJson = parseJsonSafe(pollRaw);
-    } catch (fetchError) {
-      if (fetchError instanceof Error && fetchError.name === "AbortError") {
-        throw createAbortError();
-      }
-      if (fetchError instanceof Error && fetchError.name === "TimeoutError") {
-        throw new Error(`Mastra APIポーリングがタイムアウトしました（${Math.floor(requestTimeoutMs / 1000)}秒）。`);
-      }
-      if (isLikelyNetworkError(fetchError)) {
-        throw buildMastraNetworkError(baseUrl, fetchError);
-      }
-      throw fetchError;
-    }
-
-    if (!pollResponse) {
-      throw new Error("シリーズ生成ジョブのポーリングレスポンスが取得できませんでした。");
-    }
-
-    if (!pollResponse.ok) {
-      const errMsg =
-        pollJson && typeof pollJson === "object" && "error" in pollJson
-          ? String((pollJson as { error?: unknown }).error || "")
-          : pollRaw || `HTTP ${pollResponse.status}`;
-      throw new Error(errMsg || "シリーズ生成ジョブの取得に失敗しました。");
-    }
-
-    const pollPayload = asObject(pollJson);
-    const events = Array.isArray(pollPayload.events) ? pollPayload.events : [];
-    events.forEach((rawEvent) => {
-      const normalized = normalizeSeriesDraftProgressEvent(rawEvent);
-      if (normalized) emitProgress(normalized);
-    });
-
-    const next = Number.parseInt(String(pollPayload.next_cursor ?? ""), 10);
-    if (Number.isFinite(next) && next >= cursor) {
-      cursor = next;
-    } else {
-      cursor += events.length;
-    }
-
-    const status = clean(typeof pollPayload.status === "string" ? pollPayload.status : "");
-    if (status === "succeeded" || status === "completed") {
-      return normalizeDraftFromResponse(pollJson);
-    }
-    if (status === "failed") {
-      const reason = clean(typeof pollPayload.error === "string" ? pollPayload.error : "") || "シリーズ生成に失敗しました。";
-      throw new Error(reason);
-    }
-    await waitFor(pollIntervalMs, options.signal);
+    return draft;
+  } catch (error) {
+    const message = clean(error instanceof Error ? error.message : String(error));
+    console.warn("[seriesAi] vNext series generate failed:", message);
+    throw new Error(message || "vNextシリーズ生成に失敗しました。");
   }
 };
 
@@ -2865,31 +2545,23 @@ const vNextSceneRoleToLegacy = (value: string): EpisodeSpot["sceneRole"] => {
 const normalizeRuntimeEpisodeFromVNext = (envelope: unknown): GeneratedRuntimeEpisode | null => {
   const payloadObject = asObject(envelope);
   const resultRow = asObject(payloadObject.result);
-  const episodeOutput = asObject(
-    resultRow.episodeOutput ||
-      payloadObject.episodeOutput ||
-      payloadObject
+  const episodeOutput = asObject(resultRow.episodeOutput || payloadObject.episodeOutput || payloadObject);
+  const continuityPatch = asObject(
+    resultRow.continuityPatch || payloadObject.continuityPatch || episodeOutput.continuityPatch
   );
-  const episodeMeta = asObject(episodeOutput.episodeMeta);
-  const continuityPatch = asObject(episodeOutput.continuityPatch);
   const memoryPatch = asObject(continuityPatch.memoryPatch);
   const payoffPatch = asObject(continuityPatch.payoffPatch);
-  const arcPatch = asObject(continuityPatch.arcPatch);
-  const ending = asObject(episodeOutput.ending);
 
-  const title = clean(typeof episodeMeta.title === "string" ? episodeMeta.title : "");
+  const title = clean(typeof episodeOutput.title === "string" ? episodeOutput.title : "");
   if (!title) return null;
+
   const coverImagePrompt =
     clean(
       typeof episodeOutput.coverImagePrompt === "string"
         ? episodeOutput.coverImagePrompt
         : typeof episodeOutput.cover_image_prompt === "string"
           ? episodeOutput.cover_image_prompt
-          : typeof episodeOutput.episodeCoverImagePrompt === "string"
-            ? episodeOutput.episodeCoverImagePrompt
-            : typeof episodeOutput.episode_cover_image_prompt === "string"
-              ? episodeOutput.episode_cover_image_prompt
-              : ""
+          : ""
     ) || undefined;
   const coverImageUrl =
     normalizeMediaUrlForClient(
@@ -2897,29 +2569,34 @@ const normalizeRuntimeEpisodeFromVNext = (envelope: unknown): GeneratedRuntimeEp
         ? episodeOutput.coverImageUrl
         : typeof episodeOutput.cover_image_url === "string"
           ? episodeOutput.cover_image_url
-          : typeof episodeOutput.episodeCoverImageUrl === "string"
-            ? episodeOutput.episodeCoverImageUrl
-            : typeof episodeOutput.episode_cover_image_url === "string"
-              ? episodeOutput.episode_cover_image_url
-              : ""
+          : ""
     ) || undefined;
 
   const scenesRaw = Array.isArray(episodeOutput.scenes) ? episodeOutput.scenes : [];
+  if (scenesRaw.length === 0) return null;
+
+  const fixedCharacterMap = new Map<string, { name: string; role: string; personality: string }>();
   const spots: EpisodeSpot[] = scenesRaw.map((item, index) => {
     const scene = asObject(item);
-    const narration = asObject(scene.narration);
-    const progression = asObject(scene.progression);
-    const dialogue = asObject(scene.dialogue);
-    const opening = Array.isArray(dialogue.opening) ? dialogue.opening : [];
-    const exploration = Array.isArray(dialogue.exploration) ? dialogue.exploration : [];
-    const emotionalBeat = Array.isArray(dialogue.emotionalBeat) ? dialogue.emotionalBeat : [];
+    const fixedCharacters = Array.isArray(scene.fixedCharacters) ? scene.fixedCharacters : [];
+    fixedCharacters.forEach((entry) => {
+      const row = asObject(entry);
+      const characterId = clean(typeof row.characterId === "string" ? row.characterId : "");
+      if (!characterId || fixedCharacterMap.has(characterId)) return;
+      fixedCharacterMap.set(characterId, {
+        name: clean(typeof row.displayName === "string" ? row.displayName : "") || characterId,
+        role: clean(typeof row.roleInScene === "string" ? row.roleInScene : "") || "series_character",
+        personality: normalizeStringArray(row.linesStyleGuard).join(" / "),
+      });
+    });
+
+    const dialogueBlocks = Array.isArray(scene.dialogueBlocks) ? scene.dialogueBlocks : [];
     const toLine = (row: unknown): EpisodeDialogueLine | null => {
       const line = asObject(row);
       const text = clean(typeof line.text === "string" ? line.text : "");
       if (!text) return null;
       return {
-        characterId:
-          clean(typeof line.speakerId === "string" ? line.speakerId : "") || "narrator",
+        characterId: clean(typeof line.speakerId === "string" ? line.speakerId : "") || "narrator",
         text,
       };
     };
@@ -2933,46 +2610,44 @@ const normalizeRuntimeEpisodeFromVNext = (envelope: unknown): GeneratedRuntimeEp
         speakerId: clean(typeof line.speakerId === "string" ? line.speakerId : "") || undefined,
       };
     };
-    const intro = clean(typeof narration.intro === "string" ? narration.intro : "");
-    const arrival = clean(typeof narration.arrival === "string" ? narration.arrival : "");
-    const climax = clean(typeof narration.emotionalClimax === "string" ? narration.emotionalClimax : "");
-    const outro = clean(typeof narration.outro === "string" ? narration.outro : "");
-    const sceneNarration = [intro, arrival, climax, outro].filter(Boolean).join("\n");
-    const blocks = [
-      ...opening.map(toBlock),
-      ...exploration.map(toBlock),
-      ...emotionalBeat.map(toBlock),
-      {
-        type: "mission" as const,
-        text:
-          clean(typeof progression.nextSpotReason === "string" ? progression.nextSpotReason : "") ||
-          "次の地点へ向かう。",
-      },
-    ].filter((block): block is EpisodeSpotBlock => Boolean(block));
+    const sceneRole = clean(typeof scene.sceneRole === "string" ? scene.sceneRole : "");
+    const legacySceneRole: EpisodeSpot["sceneRole"] =
+      sceneRole === "hook" ? "起" : sceneRole === "pivot" ? "転" : sceneRole === "resolution" ? "結" : "承";
+
     return {
       spotName: clean(typeof scene.spotName === "string" ? scene.spotName : "") || `スポット ${index + 1}`,
-      sceneRole: vNextSceneRoleToLegacy(clean(typeof scene.sceneRole === "string" ? scene.sceneRole : "")),
-      sceneObjective: clean(typeof scene.sceneGoal === "string" ? scene.sceneGoal : "") || "",
-      sceneNarration: sceneNarration || "シーン進行",
-      blocks,
+      sceneRole: legacySceneRole,
+      sceneObjective:
+        fixedCharacters
+          .map((entry) => {
+            const row = asObject(entry);
+            return clean(typeof row.roleInScene === "string" ? row.roleInScene : "");
+          })
+          .filter(Boolean)
+          .join(" / ") || "現地の違和感を確かめる",
+      sceneNarration: clean(typeof scene.narration === "string" ? scene.narration : "") || "シーン進行",
+      blocks: [
+        ...dialogueBlocks.map(toBlock),
+        {
+          type: "mission" as const,
+          text:
+            clean(typeof scene.missionPrompt === "string" ? scene.missionPrompt : "") ||
+            "次の地点へ向かう。",
+        },
+      ].filter((block): block is EpisodeSpotBlock => Boolean(block)),
       questionText:
-        clean(typeof progression.clueOrRealization === "string" ? progression.clueOrRealization : "") ||
+        clean(typeof scene.inferenceQuestion === "string" ? scene.inferenceQuestion : "") ||
         "このシーンの要点は？",
-      answerText:
-        clean(typeof progression.clueOrRealization === "string" ? progression.clueOrRealization : "") ||
-        "",
+      answerText: clean(typeof scene.answerGuidance === "string" ? scene.answerGuidance : "") || "",
       hintText:
-        clean(typeof progression.nextSpotReason === "string" ? progression.nextSpotReason : "") ||
+        clean(typeof scene.answerGuidance === "string" ? scene.answerGuidance : "") ||
         "次の展開に繋がる要素を確認する。",
       explanationText:
-        clean(typeof progression.emotionalOutcome === "string" ? progression.emotionalOutcome : "") ||
-        "",
-      preMissionDialogue: opening.map(toLine).filter((line): line is EpisodeDialogueLine => Boolean(line)),
-      postMissionDialogue: emotionalBeat.map(toLine).filter((line): line is EpisodeDialogueLine => Boolean(line)),
+        clean(typeof scene.explanationText === "string" ? scene.explanationText : "") || "",
+      preMissionDialogue: dialogueBlocks.slice(0, 2).map(toLine).filter((line): line is EpisodeDialogueLine => Boolean(line)),
+      postMissionDialogue: dialogueBlocks.slice(-2).map(toLine).filter((line): line is EpisodeDialogueLine => Boolean(line)),
     } satisfies EpisodeSpot;
   });
-
-  if (spots.length === 0) return null;
 
   const fixedCharactersAppeared = normalizeStringArray(episodeOutput.fixedCharactersAppeared);
   const localCharactersIntroduced = Array.isArray(episodeOutput.localCharactersIntroduced)
@@ -3011,13 +2686,16 @@ const normalizeRuntimeEpisodeFromVNext = (envelope: unknown): GeneratedRuntimeEp
   });
 
   const characters: EpisodeCharacter[] = [
-    ...fixedCharactersAppeared.map((id) => ({
-      id,
-      name: id,
-      role: "series_character",
-      personality: "",
-      origin: "series" as const,
-    })),
+    ...fixedCharactersAppeared.map((id) => {
+      const fixed = fixedCharacterMap.get(id);
+      return {
+        id,
+        name: fixed?.name || id,
+        role: fixed?.role || "series_character",
+        personality: fixed?.personality || "",
+        origin: "series" as const,
+      } satisfies EpisodeCharacter;
+    }),
     ...localCharactersIntroduced.map((item, index) => {
       const row = asObject(item);
       const localCharacterId =
@@ -3042,8 +2720,8 @@ const normalizeRuntimeEpisodeFromVNext = (envelope: unknown): GeneratedRuntimeEp
       return {
         id: localCharacterId,
         name: clean(typeof row.displayName === "string" ? row.displayName : "") || `ローカル人物${index + 1}`,
-        role: clean(typeof row.roleInEpisode === "string" ? row.roleInEpisode : "") || "local_character",
-        personality: normalizeStringArray(row.personalityTraits).join(" / "),
+        role: "local_character",
+        personality: "",
         origin: "episode" as const,
         avatarPrompt: portraitPrompt,
         avatarImageUrl: portraitImageUrl,
@@ -3060,31 +2738,36 @@ const normalizeRuntimeEpisodeFromVNext = (envelope: unknown): GeneratedRuntimeEp
   const avgTrustDelta = trustDeltas.length
     ? Math.round(trustDeltas.reduce((sum, value) => sum + value, 0) / trustDeltas.length)
     : 0;
+  const recentRelationShift = dedupeStrings(
+    relationshipPatch.map((item) => {
+      const row = asObject(item);
+      return clean(typeof row.keyMomentSummary === "string" ? row.keyMomentSummary : "");
+    }).filter(Boolean)
+  ).slice(0, 6);
+
+  const mainPlot = asObject(episodeOutput.mainPlot);
 
   return {
     title,
-    summary:
-      clean(typeof episodeMeta.summaryHook === "string" ? episodeMeta.summaryHook : "") ||
-      clean(typeof ending.closingNarration === "string" ? ending.closingNarration : "") ||
-      `${title}の概要`,
+    summary: clean(typeof episodeOutput.summary === "string" ? episodeOutput.summary : "") || `${title}の概要`,
     oneLiner:
-      clean(typeof episodeMeta.summaryHook === "string" ? episodeMeta.summaryHook : "") ||
-      clean(typeof episodeMeta.episodePurpose === "string" ? episodeMeta.episodePurpose : ""),
+      clean(typeof episodeOutput.oneLiner === "string" ? episodeOutput.oneLiner : "") ||
+      clean(typeof episodeOutput.summary === "string" ? episodeOutput.summary : ""),
     coverImagePrompt,
     coverImageUrl,
     mainPlot: {
-      premise: clean(typeof episodeMeta.episodePurpose === "string" ? episodeMeta.episodePurpose : ""),
-      goal: clean(typeof episodeMeta.episodePurpose === "string" ? episodeMeta.episodePurpose : ""),
+      premise: clean(typeof mainPlot.premise === "string" ? mainPlot.premise : ""),
+      goal: clean(typeof mainPlot.goal === "string" ? mainPlot.goal : ""),
     },
     characters,
     episodeWorld: {
-      title: clean(typeof episodeMeta.title === "string" ? episodeMeta.title : "") || "今回の旅の章",
-      mood: normalizeStringArray(ending.emotionalAftertaste)[0] || "発見と余韻",
-      atmosphere: clean(typeof ending.closingNarration === "string" ? ending.closingNarration : "") || "継続物語の進展",
+      title: clean(typeof episodeOutput.title === "string" ? episodeOutput.title : "") || "今回の旅の章",
+      mood: normalizeStringArray(memoryPatch.addedEvents)[0] || "発見と余韻",
+      atmosphere: clean(typeof episodeOutput.summary === "string" ? episodeOutput.summary : "") || "継続物語の進展",
       sensoryKeywords: [],
-      storyAxis: clean(typeof episodeMeta.episodePurpose === "string" ? episodeMeta.episodePurpose : ""),
-      emotionalArc: clean(typeof arcPatch.arcSummaryAfterEpisode === "string" ? arcPatch.arcSummaryAfterEpisode : ""),
-      localTheme: clean(typeof episodeMeta.arcRole === "string" ? episodeMeta.arcRole : "") || "development",
+      storyAxis: clean(typeof mainPlot.goal === "string" ? mainPlot.goal : ""),
+      emotionalArc: recentRelationShift[0] || "",
+      localTheme: clean(typeof episodeOutput.carryOverHook === "string" ? episodeOutput.carryOverHook : "") || "development",
     },
     episodeUniqueCharacters: localCharactersIntroduced.map((item, index) => {
       const row = asObject(item);
@@ -3098,58 +2781,55 @@ const normalizeRuntimeEpisodeFromVNext = (envelope: unknown): GeneratedRuntimeEp
           clean(typeof row.displayName === "string" ? row.displayName : "") ||
           visual?.displayName ||
           `ローカル人物${index + 1}`,
-        role: clean(typeof row.roleInEpisode === "string" ? row.roleInEpisode : "") || "地域人物",
-        personality: normalizeStringArray(row.personalityTraits).join(" / ") || "観察力が高い",
-        motivation: clean(typeof row.motivation === "string" ? row.motivation : "") || "地域情報を伝える",
-        relationToSeries:
-          clean(typeof row.relationToSeriesTheme === "string" ? row.relationToSeriesTheme : "") ||
-          "シリーズ進行に接続",
-        introductionScene:
-          clean(typeof row.relationToSpot === "string" ? row.relationToSpot : "") ||
-          "中盤で登場",
+        role: "地域人物",
+        personality: "現地視点を持つ。",
+        motivation: "地域情報を伝える",
+        relationToSeries: "シリーズ進行に接続",
+        introductionScene: "中盤で登場",
         portraitPrompt: visual?.portraitPrompt,
         portraitImageUrl: visual?.portraitImageUrl,
       } satisfies EpisodeUniqueCharacter;
     }),
     spots,
     completionCondition:
-      clean(typeof episodeMeta.episodePurpose === "string" ? episodeMeta.episodePurpose : "") ||
+      clean(typeof episodeOutput.completionCondition === "string" ? episodeOutput.completionCondition : "") ||
       "主要スポットで進展を得る。",
     carryOverHook:
-      clean(typeof ending.nextEpisodeHook === "string" ? ending.nextEpisodeHook : "") ||
+      clean(typeof episodeOutput.carryOverHook === "string" ? episodeOutput.carryOverHook : "") ||
       "次回に続く問いが残る。",
-    estimatedDurationMinutes: Math.max(10, Math.min(45, spots.length * 6)),
+    estimatedDurationMinutes: Math.max(
+      10,
+      Math.min(
+        180,
+        Number.parseInt(
+          String(episodeOutput.estimatedDurationMinutes ?? episodeOutput.estimated_duration_minutes ?? spots.length * 15),
+          10
+        ) || spots.length * 15
+      )
+    ),
     progressPatch: {
       unresolvedThreadsToAdd: normalizeStringArray(payoffPatch.activeThreads),
       unresolvedThreadsToRemove: normalizeStringArray(payoffPatch.closedThreads),
       revealedFactsToAdd: normalizeStringArray(memoryPatch.addedEvents),
       relationshipStateSummary:
-        clean(typeof arcPatch.arcSummaryAfterEpisode === "string" ? arcPatch.arcSummaryAfterEpisode : "") ||
-        "関係性は継続中。",
-      relationshipFlagsToAdd: dedupeStrings(
-        relationshipPatch
-          .map((item) => {
+        dedupeStrings(
+          relationshipPatch.map((item) => {
             const row = asObject(item);
-            const value =
-              typeof row.newRelationshipState === "string" ? row.newRelationshipState : "";
-            return clean(value);
-          })
-          .filter(Boolean)
+            return clean(typeof row.newRelationshipState === "string" ? row.newRelationshipState : "");
+          }).filter(Boolean)
+        ).join(" / ") || "関係性は継続中。",
+      relationshipFlagsToAdd: dedupeStrings(
+        relationshipPatch.map((item) => {
+          const row = asObject(item);
+          return clean(typeof row.newRelationshipState === "string" ? row.newRelationshipState : "");
+        }).filter(Boolean)
       ),
       relationshipFlagsToRemove: [],
-      recentRelationShift: dedupeStrings(
-        relationshipPatch
-          .map((item) => {
-            const row = asObject(item);
-            const value =
-              typeof row.keyMomentSummary === "string" ? row.keyMomentSummary : "";
-            return clean(value);
-          })
-          .filter(Boolean)
-      ).slice(0, 6),
+      recentRelationShift,
       companionTrustDelta: Number.isFinite(avgTrustDelta) ? Math.max(-10, Math.min(10, avgTrustDelta)) : undefined,
       nextHook:
-        clean(typeof ending.nextEpisodeHook === "string" ? ending.nextEpisodeHook : "") ||
+        normalizeStringArray(payoffPatch.newlySeededForeshadowing)[0] ||
+        clean(typeof episodeOutput.carryOverHook === "string" ? episodeOutput.carryOverHook : "") ||
         "",
     },
     continuityPatchVNext: continuityPatch,
@@ -3367,14 +3047,15 @@ export const generateSeriesEpisodeViaMastra = async (
   const requestTimeoutMs = Math.max(8_000, Math.min(45_000, Math.floor(timeoutMs / 8)));
 
   const characters = payload.series.characters || [];
-  if (characters.length === 0) {
+  const hasVNextBlueprint = Object.keys(asObject(payload.series.seriesBlueprint)).length > 0;
+  if (characters.length === 0 && !hasVNextBlueprint) {
     throw new Error(
       "シリーズのキャラクター情報が必須です。シリーズを保存し直してください。"
     );
   }
   const desiredSpotCount = Math.max(
-    5,
-    Math.min(7, Number.parseInt(String(payload.desiredSpotCount ?? 5), 10) || 5)
+    3,
+    Math.min(6, Number.parseInt(String(payload.desiredSpotCount ?? 4), 10) || 4)
   );
 
   const body = {
@@ -3437,8 +3118,8 @@ export const generateSeriesEpisodeViaMastra = async (
         id: clean(character.id) || undefined,
         name: character.name,
         role: character.role,
-        tier: character.tier || "secondary",
         must_appear: Boolean(character.mustAppear),
+        is_partner: Boolean(character.isPartner),
         personality: clean(character.personality),
         appearance: clean(character.appearance) || undefined,
         portrait_prompt: clean(character.portraitPrompt) || undefined,
@@ -3478,10 +3159,23 @@ export const generateSeriesEpisodeViaMastra = async (
     const blueprint = asObject(payload.series.seriesBlueprint);
     if (Object.keys(blueprint).length === 0) return null;
 
-    const blueprintNarrative = asObject(blueprint.narrative);
     const rawUserState = asObject(payload.series.userSeriesState);
     const template = asObject(payload.series.initialUserSeriesStateTemplate);
     const rawProgress = payload.series.progressState || undefined;
+    const rawProgressSummary = asObject(rawUserState.progressSummary);
+    const templateProgressSummary = asObject(template.progressSummary);
+    const rawRemembered = asObject(rawUserState.rememberedExperience);
+    const templateRemembered = asObject(template.rememberedExperience);
+    const rawAchievement = asObject(rawUserState.achievementState);
+    const templateAchievement = asObject(template.achievementState);
+    const rawContinuity = asObject(rawUserState.continuityState);
+    const templateContinuity = asObject(template.continuityState);
+    const rawRelationships = Array.isArray(rawUserState.relationshipState) ? rawUserState.relationshipState : [];
+    const templateRelationships = Array.isArray(template.relationshipState) ? template.relationshipState : [];
+    const persistentCharacters = asObject(blueprint.persistentCharacters);
+    const continuityAxes = Array.isArray(asObject(blueprint.continuityAxes).axes)
+      ? (asObject(blueprint.continuityAxes).axes as unknown[])
+      : [];
 
     const requestUserId =
       clean(payload.userId) ||
@@ -3495,18 +3189,55 @@ export const generateSeriesEpisodeViaMastra = async (
       clean(typeof rawUserState.id === "string" ? rawUserState.id : "") ||
       `${requestSeriesBlueprintId}:${requestUserId}`;
 
-    const currentProgress = asObject(rawUserState.currentProgress);
-    const templateProgress = asObject(template.currentProgress);
     const episodeCountCompleted =
       Number.parseInt(
         String(
-          currentProgress.episodeCountCompleted ??
-            templateProgress.episodeCountCompleted ??
+          rawProgressSummary.episodeCountCompleted ??
+            templateProgressSummary.episodeCountCompleted ??
             rawProgress?.lastCompletedEpisodeNo ??
             0
         ),
         10
       ) || 0;
+
+    const buildDefaultRelationshipState = () => {
+      const defaultRows = [
+        asObject(persistentCharacters.partner),
+        asObject(persistentCharacters.anchorNpc),
+      ].filter((row) => Object.keys(row).length > 0);
+      return defaultRows.map((row, index) => ({
+        characterId:
+          clean(typeof row.id === "string" ? row.id : "") || `char_${index + 1}`,
+        closenessLabel: index === 0 ? "neutral" : "distant",
+        trustLevel: index === 0 ? 40 : 30,
+        tensionLevel: 20,
+        affectionLevel: 0,
+        specialFlags: [],
+        sharedMemories: [],
+        unresolvedEmotions: [],
+      }));
+    };
+
+    const relationshipState =
+      rawRelationships.length > 0
+        ? rawRelationships
+        : templateRelationships.length > 0
+          ? templateRelationships
+          : buildDefaultRelationshipState();
+
+    const continuityAxisProgressRaw = Array.isArray(rawProgressSummary.continuityAxisProgress)
+      ? rawProgressSummary.continuityAxisProgress
+      : Array.isArray(templateProgressSummary.continuityAxisProgress)
+        ? templateProgressSummary.continuityAxisProgress
+        : continuityAxes.map((axis) => {
+            const row = asObject(axis);
+            return {
+              axisId: clean(typeof row.axisId === "string" ? row.axisId : "") || `axis_${Math.random().toString(36).slice(2, 8)}`,
+              currentLabel:
+                clean(typeof row.initialStateLabel === "string" ? row.initialStateLabel : "") || "初期",
+              recentShift: "初期状態",
+            };
+          });
 
     const userSeriesState = {
       id: requestUserSeriesStateId,
@@ -3515,80 +3246,43 @@ export const generateSeriesEpisodeViaMastra = async (
       referencedBlueprintVersion:
         Number.parseInt(String(rawUserState.referencedBlueprintVersion ?? blueprint.version ?? 1), 10) || 1,
       stateVersion: Number.parseInt(String(rawUserState.stateVersion ?? 1), 10) || 1,
-      currentProgress: {
+      progressSummary: {
         episodeCountCompleted,
-        currentCheckpointIndex:
-          Number.parseInt(
-            String(
-              currentProgress.currentCheckpointIndex ??
-                templateProgress.currentCheckpointIndex ??
-                0
-            ),
-            10
-          ) || 0,
-        currentArcSummary:
-          clean(typeof currentProgress.currentArcSummary === "string" ? currentProgress.currentArcSummary : "") ||
-          clean(rawProgress?.relationshipStateSummary) ||
-          "導入段階",
-        unresolvedThreads: dedupeStrings(
-          asStringArray(currentProgress.unresolvedThreads).concat(
-            rawProgress?.unresolvedThreads || []
-          )
+        activeThreads: dedupeStrings(
+          asStringArray(rawProgressSummary.activeThreads).concat(rawProgress?.unresolvedThreads || [])
         ),
         resolvedThreads: dedupeStrings(
-          asStringArray(currentProgress.resolvedThreads).concat(
-            rawProgress?.revealedFacts || []
-          )
+          asStringArray(rawProgressSummary.resolvedThreads).concat(rawProgress?.revealedFacts || [])
         ),
-        activeForeshadowing: dedupeStrings(
-          asStringArray(currentProgress.activeForeshadowing)
-        ),
-        completedEpisodeIds: asStringArray(currentProgress.completedEpisodeIds),
+        recentEpisodeIds: asStringArray(rawProgressSummary.recentEpisodeIds),
+        continuityAxisProgress: continuityAxisProgressRaw,
       },
       rememberedExperience: {
-        visitedLocations: asStringArray(asObject(rawUserState.rememberedExperience).visitedLocations),
-        keyEvents: asStringArray(asObject(rawUserState.rememberedExperience).keyEvents),
+        visitedLocations: asStringArray(rawRemembered.visitedLocations ?? templateRemembered.visitedLocations),
+        keyEvents: asStringArray(rawRemembered.keyEvents ?? templateRemembered.keyEvents),
         importantConversations: asStringArray(
-          asObject(rawUserState.rememberedExperience).importantConversations
+          rawRemembered.importantConversations ?? templateRemembered.importantConversations
         ),
-        playerChoices: asStringArray(asObject(rawUserState.rememberedExperience).playerChoices),
-        emotionalMoments: asStringArray(asObject(rawUserState.rememberedExperience).emotionalMoments),
+        playerChoices: asStringArray(rawRemembered.playerChoices ?? templateRemembered.playerChoices),
+        emotionalMoments: asStringArray(rawRemembered.emotionalMoments ?? templateRemembered.emotionalMoments),
         relationshipTurningPoints: asStringArray(
-          asObject(rawUserState.rememberedExperience).relationshipTurningPoints
+          rawRemembered.relationshipTurningPoints ?? templateRemembered.relationshipTurningPoints
         ),
       },
-      relationshipState: Array.isArray(rawUserState.relationshipState)
-        ? rawUserState.relationshipState
-        : Array.isArray(template.relationshipState)
-          ? template.relationshipState
-          : [],
+      relationshipState,
+      achievementState: {
+        titles: dedupeStrings(asStringArray(rawAchievement.titles ?? templateAchievement.titles)),
+        achievements: dedupeStrings(asStringArray(rawAchievement.achievements ?? templateAchievement.achievements)),
+        discoveryTags: dedupeStrings(asStringArray(rawAchievement.discoveryTags ?? templateAchievement.discoveryTags)),
+      },
       continuityState: {
         callbackCandidates: dedupeStrings(
-          asStringArray(asObject(rawUserState.continuityState).callbackCandidates)
+          asStringArray(rawContinuity.callbackCandidates ?? templateContinuity.callbackCandidates)
         ),
-        motifsInUse: dedupeStrings(asStringArray(asObject(rawUserState.continuityState).motifsInUse)),
-        blockedLines: asStringArray(asObject(rawUserState.continuityState).blockedLines),
+        motifsInUse: dedupeStrings(asStringArray(rawContinuity.motifsInUse ?? templateContinuity.motifsInUse)),
+        blockedLines: asStringArray(rawContinuity.blockedLines ?? templateContinuity.blockedLines),
         promisedPayoffs: dedupeStrings(
-          asStringArray(asObject(rawUserState.continuityState).promisedPayoffs)
-        ),
-        episodeLocalCharacterCarryovers: Array.isArray(
-          asObject(rawUserState.continuityState).episodeLocalCharacterCarryovers
-        )
-          ? asObject(rawUserState.continuityState).episodeLocalCharacterCarryovers
-          : [],
-      },
-      monetizationState: {
-        episodeLimit:
-          Number.parseInt(
-            String(
-              asObject(rawUserState.monetizationState).episodeLimit ??
-                blueprintNarrative.freePlanDefaultEpisodeLimit ??
-                3
-            ),
-            10
-          ) || 3,
-        extensionUnlocked: Boolean(
-          asObject(rawUserState.monetizationState).extensionUnlocked
+          asStringArray(rawContinuity.promisedPayoffs ?? templateContinuity.promisedPayoffs)
         ),
       },
     };

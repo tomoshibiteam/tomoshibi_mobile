@@ -18,6 +18,8 @@ import { isSupabaseConfigured } from "@/lib/supabase";
 import { useSessionUserId } from "@/hooks/useSessionUser";
 import { fetchViewerRelations } from "@/services/social";
 import { fetchExplorePayload } from "@/services/feed";
+import { featuredCampaign } from "@/lib/featuredCampaign";
+import { requestOpenCreateSheet } from "@/lib/createSheetBus";
 import type { ExploreCreator, ExploreQuest } from "@/types/feed";
 
 const HERO_FALLBACK =
@@ -142,8 +144,6 @@ export const HomeScreen = () => {
     [quests, acceptedFriendIds, creatorById]
   );
 
-  const homeHeroPost = useMemo(() => forYouPosts[0] || explorePosts[0] || null, [forYouPosts, explorePosts]);
-
   const recommendationPosts = useMemo(() => {
     const seen = new Set<string>();
     return [...explorePosts, ...forYouPosts].filter((post) => {
@@ -162,13 +162,12 @@ export const HomeScreen = () => {
     });
   }, [forYouPosts, friendPosts, explorePosts]);
 
-  const heroProgressValue = useMemo(() => {
-    if (!homeHeroPost) return 65;
-    return Math.min(92, Math.max(35, homeHeroPost.questTitle.length * 3));
-  }, [homeHeroPost]);
-
   const handleOpenQuests = () => {
     navigation.navigate("MainTabs", { screen: "Search" });
+  };
+
+  const handleOpenFeaturedCampaign = () => {
+    navigation.navigate("FeaturedCampaign", { campaignId: featuredCampaign.id });
   };
 
   const handleOpenCreator = (creatorId: string | null) => {
@@ -199,9 +198,12 @@ export const HomeScreen = () => {
     <SafeAreaView edges={["top"]} className="flex-1 bg-[#F8F7F6]">
       <ScrollView className="flex-1" contentContainerStyle={{ paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
         <View className="w-full" style={{ aspectRatio: 4 / 5 }}>
-          <Image source={{ uri: homeHeroPost?.questImage || HERO_FALLBACK }} className="absolute inset-0 w-full h-full" resizeMode="cover" />
+          <Image
+            source={{ uri: featuredCampaign.heroImageUrl || HERO_FALLBACK }}
+            className="absolute inset-0 w-full h-full"
+            resizeMode="cover"
+          />
           <View className="absolute inset-0 bg-black/40" />
-          <View className="absolute inset-x-0 bottom-0 h-64 bg-black/55" />
 
           <View className="absolute inset-x-0 top-0 px-5 pt-4 flex-row items-center justify-between">
             <Text className="text-xl text-white" style={{ fontFamily: fonts.displayBold }}>
@@ -224,50 +226,33 @@ export const HomeScreen = () => {
             </View>
           </View>
 
-          <View className="absolute inset-x-0 bottom-0 px-6 pb-11">
+          <View className="absolute inset-x-0 bottom-0 bg-black/55 px-6 pt-4 pb-11">
             <View className="flex-row items-center gap-2 mb-2">
-              <View className="rounded px-2 py-0.5 bg-[#F29130]/90">
-                <Text className="text-[10px] text-white" style={{ fontFamily: fonts.displayBold }}>
-                  CONTINUE
+              <View className="rounded-full px-2.5 py-1 bg-[#F29130]/90">
+                <Text className="text-[9px] text-white tracking-[1.2px]" style={{ fontFamily: fonts.displayBold }}>
+                  {featuredCampaign.eyebrow}
                 </Text>
               </View>
-              <Text className="text-xs text-slate-200 flex-1" numberOfLines={1} style={{ fontFamily: fonts.bodyMedium }}>
-                最終プレイ: {homeHeroPost ? formatRelativeTime(homeHeroPost.postedAt) : "2時間前"}
+              <View className="rounded-full px-2.5 py-1 bg-white/10 border border-white/15">
+                <Text className="text-[9px] text-[#F9E3C7] tracking-[1.2px]" style={{ fontFamily: fonts.displayBold }}>
+                  {featuredCampaign.seasonLabel}
+                </Text>
+              </View>
+            </View>
+
+            <Text className="text-[23px] text-white mb-3 leading-8" numberOfLines={1} style={{ fontFamily: fonts.displayExtraBold }}>
+              {featuredCampaign.title}
+            </Text>
+
+            <Pressable
+              className="self-start h-11 rounded-full bg-white px-5 flex-row items-center justify-center gap-1.5"
+              onPress={handleOpenFeaturedCampaign}
+            >
+              <Ionicons name="sparkles" size={15} color="#111827" />
+              <Text className="text-xs text-slate-900" style={{ fontFamily: fonts.displayBold }}>
+                特集に参加する
               </Text>
-            </View>
-
-            <Text className="text-[28px] text-white mb-1" numberOfLines={1} style={{ fontFamily: fonts.displayExtraBold }}>
-              {homeHeroPost?.questTitle || "港の記憶"}
-            </Text>
-            <Text className="text-sm text-slate-200 mb-4" numberOfLines={1} style={{ fontFamily: fonts.bodyMedium }}>
-              {homeHeroPost?.area || "第2話：夕暮れの約束"}
-            </Text>
-
-            <View className="flex-row items-end justify-between gap-4">
-              <View className="flex-1 pb-1.5">
-                <View className="flex-row items-center justify-between mb-1">
-                  <Text className="text-[10px] text-slate-300" style={{ fontFamily: fonts.bodyMedium }}>
-                    Progress
-                  </Text>
-                  <Text className="text-[10px] text-slate-300" style={{ fontFamily: fonts.bodyMedium }}>
-                    {heroProgressValue}%
-                  </Text>
-                </View>
-                <View className="h-1 rounded-full bg-white/20 overflow-hidden">
-                  <View className="h-full rounded-full bg-[#F29130]" style={{ width: `${heroProgressValue}%` }} />
-                </View>
-              </View>
-
-              <Pressable
-                className="h-11 rounded-full bg-white px-5 flex-row items-center justify-center gap-1"
-                onPress={handleOpenQuests}
-              >
-                <Ionicons name="play" size={15} color="#111827" />
-                <Text className="text-xs text-slate-900" style={{ fontFamily: fonts.displayBold }}>
-                  再開
-                </Text>
-              </Pressable>
-            </View>
+            </Pressable>
           </View>
         </View>
 
@@ -342,7 +327,12 @@ export const HomeScreen = () => {
               </Text>
               <Pressable
                 className="h-9 rounded-lg border border-[#DDD4CA] px-4 items-center justify-center"
-                onPress={() => navigation.navigate("MainTabs", { screen: "Create" })}
+                onPress={() => {
+                  const opened = requestOpenCreateSheet();
+                  if (!opened) {
+                    navigation.navigate("MainTabs", { screen: "Create" });
+                  }
+                }}
               >
                 <Text className="text-xs text-[#6E6963]" style={{ fontFamily: fonts.displayBold }}>
                   最初の投稿を作成
